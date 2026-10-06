@@ -167,6 +167,7 @@
         "tests/conformance/page-shim.test.ts",
         "src/substrate/pixel-stats.ts",
         "src/main/core/game-backends.ts",
+        "src/main/core/backend-tool.ts",
         "src/substrate/game-backend-spec.ts",
         "src/shared/game-backend.ts",
         "src/harness-seed/tools/backend-tools.ts",

@@ -1,7 +1,8 @@
 # Game backends
 
-A game may bring its own server. The studio starts it in the sandbox, lets the game's page reach
-its one loopback port, and gives agents tools to start, stop, restart it and read its output.
+A game may bring its own server. The studio runs one instance of it per copy of the game — the
+game folder Live shows, each worker's worktree, each optimizer candidate — in the sandbox, tells
+each copy's page where its instance is, and lets that page reach only that instance.
 
 ## Declaring one
 
@@ -11,7 +12,6 @@ The game's `studio.json` names the server under `backend`:
 {
   "backend": {
     "command": "bun run server",
-    "port": 3001,
     "health": "/health",
     "docker": false,
     "bootMs": 60000
@@ -21,68 +21,95 @@ The game's `studio.json` names the server under `backend`:
 
 | Field | Meaning |
 | --- | --- |
-| `command` | Shell command run in the live game folder, inside `ProcessSandbox`. Required. |
-| `port` | Loopback port the server listens on, 1024–39999; the server also gets it as `PORT`. Required. |
+| `command` | Shell command run in the copy's folder, inside `ProcessSandbox`. Required. |
 | `health` | Path that answers 2xx once the server is ready. Default `/health`. |
 | `docker` | The server starts containers (testcontainers) and needs the Docker socket. Default `false`. |
 | `bootMs` | How long to wait for the health check: 1 s to 5 min, default 1 min. |
 
 [`src/substrate/game-backend-spec.ts`](../src/substrate/game-backend-spec.ts) checks every field and
-refuses a declaration that is not plain with the field's name. Ports from 40000 up are refused
-because the preview serves bundled games' files there (`loopbackPortFor`). The server also gets
-`GENEX_BACKEND=1`.
+refuses a declaration that is not plain with the field's name. There is no port: the studio gives
+each instance its own and the server reads it from the environment.
 
-The page calls `http://localhost:<port>` or opens `ws://localhost:<port>`. Its origin is
-`game://<project>` or the game's own loopback origin, so the server answers CORS for it, as it
-would for a separate dev server outside the studio.
+| Variable | Value |
+| --- | --- |
+| `PORT` | The port to listen on, from 20000–39999 (below the preview's own loopback ports). |
+| `GENEX_BACKEND` | `1`. |
+| `GENEX_BACKEND_INSTANCE` | The instance id: the project's name and a hash of the copy's path. |
+| `GENEX_BACKEND_DATA` | A folder of its own for the instance's state, outside the copy's git tree. |
 
-## Lifecycle
+## The page
 
-[`GameBackends`](../src/main/core/game-backends.ts) (`core.backends`) owns the processes:
+Before game code runs, the page shim defines `window.__studioBackend = { http, ws }` with the
+instance's `http://localhost:<port>` and `ws://localhost:<port>`. The game reads it and falls back
+to its own address outside the studio. A fixed port cannot work: Chromium does not let the
+session redirect a WebSocket, and every copy has a different port. The server answers CORS for the
+page's origin (`game://<project>` or the game's loopback origin), as it would for a separate dev
+server.
 
-1. **Start.** A port that anything already answers on, or that another game's backend holds, is
-   refused before a process starts. The command starts through `ProcessSandbox.spawnLongLived`.
-2. **Health.** The service asks the health path every 250 ms until it answers 2xx, the process
-   exits or `bootMs` runs out. Only then is the port opened to game pages (`openBackendPort` in
-   [`src/main/preview.ts`](../src/main/preview.ts)). A server that never answers is stopped.
-3. **Running.** Both output streams are kept, the last 500 lines. An exit closes the port at once
-   and records the code and the last lines.
-4. **Stop.** The port closes first, then the process group gets SIGTERM and, after 5 s, SIGKILL.
+## Instances
 
-The first preview load of a game in an app session starts its backend (`ensureStarted`); a failure
-becomes one console line on the page, so the harness reads why the game's requests fail. After
-that nothing restarts it on its own: a backend someone stopped stays stopped, and a failed one waits
-for a restart after the fix. `StudioCore.stop` stops every backend.
+[`GameBackends`](../src/main/core/game-backends.ts) (`core.backends`) keys an instance by the
+copy's real path, as `GameBuilds` and the delegations do.
+
+- **Start.** The first time any window loads a copy (`ensureFor` in every load path of
+  [`src/main/core/previews.ts`](../src/main/core/previews.ts): Live, the stand-in, builder,
+  playtest and `look` windows, profiling), or when an agent asks. At most as many instances run as
+  there are preview windows.
+- **Health.** The health path is asked every 250 ms until it answers 2xx, the process exits or
+  `bootMs` runs out. A server that never answers is stopped; its last output lines go into the
+  status and onto the page's console.
+- **Running.** Both output streams are kept, the last 500 lines. An exit records the code and the
+  last lines, and what the sandbox wrapper left behind is killed.
+- **Stop.** SIGTERM to the process group, SIGKILL after 5 s; a stop waits until the whole group is
+  gone, so the port is free when it returns. A restart reuses the port while it is free, so a page
+  that kept the old origin still reaches it.
+- **Idle.** An instance no window shows, no session works in and no page has talked to for
+  10 minutes stops; the next load or tool call starts it again. One someone stopped stays stopped,
+  and a failed one waits for a restart after the fix.
+- **Gone.** `snapshot.removeWorktree`, a worktree re-made in place and `optimization.close` discard
+  the instance and its data folder. A landing restarts the game folder's instance when it runs.
+  `StudioCore.stop` stops every instance.
+- **Crash.** Running processes are recorded in `scratch/backends/instances.json`; the next start
+  kills those that are still the same process (same id and start time, read with `ps`).
 
 ## Network
 
-`gameRequestAllowed` and `routeHttp` in [`src/main/page-serve.ts`](../src/main/page-serve.ts) take
-the set of running backend ports. A game page may reach those ports over plain http and `ws:` on
-`localhost` or `127.0.0.1`, and nothing else on loopback; navigation to a backend is never
-allowed. The preview's `http` protocol handler passes a backend port's requests to the server with
-`net.fetch`; WebSockets are not intercepted, so the request filter alone decides them.
+Each preview window has its own session, and `GamePreview` asks `GameBackends.portFor` with the
+copy it shows (`backendRoot`, set per load) on every request. `gameRequestAllowed` and `routeHttp`
+in [`src/main/page-serve.ts`](../src/main/page-serve.ts) then allow that one port over plain http
+and `ws:` on `localhost` or `127.0.0.1`, and nothing else on loopback; navigation to it is never
+allowed. The `http` protocol handler passes those requests to the server with `net.fetch`;
+WebSockets are decided by the request filter alone. A worker's page cannot reach another copy's
+instance, and loses its own the moment it stops.
 
 ## Agents
 
-The host methods `game.backendStatus`, `game.backendStart`, `game.backendStop`,
-`game.backendRestart` and `game.backendLogs` take a library game's name and always act on its live
-folder, never a worktree. The seed's [`backend-tools.ts`](../src/harness-seed/tools/backend-tools.ts)
-wraps them as `backend_status`, `start_backend`, `stop_backend`, `restart_backend` and
-`backend_logs`; a chat pinned to a game can touch only that game's backend. Agents edit server code
-like any other file and restart the backend themselves: a preview reload does not restart it.
+- **Delegated sessions** (workers, the chat's contractor, a build's lead) get the host tool
+  `game_backend` ([`backend-tool.ts`](../src/main/core/backend-tool.ts); `mcp__studio__game_backend`
+  for Claude) when their copy declares a backend. Its actions — `status`, `start`, `stop`,
+  `restart`, `logs` — act only on the instance of the folder the session works in (a lead's, the
+  build it leads).
+- **The harness** calls `game.backendStatus`, `game.backendStart`, `game.backendStop`,
+  `game.backendRestart` and `game.backendLogs` with a library game's name and an optional `root`
+  (a worktree under scratch, checked by real path); the seed's
+  [`backend-tools.ts`](../src/harness-seed/tools/backend-tools.ts) wraps them.
+
+Agents edit server code like any other file and restart their instance themselves: a preview
+reload does not restart it.
 
 ## Docker
 
 A backend that declares `docker` starts only when the app was launched with
-`STUDIO_ALLOW_GAME_BACKEND_DOCKER=1`; otherwise its status says so. With the switch on it may connect
-to Docker Desktop's socket (`~/.docker/run/docker.sock` and `/var/run/docker.sock`), so
-testcontainers can start a database and its Ryuk container removes it when the backend exits.
+`STUDIO_ALLOW_GAME_BACKEND_DOCKER=1`; otherwise its status says so. With the switch on, each
+instance may connect to Docker Desktop's socket (`~/.docker/run/docker.sock` and
+`/var/run/docker.sock`), so testcontainers starts containers of its own for it, and its Ryuk
+container removes them when the instance's process ends.
 
 sandbox-runtime reads Unix socket grants only from its process-wide config, never from a run's
 overlay, and bakes them into a command's Seatbelt profile when it wraps the command. So
 `ProcessSandbox` wraps commands one at a time (`#wrapInTurn`), sets the grant process-wide only for
-the wrap of the run that asked, and puts the config back after. Other commands, wrapped before or
-after, never get the socket. Grants are path-based on macOS only.
+the wrap of the run that asked, and puts the config back after. Grants are path-based on macOS
+only.
 
 ### Residual risk
 
@@ -92,7 +119,5 @@ no other sandboxed process gets the socket.
 
 ## Limits
 
-- One backend per game, run from the live folder; a facet worktree's server changes reach it only
-  after landing.
-- No Live UI control yet: agents and the first load start it.
+- No Live control for the instance yet: the first load and the agents start it.
 - Windows is untested; Linux has no path-based Unix socket grant, so `docker` backends are macOS only.
