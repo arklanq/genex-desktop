@@ -757,8 +757,8 @@ blocking meta CSP gets one console line, not an edited policy. Bundled games ser
 font CDN hosts in [`src/substrate/preview-network.ts`](../../src/substrate/preview-network.ts);
 `#serveLoopback` answers 403 instead of fetching; navigation stays on `game://` or the loopback
 origin; WebRTC is limited to proxied UDP (`confinePreviewContents`). Blocked origins are noted once
-per load; `validateAt` and the Open Game sheet name hosts a page loads code from. There is no
-per-game network opt-in yet.
+per load; `validateAt` and the Open Game sheet name hosts a page loads code from. A running
+[game backend](../game-backends.md) port is exempt.
 
 **Game view.** Every game view (Live, facet ports, selftest, e2e fixtures) comes from
 `GamePreview.create()`: its own session partition (`game-preview`, `game-preview-facet-N`),
