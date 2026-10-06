@@ -33,6 +33,7 @@ import type {
 } from "./engine-requests.ts";
 import type { ConversationRecord, EventData, EventEnvelope, Message, SnapshotRecord } from "./event-log.ts";
 import type { ProjectAssets } from "./game-assets.ts";
+import type { GameBackendStatus } from "./game-backend.ts";
 import type {
   AttachReport,
   ContentStamps,
@@ -390,6 +391,15 @@ export interface HarnessHostApi {
     params: { project: string; max?: number; maxPx?: number };
     result: { frames: ReferenceFrame[]; skipped: Array<{ file: string; why: string }> };
   };
+  /** The game's own server, declared as `backend` in its studio.json (`main/core/game-backends.ts`). */
+  "game.backendStatus": { params: { project: string }; result: GameBackendStatus };
+  /** Start it and wait for its health check; a running backend is left as it is. */
+  "game.backendStart": { params: { project: string }; result: GameBackendStatus };
+  "game.backendStop": { params: { project: string }; result: GameBackendStatus };
+  /** Stop it and start it again from the current studio.json and sources. */
+  "game.backendRestart": { params: { project: string }; result: GameBackendStatus };
+  /** The last lines it printed, both streams in arrival order. */
+  "game.backendLogs": { params: { project: string; lines?: number }; result: string[] };
 
   // — preview (the senses): an omitted `handle` is the studio's stand-in for the live view (the
   // live view itself in a build with no hidden windows); only the person changes their Live —
@@ -583,6 +593,11 @@ export const HostMethod = {
   GameTree: "game.tree",
   GameExport: "game.export",
   GameReferences: "game.references",
+  GameBackendStatus: "game.backendStatus",
+  GameBackendStart: "game.backendStart",
+  GameBackendStop: "game.backendStop",
+  GameBackendRestart: "game.backendRestart",
+  GameBackendLogs: "game.backendLogs",
   PreviewLoad: "preview.load",
   PreviewProfile: "preview.profile",
   PreviewReload: "preview.reload",
@@ -675,6 +690,11 @@ export const HARNESS_PARAM_SCHEMAS = {
   "game.tree": z.object({ project }),
   "game.export": z.object({ project, target: optionalText }),
   "game.references": z.object({ project }),
+  "game.backendStatus": z.object({ project }),
+  "game.backendStart": z.object({ project }),
+  "game.backendStop": z.object({ project }),
+  "game.backendRestart": z.object({ project }),
+  "game.backendLogs": z.object({ project }),
   "preview.load": z.object({ project, entry: optionalText, root: optionalText }),
   "preview.crop": z.object({ runId: text, path: text }).nullish(),
   "preview.diff": z.object({ runId: text, a: text, b: text }).nullish(),

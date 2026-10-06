@@ -1181,6 +1181,28 @@ export interface ReferenceFrame {
 }
 // ↑ src/shared/protocol.ts
 
+export type GameBackendState = 'stopped' | 'starting' | 'running' | 'failed';
+// ↑ src/shared/game-backend.ts
+
+/** What `backend.status` and the backend tools report about one game's backend. */
+export interface GameBackendStatus {
+  project: string;
+  /** studio.json declares a backend this studio can run. */
+  declared: boolean;
+  state: GameBackendState;
+  /** The declared port, when there is a declaration. */
+  port: number | null;
+  /** The process id while it runs. */
+  pid: number | null;
+  /** When the current (or last) process started, as an ISO time. */
+  startedAt: string | null;
+  /** The exit code of a process that has ended. */
+  exitCode: number | null;
+  /** Why it is not running: a refused declaration, a busy port, a failed health check, an exit. */
+  error: string | null;
+}
+// ↑ src/shared/game-backend.ts
+
 /** `preview.profile`: begin a sampling session on a stage preview, then read, start or end it. */
 export interface ProfileBegin {
   action: "begin";
@@ -1308,7 +1330,7 @@ export interface PreviewPortStatus {
 export type ReadyVia = 'shim' | 'contract' | 'none';
 // ↑ src/shared/preview-contract.ts
 
-export type ReadyPhase = 'ready' | 'boot' | 'failed' | 'unknown';
+export type ReadyPhase = 'ready' | 'failed' | 'boot' | 'unknown';
 // ↑ src/shared/preview-contract.ts
 
 /** What the studio waited for, and what it got. `preview.ready` answers with exactly this. */
@@ -1584,6 +1606,15 @@ export interface HarnessHostApi {
     params: { project: string; max?: number; maxPx?: number };
     result: { frames: ReferenceFrame[]; skipped: Array<{ file: string; why: string }> };
   };
+  /** The game's own server, declared as `backend` in its studio.json (`main/core/game-backends.ts`). */
+  "game.backendStatus": { params: { project: string }; result: GameBackendStatus };
+  /** Start it and wait for its health check; a running backend is left as it is. */
+  "game.backendStart": { params: { project: string }; result: GameBackendStatus };
+  "game.backendStop": { params: { project: string }; result: GameBackendStatus };
+  /** Stop it and start it again from the current studio.json and sources. */
+  "game.backendRestart": { params: { project: string }; result: GameBackendStatus };
+  /** The last lines it printed, both streams in arrival order. */
+  "game.backendLogs": { params: { project: string; lines?: number }; result: string[] };
 
   // — preview (the senses): an omitted `handle` is the studio's stand-in for the live view (the
   // live view itself in a build with no hidden windows); only the person changes their Live —
