@@ -91,6 +91,11 @@ export interface SandboxPolicy {
   allowRead: string[];
   denyRead: string[];
   denyWrite: string[];
+  /**
+   * Unix sockets a process may connect to (macOS and Linux). None by default; a game backend that
+   * declares `docker` gets the Docker socket when the person allowed it (`main/core/game-backends.ts`).
+   */
+  allowUnixSockets?: string[];
 }
 
 export interface RunRequest {
@@ -380,6 +385,8 @@ export class ProcessSandbox {
   #runtime: SandboxRuntime | null = null;
   /** Domains opened by runs in flight, with how many runs hold each open (PH-3). */
   #opened = new Map<string, number>();
+  /** The wrap before the next one: wraps take turns, so a socket grant never reaches another run. */
+  #wraps: Promise<unknown> = Promise.resolve();
   #initialized = false;
   #initError: Error | null = null;
   #toolPath: (() => Promise<string>) | null = null;
@@ -573,6 +580,7 @@ export class ProcessSandbox {
         allowedDomains: policy.allowedDomains,
         deniedDomains: [],
         allowLocalBinding: policy.allowLocalBinding,
+        ...(policy.allowUnixSockets?.length ? { allowUnixSockets: policy.allowUnixSockets } : {}),
       },
       filesystem: {
         allowWrite: policy.allowWrite,
@@ -652,17 +660,19 @@ export class ProcessSandbox {
     const manager = this.#manager;
     if (!manager) throw new Error(MESSAGE.NotInitialized);
     if (this.#windows) return this.#windowsLaunchPlan(manager, this.#windows, request, signal);
-    const wrapped = await prepareSandbox(
-      () =>
-        manager.wrapWithSandboxArgv(
-          this.#withScratchTmp(request.command),
-          process.platform === "darwin" ? SANDBOX_SHELL : undefined,
-          this.#overlay(request.policy ?? {}),
-          signal,
-          request.cwd,
-          { commandId: request.label ?? request.command, commandText: request.command },
-        ),
-      { signal },
+    const wrapped = await this.#wrapInTurn(manager, request.policy ?? {}, () =>
+      prepareSandbox(
+        () =>
+          manager.wrapWithSandboxArgv(
+            this.#withScratchTmp(request.command),
+            process.platform === "darwin" ? SANDBOX_SHELL : undefined,
+            this.#overlay(request.policy ?? {}),
+            signal,
+            request.cwd,
+            { commandId: request.label ?? request.command, commandText: request.command },
+          ),
+        { signal },
+      ),
     );
     const [file, ...args] = wrapped.argv;
     if (!file) throw new Error(MESSAGE.EmptyArgv);
@@ -822,6 +832,32 @@ export class ProcessSandbox {
   }
 
   /** This instance's policy, plus every domain a run in flight has opened, into the runtime. */
+  /**
+   * Wrap one command, after every wrap before it. sandbox-runtime reads a run's Unix socket grant
+   * only from its process-wide config, never from the per-run overlay, and bakes it into that
+   * command's profile at wrap time. So a run that asks for sockets (a game backend's Docker
+   * socket) sets them process-wide for the length of its own wrap and puts the config back after;
+   * taking turns keeps any other command from being wrapped inside that window.
+   */
+  async #wrapInTurn<T>(manager: SandboxRuntime, policy: Partial<SandboxPolicy>, wrap: () => Promise<T>): Promise<T> {
+    const grantsSockets = Boolean(policy.allowUnixSockets?.length);
+    const turn = this.#wraps
+      .catch(() => {})
+      .then(async () => {
+        if (grantsSockets)
+          manager.updateConfig?.(
+            this.#overlay({ ...policy, allowedDomains: [...this.#opened.keys(), ...(policy.allowedDomains ?? [])] }),
+          );
+        try {
+          return await wrap();
+        } finally {
+          if (grantsSockets) this.#pushConfig();
+        }
+      });
+    this.#wraps = turn;
+    return turn;
+  }
+
   #pushConfig(): void {
     if (this.#windows) {
       this.#windows.session.network(this, this.#windowsSessionConfig());
