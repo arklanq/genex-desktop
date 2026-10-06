@@ -5,8 +5,6 @@
  */
 import path from "node:path";
 import {
-  BACKEND_PORT_MAX,
-  BACKEND_PORT_MIN,
   DEFAULT_BACKEND_BOOT_MS,
   DEFAULT_BACKEND_HEALTH,
   type GameBackendSpec,
@@ -24,7 +22,6 @@ const HEALTH_PATH = /^\/(?!\/)[A-Za-z0-9._~/-]*$/;
 const MESSAGE = {
   NotObject: "studio.json backend must be an object",
   Command: "studio.json backend.command must be a non-empty command line",
-  Port: `studio.json backend.port must be a whole number from ${BACKEND_PORT_MIN} to ${BACKEND_PORT_MAX}`,
   Health: "studio.json backend.health must be a path such as /health",
   Docker: "studio.json backend.docker must be true or false",
   BootMs: "studio.json backend.bootMs must be a number of milliseconds",
@@ -39,7 +36,6 @@ export type BackendDeclaration =
 /** studio.json's `backend` as written: every field unchecked until it is used. */
 interface RawBackend {
   command?: unknown;
-  port?: unknown;
   health?: unknown;
   docker?: unknown;
   bootMs?: unknown;
@@ -53,10 +49,6 @@ function validCommand(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0 && value.length <= MAX_COMMAND_LENGTH;
 }
 
-function validPort(value: unknown): value is number {
-  return Number.isInteger(value) && (value as number) >= BACKEND_PORT_MIN && (value as number) <= BACKEND_PORT_MAX;
-}
-
 /** The boot wait, clamped to the allowed range; null when the value is not a number at all. */
 function bootMsOf(value: unknown): number | null {
   if (value === undefined) return DEFAULT_BACKEND_BOOT_MS;
@@ -67,7 +59,6 @@ function bootMsOf(value: unknown): number | null {
 /** The first field of a declaration that is not usable, or null when all of them are. */
 function backendProblem(raw: RawBackend): string | null {
   if (!validCommand(raw.command)) return MESSAGE.Command;
-  if (!validPort(raw.port)) return MESSAGE.Port;
   const health = raw.health === undefined ? DEFAULT_BACKEND_HEALTH : raw.health;
   if (typeof health !== "string" || !HEALTH_PATH.test(health)) return MESSAGE.Health;
   if (raw.docker !== undefined && typeof raw.docker !== "boolean") return MESSAGE.Docker;
@@ -85,7 +76,6 @@ export function parseBackendDeclaration(raw: unknown): BackendDeclaration {
     declared: true,
     spec: {
       command: (raw.command as string).trim(),
-      port: raw.port as number,
       health: typeof raw.health === "string" ? raw.health : DEFAULT_BACKEND_HEALTH,
       docker: raw.docker === true,
       bootMs: bootMsOf(raw.bootMs) ?? DEFAULT_BACKEND_BOOT_MS,

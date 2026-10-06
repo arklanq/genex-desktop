@@ -116,7 +116,7 @@ import { openStudioLog } from "./logs.ts";
 import { migrateLegacyUserData, userDataMigrationLine } from "./user-data-migration.ts";
 import { confirmPluginInstall, reacquirePlugin } from "./plugin-install-dialog.ts";
 import { HttpStatus, textResponse } from "./page-serve.ts";
-import { GamePreview, closeBackendPort, openBackendPort, registerGameScheme } from "./preview.ts";
+import { GamePreview, registerGameScheme } from "./preview.ts";
 import { RunSummaryReader } from "./run-summary-reader.ts";
 import { registerRunSharingIpc } from "./ipc/run-sharing.ts";
 import { createRunSharing, finishedBuildRef, launchSends, runsOrigin } from "./run-sharing.ts";
@@ -581,7 +581,6 @@ async function createCore(userData: string): Promise<StudioCore> {
     ...launchCoreOptions(),
     ...(ollamaHost ? { ollamaHost } : {}),
     allowGameBackendDocker: process.env.STUDIO_ALLOW_GAME_BACKEND_DOCKER === "1",
-    backendPorts: { open: openBackendPort, close: closeBackendPort },
     // Electron's binary doubles as node for the harness child process.
     execPath: process.execPath,
     runAsNode: true,
@@ -740,6 +739,7 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
     gamesRoot: studio.layout.gamesRoot,
     vendorDir: path.join(resources, "vendor"),
     resolveRoot: (name) => studio.games.dirFor(name),
+    backendPort: (root) => studio.backends.portFor(root),
   });
   preview = view;
   studio.options.preview = view;
@@ -812,6 +812,7 @@ function createFacetPreview(studio: StudioCore, index: number, released: () => v
     // Builders, playtesters, reviewers and the lead all play the game here; only Live is heard.
     muted: true,
     resolveRoot: (name) => studio.games.dirFor(name),
+    backendPort: (root) => studio.backends.portFor(root),
   });
   port.attachTo(facetWin, { x: 0, y: 0, width: FACET_WINDOW.width, height: FACET_WINDOW.height });
   port.dispose = async () => {

@@ -17,28 +17,30 @@ import { tmpDir } from "../helpers/tmp.ts";
 
 describe("a game's backend declaration", () => {
   it("reads a plain declaration, filling the health path, docker and boot time it leaves out", () => {
-    assert.deepEqual(parseBackendDeclaration({ command: " bun run server ", port: 3001 }), {
+    // A port is the studio's to give: every copy of the game gets its own, so one declared is ignored.
+    const withPort = parseBackendDeclaration({ command: "x", port: 3001 });
+    assert.ok("spec" in withPort && !("port" in withPort.spec));
+    assert.deepEqual(parseBackendDeclaration({ command: " bun run server " }), {
       declared: true,
       spec: {
         command: "bun run server",
-        port: 3001,
         health: DEFAULT_BACKEND_HEALTH,
         docker: false,
         bootMs: DEFAULT_BACKEND_BOOT_MS,
       },
     });
     assert.deepEqual(
-      parseBackendDeclaration({ command: "bun x", port: 8787, health: "/api/health", docker: true, bootMs: 90_000 }),
+      parseBackendDeclaration({ command: "bun x", health: "/api/health", docker: true, bootMs: 90_000 }),
       {
         declared: true,
-        spec: { command: "bun x", port: 8787, health: "/api/health", docker: true, bootMs: 90_000 },
+        spec: { command: "bun x", health: "/api/health", docker: true, bootMs: 90_000 },
       },
     );
   });
 
   it("clamps the boot time to its range", () => {
-    const short = parseBackendDeclaration({ command: "x", port: 3001, bootMs: 1 });
-    const long = parseBackendDeclaration({ command: "x", port: 3001, bootMs: 10 * MAX_BACKEND_BOOT_MS });
+    const short = parseBackendDeclaration({ command: "x", bootMs: 1 });
+    const long = parseBackendDeclaration({ command: "x", bootMs: 10 * MAX_BACKEND_BOOT_MS });
     assert.ok("spec" in short && "spec" in long);
     assert.equal(short.spec.bootMs, MIN_BACKEND_BOOT_MS);
     assert.equal(long.spec.bootMs, MAX_BACKEND_BOOT_MS);
@@ -52,26 +54,18 @@ describe("a game's backend declaration", () => {
   it("refuses a declaration it cannot use, naming the field", () => {
     const cases: Array<[unknown, RegExp]> = [
       ["bun run server", /must be an object/],
-      [[{ command: "x", port: 3001 }], /must be an object/],
+      [[{ command: "x" }], /must be an object/],
       [{ port: 3001 }, /backend\.command/],
-      [{ command: "   ", port: 3001 }, /backend\.command/],
-      [{ command: 42, port: 3001 }, /backend\.command/],
-      [{ command: "x".repeat(1001), port: 3001 }, /backend\.command/],
-      [{ command: "x" }, /backend\.port/],
-      [{ command: "x", port: "3001" }, /backend\.port/],
-      [{ command: "x", port: 3001.5 }, /backend\.port/],
-      // Below 1024 needs root; from 40000 up the preview serves bundled games' files.
-      [{ command: "x", port: 80 }, /backend\.port/],
-      [{ command: "x", port: 1023 }, /backend\.port/],
-      [{ command: "x", port: 40000 }, /backend\.port/],
-      [{ command: "x", port: 65535 }, /backend\.port/],
-      [{ command: "x", port: 3001, health: "health" }, /backend\.health/],
-      [{ command: "x", port: 3001, health: "/health?x=1" }, /backend\.health/],
-      [{ command: "x", port: 3001, health: "//attacker.example/" }, /backend\.health/],
-      [{ command: "x", port: 3001, health: "/a b" }, /backend\.health/],
-      [{ command: "x", port: 3001, docker: "yes" }, /backend\.docker/],
-      [{ command: "x", port: 3001, bootMs: "60s" }, /backend\.bootMs/],
-      [{ command: "x", port: 3001, bootMs: Number.NaN }, /backend\.bootMs/],
+      [{ command: "   " }, /backend\.command/],
+      [{ command: 42 }, /backend\.command/],
+      [{ command: "x".repeat(1001) }, /backend\.command/],
+      [{ command: "x", health: "health" }, /backend\.health/],
+      [{ command: "x", health: "/health?x=1" }, /backend\.health/],
+      [{ command: "x", health: "//attacker.example/" }, /backend\.health/],
+      [{ command: "x", health: "/a b" }, /backend\.health/],
+      [{ command: "x", docker: "yes" }, /backend\.docker/],
+      [{ command: "x", bootMs: "60s" }, /backend\.bootMs/],
+      [{ command: "x", bootMs: Number.NaN }, /backend\.bootMs/],
     ];
     for (const [raw, reason] of cases) {
       const declaration = parseBackendDeclaration(raw);
@@ -85,12 +79,9 @@ describe("a game's backend declaration", () => {
     assert.deepEqual(await readBackendDeclaration(dir), { declared: false });
     await writeFile(path.join(dir, "studio.json"), "{ not json");
     assert.deepEqual(await readBackendDeclaration(dir), { declared: false });
-    await writeFile(
-      path.join(dir, "studio.json"),
-      JSON.stringify({ backend: { command: "bun run server", port: 3001 } }),
-    );
+    await writeFile(path.join(dir, "studio.json"), JSON.stringify({ backend: { command: "bun run server" } }));
     const declaration = await readBackendDeclaration(dir);
     assert.ok("spec" in declaration);
-    assert.equal(declaration.spec.port, 3001);
+    assert.equal(declaration.spec.command, "bun run server");
   });
 });

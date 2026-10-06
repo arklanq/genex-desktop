@@ -268,6 +268,22 @@ describe("the virtual clock", () => {
     assert.equal(normalizeShimOptions({ clock: "studio" }).clock, "studio");
     assert.equal(rig({ clock: "studio" }).clock.frozen(), true, "a studio-clock page is frozen from its first frame");
   });
+
+  it("puts only a loopback backend origin on the page, as the studio sends it", () => {
+    const origin = { http: "http://localhost:20100", ws: "ws://localhost:20100" };
+    assert.deepEqual(normalizeShimOptions({ backend: origin }).backend, origin);
+    for (const backend of [
+      null,
+      "http://localhost:20100",
+      { http: "http://localhost:20100" },
+      { http: "https://localhost:20100", ws: "wss://localhost:20100" },
+      { http: "http://attacker.example:20100", ws: "ws://localhost:20100" },
+      { http: "http://localhost:20100/path", ws: "ws://localhost:20100" },
+      { http: "http://localhost:20100", ws: "ws://localhost:20100@attacker.example" },
+      { http: "javascript:alert(1)", ws: "ws://localhost:20100" },
+    ])
+      assert.equal(normalizeShimOptions({ backend }).backend, null, JSON.stringify(backend));
+  });
 });
 
 describe("determinism", () => {

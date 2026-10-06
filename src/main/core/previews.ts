@@ -26,7 +26,7 @@ import type { DelegateRequest } from "../../substrate/engines/types.ts";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
 import type { Revision } from "../../shared/optimization.ts";
 import { capActions } from "../../substrate/preview-input.ts";
-import type { PreviewPort } from "../../substrate/preview-port.ts";
+import type { PreviewPort, ShimOptions } from "../../substrate/preview-port.ts";
 import { LIVE_HANDLE, PreviewPool, STAND_IN_HANDLE } from "../../substrate/preview-pool.ts";
 import { awaitReady, bootBudget, unlockGesture, type ReadyResult } from "../../substrate/preview-ready.ts";
 import { COMPUTER_VIEW, setupReached, type PreviewSetup } from "../../substrate/computer-tool.ts";
@@ -258,6 +258,12 @@ function invalidStillSize(maxPx: number | undefined): boolean {
   return maxPx !== undefined && (!Number.isInteger(maxPx) || maxPx < 1 || maxPx > STILL_MAX_PX);
 }
 
+/** What a load hands a window about its copy's game backend, and why the backend is down. */
+interface BackendLoad {
+  options: { backendRoot?: string; shim?: Partial<ShimOptions> };
+  down: string | null;
+}
+
 export class PreviewService {
   readonly #core: StudioCore;
   readonly #x: CoreInternals;
@@ -425,6 +431,20 @@ export class PreviewService {
     };
   }
 
+  /**
+   * The game backend instance of the copy a window is about to show, started when it should be
+   * (`GameBackends.ensureFor`): the load options that let the page reach it — its origin on the
+   * page, its copy on the window — and why it is not running, for the page's console.
+   */
+  async #backendLoad(project: string, source: string): Promise<BackendLoad> {
+    const status = await this.#core.backends?.ensureFor(project, source);
+    if (!status) return { options: {}, down: null };
+    return {
+      options: { backendRoot: status.root, shim: { backend: status.origin } },
+      down: status.origin ? null : status.error,
+    };
+  }
+
   /** `preview.load`: serve a game (or a checked worktree of it) into a preview, one load per handle at a time. */
   loadPreview(p: HarnessParams<"preview.load">): Promise<string> {
     const handle = p.handle ?? LIVE_HANDLE;
@@ -450,9 +470,11 @@ export class PreviewService {
     const stageHandle = p.handle && !onStage ? p.handle : null;
     if (source.project !== p.project || !stageHandle) throw new Error(MESSAGE.profilingNeedsStage);
     const served = await this.servedEntry(p.project, source.root, p.entry, port);
+    const backend = await this.#backendLoad(p.project, source.root);
     const url = served
-      ? await port.load(p.project, served.entry, served.root, { loopback: served.loopback })
+      ? await port.load(p.project, served.entry, served.root, { loopback: served.loopback, ...backend.options })
       : unservedUrl(p);
+    if (served && backend.down) port.note?.("error", MESSAGE.backendDown(backend.down));
     this.#x.profileSources.set(stageHandle, candidate);
     return url;
   }
@@ -471,12 +493,15 @@ export class PreviewService {
     if (isLive)
       this.#showIdentity({ project: p.project, head: null, state: PreviewIdentityState.Loading, error: null });
     try {
-      const backendDown = await this.#core.backends?.ensureStarted(p.project, this.#core.games.dirFor(p.project));
+      const backend = await this.#backendLoad(p.project, checkedRoot ?? this.#core.games.dirFor(p.project));
       const served = await this.servedEntry(p.project, checkedRoot, p.entry, port, { fallback: isLive });
       if (!served) return unservedUrl(p);
-      const url = await port.load(p.project, served.entry, served.root, { loopback: served.loopback });
+      const url = await port.load(p.project, served.entry, served.root, {
+        loopback: served.loopback,
+        ...backend.options,
+      });
       // The page loads without its server; the console line says why its requests fail.
-      if (backendDown) port.note?.("error", MESSAGE.backendDown(backendDown));
+      if (backend.down) port.note?.("error", MESSAGE.backendDown(backend.down));
       // Only now is Live current: a load that failed leaves what waited for Reload waiting.
       if (isLive) await this.#live.loaded(p.project, { print, root: checkedRoot });
       remembered.loaded = servedKey(served);
@@ -765,11 +790,14 @@ export class PreviewService {
     const served = await this.servedEntry(project, root, entry, port);
     if (!served) return { problem: port.status().loadError ?? "the game's build failed", note: null, ready: null };
     const budgetMs = await this.bootMsFor(project);
+    const backend = await this.#backendLoad(project, root ?? this.#core.games.dirFor(project));
     // `shim.readyMs` is the same number: one budget, so the page and the studio give up together.
     const loaded = await port.load(project, served.entry, served.root, {
       loopback: served.loopback || forceLoopback,
-      shim: { readyMs: budgetMs },
+      ...backend.options,
+      shim: { ...backend.options.shim, readyMs: budgetMs },
     });
+    if (backend.down) port.note?.("error", MESSAGE.backendDown(backend.down));
     const ready = await awaitReady(port, { timeoutMs: budgetMs });
     const status = port.status();
     if (status.loadError) return { problem: status.loadError, note: null, ready };
@@ -1199,6 +1227,9 @@ export class PreviewService {
         );
       }
     }
+    // The game folder's backend instance runs the sources from before the landing: restarted on
+    // the new ones before Live is offered (or shown) the build.
+    if (!already) await this.#core.backends?.restartIfRunning(project, projectDir);
     if (offerLive) await this.offerLive({ project, root: null });
     else await this.loadPreview({ project });
     await this.#core.games.touch(project).catch(() => {});
@@ -1396,7 +1427,8 @@ export class PreviewService {
     // a failed load that is the previous game's page, or nothing at all.
     const key = servedKey(served);
     if (!served.stale && last.loaded === key) return false;
-    await port.load(last.project, served.entry, served.root, { loopback: served.loopback });
+    const backend = await this.#backendLoad(last.project, last.root ?? this.#core.games.dirFor(last.project));
+    await port.load(last.project, served.entry, served.root, { loopback: served.loopback, ...backend.options });
     last.loaded = key;
     if (served.stale) port.note?.("error", served.stale, { loadError: true });
     return true;
