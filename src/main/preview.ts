@@ -155,6 +155,23 @@ export function loopbackPortFor(project: string): number {
   return port;
 }
 
+/**
+ * The loopback ports of game backends the studio started and found healthy
+ * (`main/core/game-backends.ts`): the game partition may reach these, over http and `ws:`, and
+ * nothing else on this Mac's loopback. Module-wide for the same reason as `loopbackPorts`.
+ */
+const backendPorts = new Set<number>();
+
+/** Let game pages reach a backend's port: called once its health check answers. */
+export function openBackendPort(port: number): void {
+  backendPorts.add(port);
+}
+
+/** Take a backend's port back from game pages: called when it stops, fails or exits. */
+export function closeBackendPort(port: number): void {
+  backendPorts.delete(port);
+}
+
 /** Register all privileged schemes together before ready: another call replaces the secure list. */
 export function registerGameScheme(otherSchemes: CustomScheme[] = []): void {
   protocol.registerSchemesAsPrivileged([
@@ -292,7 +309,7 @@ export class GamePreview {
     // A game runs offline (SECUI-3): the partition may reach the studio's own server and nothing
     // else, so what an agent wrote into a game cannot leave the machine when the studio loads it.
     gameSession.webRequest.onBeforeRequest((details, callback) => {
-      const allowed = gameRequestAllowed(details.url, loopbackPorts, details.method);
+      const allowed = gameRequestAllowed(details.url, loopbackPorts, details.method, backendPorts);
       if (!allowed) this.#noteBlocked("request", details.url);
       callback(allowed ? {} : { cancel: true });
     });
@@ -461,9 +478,11 @@ export class GamePreview {
 
   async #serveLoopback(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const route = routeHttp(url, loopbackPorts);
+    const route = routeHttp(url, loopbackPorts, backendPorts);
     // Never re-fetched from the main process: that sent a game's plain-http beacon off the machine.
     if (route.route === HttpRouteKind.Deny) return textResponse(HttpStatus.Forbidden);
+    // A running game backend's port is the one loopback address passed through, to that server.
+    if (route.route === HttpRouteKind.Backend) return net.fetch(request, { bypassCustomProtocolHandlers: true });
     return this.#serveFile(route.project, url.pathname, request);
   }
 

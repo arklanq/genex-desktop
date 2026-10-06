@@ -620,16 +620,27 @@ async function resolveLinkedModules(base: string, liveRoot: string, rel: string)
   return resolveServed(own, parts.slice(at + 1).join(path.sep) || ".");
 }
 
-/** What {@link routeHttp} decides for one request: serve it from a game's folder, or refuse it. */
-export const HttpRouteKind = { Serve: "serve", Deny: "deny" } as const;
+/**
+ * What {@link routeHttp} decides for one request: serve it from a game's folder, pass it to a
+ * running game backend, or refuse it.
+ */
+export const HttpRouteKind = { Serve: "serve", Backend: "backend", Deny: "deny" } as const;
 export type HttpRouteKind = (typeof HttpRouteKind)[keyof typeof HttpRouteKind];
+
+/** No game backend is running: the default for every check that takes the running ports. */
+export const NO_BACKEND_PORTS: ReadonlySet<number> = new Set();
 
 /**
  * What the game partition's http handler does with a request. A loopback origin on a port handed
- * out by `loopbackPortFor` is that game's file server; everything else is a 403 (SECUI-3). It used
- * to be re-fetched from the main process, which sent a game's plain-http beacon out of the machine.
+ * out by `loopbackPortFor` is that game's file server; a loopback origin on the port of a game
+ * backend the studio started and found healthy is passed to that server; everything else is a 403
+ * (SECUI-3). It used to be re-fetched from the main process, which sent a game's plain-http beacon
+ * out of the machine.
  */
-export type HttpRoute = { route: typeof HttpRouteKind.Serve; project: string } | { route: typeof HttpRouteKind.Deny };
+export type HttpRoute =
+  | { route: typeof HttpRouteKind.Serve; project: string }
+  | { route: typeof HttpRouteKind.Backend; port: number }
+  | { route: typeof HttpRouteKind.Deny };
 
 /** The host names that reach this Mac's own loopback interface. */
 const LOOPBACK_HOSTS: ReadonlySet<string> = new Set(["localhost", "127.0.0.1"]);
@@ -639,10 +650,22 @@ function isLoopbackHttp(url: URL): boolean {
   return url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname);
 }
 
-export function routeHttp(url: string | URL, loopbackPorts: ReadonlyMap<number, string>): HttpRoute {
+export function routeHttp(
+  url: string | URL,
+  loopbackPorts: ReadonlyMap<number, string>,
+  backendPorts: ReadonlySet<number> = NO_BACKEND_PORTS,
+): HttpRoute {
   const parsed = typeof url === "string" ? new URL(url) : url;
-  const project = isLoopbackHttp(parsed) ? loopbackPorts.get(Number(parsed.port)) : undefined;
-  return project ? { route: HttpRouteKind.Serve, project } : { route: HttpRouteKind.Deny };
+  if (!isLoopbackHttp(parsed)) return { route: HttpRouteKind.Deny };
+  const port = Number(parsed.port);
+  const project = loopbackPorts.get(port);
+  if (project) return { route: HttpRouteKind.Serve, project };
+  return backendPorts.has(port) ? { route: HttpRouteKind.Backend, port } : { route: HttpRouteKind.Deny };
+}
+
+/** A plain WebSocket to a running game backend's loopback port: the only socket a game may open. */
+function isBackendSocket(url: URL, backendPorts: ReadonlySet<number>): boolean {
+  return url.protocol === "ws:" && LOOPBACK_HOSTS.has(url.hostname) && backendPorts.has(Number(url.port));
 }
 
 function parseUrl(url: string | URL): URL | null {
@@ -670,15 +693,17 @@ export function confinePreviewContents(contents: {
 /**
  * The game partition's network allowlist (SECUI-3), for `webRequest.onBeforeRequest`. A game may
  * reach the studio's own `game:` server, inline `data:`/`blob:` content, DevTools, the loopback
- * port the studio handed this game, and https reads of the public library/font CDNs in
- * substrate/preview-network.ts. Everything else — other hosts, writes to a CDN, websockets, other
- * loopback ports, `file:` — is cancelled, so what an agent wrote into a game cannot leave the
- * machine when the studio loads the page to look at it. `method` defaults to a read.
+ * port the studio handed this game, the loopback port of a game backend the studio is running
+ * (http and `ws:`), and https reads of the public library/font CDNs in
+ * substrate/preview-network.ts. Everything else — other hosts, writes to a CDN, other websockets,
+ * other loopback ports, `file:` — is cancelled, so what an agent wrote into a game cannot leave
+ * the machine when the studio loads the page to look at it. `method` defaults to a read.
  */
 export function gameRequestAllowed(
   url: string | URL,
   loopbackPorts: ReadonlyMap<number, string>,
   method = "GET",
+  backendPorts: ReadonlySet<number> = NO_BACKEND_PORTS,
 ): boolean {
   const parsed = parseUrl(url);
   if (!parsed) return false;
@@ -689,7 +714,9 @@ export function gameRequestAllowed(
     case "devtools:":
       return true;
     case "http:":
-      return routeHttp(parsed, loopbackPorts).route === HttpRouteKind.Serve;
+      return routeHttp(parsed, loopbackPorts, backendPorts).route !== HttpRouteKind.Deny;
+    case "ws:":
+      return isBackendSocket(parsed, backendPorts);
     case "https:":
       return isPreviewCdnRead(parsed, method);
     default:

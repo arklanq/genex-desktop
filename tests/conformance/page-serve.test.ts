@@ -400,6 +400,27 @@ describe("which http requests are the studio's", () => {
       assert.deepEqual(routeHttp(url, ports), { route: "deny" }, url);
     }
   });
+
+  it("passes a running game backend's port to that server, and only that port", () => {
+    const backends = new Set([3001]);
+    assert.deepEqual(routeHttp("http://localhost:3001/api/state", ports, backends), { route: "backend", port: 3001 });
+    assert.deepEqual(routeHttp("http://127.0.0.1:3001/", ports, backends), { route: "backend", port: 3001 });
+    // The game's own file server still wins on its port, and nothing else on loopback opens.
+    assert.deepEqual(routeHttp("http://localhost:41234/", ports, backends), { route: "serve", project: "pond-life" });
+    for (const url of [
+      "http://localhost:3002/",
+      "http://localhost/",
+      "http://[::1]:3001/",
+      "http://0.0.0.0:3001/",
+      "http://localhost.:3001/",
+      "http://a.localhost:3001/",
+      "http://example.com:3001/",
+      "http://localhost:3001@attacker.example/",
+    ])
+      assert.deepEqual(routeHttp(url, ports, backends), { route: "deny" }, url);
+    // A backend that stopped takes its port with it.
+    assert.deepEqual(routeHttp("http://localhost:3001/", ports), { route: "deny" });
+  });
 });
 
 describe("what the game partition may request (SECUI-3)", () => {
@@ -446,6 +467,37 @@ describe("what the game partition may request (SECUI-3)", () => {
       assert.equal(gameRequestAllowed(url, ports), false, url);
     // The URL parser lowercases the host: this is the registered origin, not another one.
     assert.equal(gameRequestAllowed("http://LOCALHOST:41234/", ports), true);
+  });
+
+  it("lets a game reach a running backend's port over http and ws, and nothing more", () => {
+    const backends = new Set([3001]);
+    for (const url of [
+      "http://localhost:3001/api/state",
+      "http://127.0.0.1:3001/health",
+      "ws://localhost:3001/socket",
+      "ws://127.0.0.1:3001/",
+    ]) {
+      assert.equal(gameRequestAllowed(url, ports, "GET", backends), true, url);
+      assert.equal(gameRequestAllowed(url, ports, "GET"), false, `${url} once the backend stopped`);
+    }
+    assert.equal(gameRequestAllowed("http://localhost:3001/api/save", ports, "POST", backends), true);
+    for (const url of [
+      "wss://localhost:3001/",
+      "https://localhost:3001/",
+      "ws://localhost:3002/",
+      "ws://localhost:41234/",
+      "ws://[::1]:3001/",
+      "ws://0.0.0.0:3001/",
+      "ws://attacker.example:3001/",
+      "ws://localhost:3001@attacker.example/",
+      "http://attacker.example:3001/",
+    ])
+      assert.equal(gameRequestAllowed(url, ports, "GET", backends), false, url);
+  });
+
+  it("never navigates a page to a backend, running or not", () => {
+    assert.equal(previewNavigationAllowed("http://localhost:3001/", ports, { mainFrame: true }), false);
+    assert.equal(previewNavigationAllowed("http://localhost:3001/", ports, { mainFrame: false }), false);
   });
 
   it("lets a game read its libraries and fonts from the well-known public CDNs, and nothing else there", () => {
