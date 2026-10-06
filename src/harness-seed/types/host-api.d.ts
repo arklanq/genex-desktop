@@ -1184,21 +1184,39 @@ export interface ReferenceFrame {
 export type GameBackendState = 'stopped' | 'starting' | 'running' | 'failed';
 // ↑ src/shared/game-backend.ts
 
-/** What `backend.status` and the backend tools report about one game's backend. */
+export type GameBackendStop = 'request' | 'idle';
+// ↑ src/shared/game-backend.ts
+
+/** Where a page reaches its instance: what the studio puts on the page as `window.__studioBackend`. */
+export interface GameBackendOrigin {
+  /** `http://localhost:<port>` */
+  http: string;
+  /** `ws://localhost:<port>` */
+  ws: string;
+}
+// ↑ src/shared/game-backend.ts
+
+/** What `game.backendStatus` and the backend tools report about one instance. */
 export interface GameBackendStatus {
   project: string;
-  /** studio.json declares a backend this studio can run. */
+  /** The copy of the game this instance serves: the game folder, or a worktree (a real path). */
+  root: string;
+  /** studio.json in that copy declares a backend this studio can run. */
   declared: boolean;
   state: GameBackendState;
-  /** The declared port, when there is a declaration. */
+  /** Why a stopped instance is stopped; null otherwise. */
+  stoppedBy: GameBackendStop | null;
+  /** The port this instance was given, once it has one. */
   port: number | null;
+  /** Where its pages reach it while it runs. */
+  origin: GameBackendOrigin | null;
   /** The process id while it runs. */
   pid: number | null;
   /** When the current (or last) process started, as an ISO time. */
   startedAt: string | null;
   /** The exit code of a process that has ended. */
   exitCode: number | null;
-  /** Why it is not running: a refused declaration, a busy port, a failed health check, an exit. */
+  /** Why it is not running: a refused declaration, a failed health check, an exit, a limit. */
   error: string | null;
 }
 // ↑ src/shared/game-backend.ts
@@ -1606,15 +1624,19 @@ export interface HarnessHostApi {
     params: { project: string; max?: number; maxPx?: number };
     result: { frames: ReferenceFrame[]; skipped: Array<{ file: string; why: string }> };
   };
-  /** The game's own server, declared as `backend` in its studio.json (`main/core/game-backends.ts`). */
-  "game.backendStatus": { params: { project: string }; result: GameBackendStatus };
-  /** Start it and wait for its health check; a running backend is left as it is. */
-  "game.backendStart": { params: { project: string }; result: GameBackendStatus };
-  "game.backendStop": { params: { project: string }; result: GameBackendStatus };
-  /** Stop it and start it again from the current studio.json and sources. */
-  "game.backendRestart": { params: { project: string }; result: GameBackendStatus };
+  /**
+   * The game's own server, declared as `backend` in its studio.json (`main/core/game-backends.ts`):
+   * one instance per copy of the game. `root` names the copy — a worktree under the studio's
+   * scratch — and omitted means the game folder.
+   */
+  "game.backendStatus": { params: { project: string; root?: string }; result: GameBackendStatus };
+  /** Start it and wait for its health check; a running instance is left as it is. */
+  "game.backendStart": { params: { project: string; root?: string }; result: GameBackendStatus };
+  "game.backendStop": { params: { project: string; root?: string }; result: GameBackendStatus };
+  /** Stop it and start it again from the copy's current studio.json and sources. */
+  "game.backendRestart": { params: { project: string; root?: string }; result: GameBackendStatus };
   /** The last lines it printed, both streams in arrival order. */
-  "game.backendLogs": { params: { project: string; lines?: number }; result: string[] };
+  "game.backendLogs": { params: { project: string; root?: string; lines?: number }; result: string[] };
 
   // — preview (the senses): an omitted `handle` is the studio's stand-in for the live view (the
   // live view itself in a build with no hidden windows); only the person changes their Live —

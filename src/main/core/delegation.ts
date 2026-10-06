@@ -38,6 +38,8 @@ import {
 } from "../../substrate/engines/types.ts";
 import { DispatchActionType, HarnessCapability, type ReferenceFrame } from "../../shared/protocol.ts";
 import { COMPUTER_TOOL_NAME } from "../../substrate/computer-tool.ts";
+import { readBackendDeclaration } from "../../substrate/game-backend-spec.ts";
+import { BACKEND_TOOL, runBackendTool } from "./backend-tool.ts";
 import { WorkClass, workClassOf } from "../../substrate/budget.ts";
 import type { OptimizationCandidate } from "../../shared/optimization.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
@@ -240,6 +242,8 @@ interface SessionWindows {
 /** The tools prepared for a session under its lock; each one is released by the delegation's finally. */
 interface SessionTools {
   cover: (typeof COVER_TOOL)[];
+  /** The game's own server, when the copy the session works in declares one (`backend-tool.ts`). */
+  backend: (typeof BACKEND_TOOL)[];
   mcp: McpLiveTool[];
   /** The plugin tools, their guidance and the set behind them: one registry snapshot, taken as the session began. */
   plugins: PluginTool[];
@@ -756,6 +760,7 @@ export class DelegationService {
     const session = this.#session(p, target, grants, seat);
     const tools: SessionTools = {
       cover: [],
+      backend: [],
       mcp: [],
       plugins: plugins.tools,
       pluginGuidance: plugins.guidance,
@@ -1239,6 +1244,8 @@ export class DelegationService {
     // Every in-scope connector is asked for its tools in parallel, each with its own
     // timeout; one that will not answer contributes nothing and this delegation goes on.
     if (session.hostTools) tools.mcp = await this.#core.mcp.toolsFor(p.project, { signal: session.abort.signal });
+    if (session.hostTools && (await readBackendDeclaration(session.leads ?? cwd)).declared)
+      tools.backend = [BACKEND_TOOL];
     if (session.hostTools) await this.#applyPlugins(p, session, engineId, tools);
     await this.#prepareWindowTools(p, cwd, grants, windows, tools);
   }
@@ -1441,7 +1448,14 @@ export class DelegationService {
     const windowTools = tools.director ?? tools.builder;
     const controls = session.runControls ? runControlTools : [];
     return {
-      liveTools: [...(windowTools?.liveTools ?? []), ...tools.cover, ...controls, ...tools.plugins, ...tools.mcp],
+      liveTools: [
+        ...(windowTools?.liveTools ?? []),
+        ...tools.cover,
+        ...tools.backend,
+        ...controls,
+        ...tools.plugins,
+        ...tools.mcp,
+      ],
       onLiveTool: (name: string, args: Record<string, unknown>) =>
         this.#hostTool(name, args, p, target, grants, session, tools),
     };
@@ -1461,6 +1475,9 @@ export class DelegationService {
       return this.#x.setGameCover(p.project, args, p.threadId, signal);
     if (session.runControls && isRunControl(name))
       return this.#x.conversation.runControl(session.threadId, session.runControls, name, args, session.abort);
+    // The game's own server: the instance of the copy this session works in (a lead's, the build it leads).
+    if (tools.backend.some((tool) => tool.name === name))
+      return runBackendTool(this.#core.backends, p.project, session.leads ?? target.cwd, args);
     // A lead's plugins act on the build it leads, never the live game folder it sits in, and its
     // calls outlive the chat's turns, ending with its own session instead.
     const directory = session.leads ?? target.cwd;

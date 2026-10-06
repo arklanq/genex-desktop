@@ -162,23 +162,26 @@ export function gameRpc(core: StudioCore, x: CoreInternals) {
     // The stills in <project>/references/, sniffed and resized, for a run whose board is
     // empty (a resume, or a board attached in an earlier chat).
     [HostMethod.GameReferences]: async (p) => core.referenceStills(p.project, { max: p?.max, maxPx: p?.maxPx }),
-    // — the game's own server: started from the live folder, never from a worktree —
-    [HostMethod.GameBackendStatus]: async (p) => core.backends.status(p.project, await backendDir(x, core, p.project)),
-    [HostMethod.GameBackendStart]: async (p) => core.backends.start(p.project, await backendDir(x, core, p.project)),
-    [HostMethod.GameBackendStop]: async (p) => core.backends.stop(p.project, await backendDir(x, core, p.project)),
-    [HostMethod.GameBackendRestart]: async (p) =>
-      core.backends.restart(p.project, await backendDir(x, core, p.project)),
-    [HostMethod.GameBackendLogs]: async (p) => {
-      await backendDir(x, core, p.project);
-      return core.backends.logs(p.project, typeof p.lines === "number" ? p.lines : undefined);
-    },
+    // — the game's own server: one instance per copy, the game folder or a worktree of it —
+    [HostMethod.GameBackendStatus]: async (p) => core.backends.status(p.project, await backendRoot(x, core, p)),
+    [HostMethod.GameBackendStart]: async (p) => core.backends.start(p.project, await backendRoot(x, core, p)),
+    [HostMethod.GameBackendStop]: async (p) => core.backends.stop(p.project, await backendRoot(x, core, p)),
+    [HostMethod.GameBackendRestart]: async (p) => core.backends.restart(p.project, await backendRoot(x, core, p)),
+    [HostMethod.GameBackendLogs]: async (p) =>
+      core.backends.logs(await backendRoot(x, core, p), typeof p.lines === "number" ? p.lines : undefined),
   } satisfies Partial<HarnessHostHandlers>;
 }
 
-/** The live folder of a game in the library: a backend never runs from anywhere else. */
-async function backendDir(x: CoreInternals, core: StudioCore, project: string): Promise<string> {
-  await x.assertHarnessRoot(project, null);
-  return core.games.dirFor(project);
+/**
+ * The copy a backend call names: a worktree of a library game under the studio's scratch (checked
+ * by real path), or the game folder when it names none.
+ */
+async function backendRoot(
+  x: CoreInternals,
+  core: StudioCore,
+  p: { project: string; root?: string | null },
+): Promise<string> {
+  return (await x.assertHarnessRoot(p.project, p.root)) ?? core.games.dirFor(p.project);
 }
 
 async function scaffold(

@@ -1,13 +1,14 @@
 /**
  * The game's own server — a `backend` the game declares in its studio.json:
  *
- *   "backend": { "command": "bun run server", "port": 3001, "health": "/health", "docker": false }
+ *   "backend": { "command": "bun run server", "health": "/health", "docker": false }
  *
- * The studio starts the command in the game folder, inside its sandbox, with `PORT` set, waits for
- * the health path to answer 2xx and only then lets the game's page reach that one port (http and
- * ws). The game's page calls `http://localhost:<port>` and the server answers CORS for the page's
- * origin. After editing server code, restart it here: nothing restarts it on its own, and a
- * preview reload does not either.
+ * Every copy of the game — the game folder, each worker's worktree — gets its own instance: its
+ * own process, port, data folder (`GENEX_BACKEND_DATA`) and containers. The studio starts it in
+ * the copy's folder, inside its sandbox, with `PORT` set, and the first time a preview loads that
+ * copy. The page reads where its instance is from `window.__studioBackend` ({ http, ws }) — never
+ * a fixed port — and falls back to its own address outside the studio; the server answers CORS for
+ * the page's origin. After editing server code, restart it here: a preview reload does not.
  */
 import type { AnyRecord, HarnessTool, ToolCtx } from "../types/harness.d.ts";
 import { HostMethod } from "../loop/host-methods.ts";
@@ -16,10 +17,16 @@ import { HostMethod } from "../loop/host-methods.ts";
 const DEFAULT_LOG_LINES = 80;
 
 const str = (description: string) => ({ type: "string", description });
-const projectParameters = {
-  type: "object",
-  properties: { project: str("game folder name; defaults to this chat's game") },
+const copyProperties = {
+  project: str("game folder name; defaults to this chat's game"),
+  root: str("the worktree whose instance to act on; omit for the game folder"),
 };
+const copyParameters = { type: "object", properties: copyProperties };
+
+/** The copy a call names: its worktree, when it names one. */
+function copyOf(args: AnyRecord): { root?: string } {
+  return typeof args.root === "string" && args.root ? { root: args.root } : {};
+}
 
 /** The game a backend tool acts on: the chat's own, or the one named when the chat has none. */
 function backendProject(args: AnyRecord, ctx: ToolCtx): { project?: string; error?: string } {
@@ -31,7 +38,7 @@ function backendProject(args: AnyRecord, ctx: ToolCtx): { project?: string; erro
 
 /** One status line an agent can act on. */
 function describe(status: AnyRecord): string {
-  const where = status.port ? ` on port ${status.port}` : "";
+  const where = status.origin ? ` at ${status.origin.http}` : "";
   const pid = status.pid ? ` (pid ${status.pid})` : "";
   const error = status.error ? `\n${status.error}` : "";
   return `Backend ${status.state}${where}${pid}.${error}`;
@@ -49,11 +56,11 @@ function statusTool(name: string, description: string, method: StatusMethod): Ha
   return {
     name,
     description,
-    parameters: projectParameters,
+    parameters: copyParameters,
     async execute(args, ctx) {
       const { project, error } = backendProject(args, ctx);
       if (!project) return { ok: false, content: error };
-      const status = await ctx.call(method, { project });
+      const status = await ctx.call(method, { project, ...copyOf(args) });
       return { ok: !status.error, content: describe(status), details: { ...status } };
     },
   };
@@ -82,14 +89,18 @@ export const tools: HarnessTool[] = [
     parameters: {
       type: "object",
       properties: {
-        project: str("game folder name; defaults to this chat's game"),
+        ...copyProperties,
         lines: { type: "number", description: `how many lines, default ${DEFAULT_LOG_LINES}` },
       },
     },
     async execute(args, ctx) {
       const { project, error } = backendProject(args, ctx);
       if (!project) return { ok: false, content: error };
-      const lines = await ctx.call(HostMethod.GameBackendLogs, { project, lines: args.lines ?? DEFAULT_LOG_LINES });
+      const lines = await ctx.call(HostMethod.GameBackendLogs, {
+        project,
+        ...copyOf(args),
+        lines: args.lines ?? DEFAULT_LOG_LINES,
+      });
       return lines.length ? lines.join("\n") : "The backend has printed nothing.";
     },
   },
