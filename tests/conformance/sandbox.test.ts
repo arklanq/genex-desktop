@@ -179,6 +179,28 @@ describe("sandboxed spawn", () => {
     }
   });
 
+  it("connects to a Unix socket only in the run granted it, never in a run wrapped meanwhile", {
+    skip: process.platform === "darwin" ? false : "macOS: Seatbelt grants Unix sockets by path",
+  }, async () => {
+    const socket = path.join(await tmpDir("studio-sock-"), "d.sock");
+    const server = http.createServer((_request, response) => response.end("socket-reached"));
+    await new Promise<void>((resolve) => server.listen(socket, resolve));
+    const dial = `curl -s -m 5 --unix-socket ${JSON.stringify(socket)} http://x/ ; echo " exit=$?"`;
+    try {
+      const [granted, alongside] = await Promise.all([
+        sandbox.run({ command: dial, cwd: workspace, policy: { allowUnixSockets: [socket] }, timeoutMs: 20_000 }),
+        sandbox.run({ command: dial, cwd: workspace, timeoutMs: 20_000 }),
+      ]);
+      assert.match(granted.stdout, /socket-reached/, granted.stderr);
+      assert.doesNotMatch(alongside.stdout, /socket-reached/, "a run wrapped beside the grant must not get it");
+      const after = await sandbox.run({ command: dial, cwd: workspace, timeoutMs: 20_000 });
+      assert.doesNotMatch(after.stdout, /socket-reached/, "the grant ends with the run that asked for it");
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
   // The two below reach past this process: the public internet and whatever runs on port 11434.
   // Opt in with STUDIO_NETWORK_TESTS=1; the two above cover the same boundary hermetically.
   const network =

@@ -30,6 +30,7 @@ import {
   HttpRouteKind,
   HttpStatus,
   MAX_REWRITE_BYTES,
+  NO_BACKEND_PORTS,
   confinePreviewContents,
   gameRequestAllowed,
   previewNavigationAllowed,
@@ -127,6 +128,12 @@ export interface GamePreviewOptions {
   muted?: boolean;
   /** The app's default page-shim settings; a single `load` may override any of them. */
   shim?: Partial<ShimOptions>;
+  /**
+   * The port of the running game backend instance for a copy of a game (its real path), or null
+   * (`GameBackends.portFor`). Asked per request, so a window reaches only the instance of the copy
+   * it shows, and loses it the moment that instance stops.
+   */
+  backendPort?: (root: string) => number | null;
 }
 
 const SCHEME = "game";
@@ -222,6 +229,8 @@ export class GamePreview {
    * nothing.
    */
   #pinnedRoot: { project: string; dir: string; real: string | null } | null = null;
+  /** The copy of the game this window shows, whose backend instance its page may reach (a real path). */
+  #backendRoot: string | null = null;
   /** The entry this port loaded — the primary rule for which response receives the studio shim. */
   #entryPath: string | null = null;
   /** This load's shim overrides (the boot budget is the one that changes per game). */
@@ -292,7 +301,7 @@ export class GamePreview {
     // A game runs offline (SECUI-3): the partition may reach the studio's own server and nothing
     // else, so what an agent wrote into a game cannot leave the machine when the studio loads it.
     gameSession.webRequest.onBeforeRequest((details, callback) => {
-      const allowed = gameRequestAllowed(details.url, loopbackPorts, details.method);
+      const allowed = gameRequestAllowed(details.url, loopbackPorts, details.method, this.#backendPorts());
       if (!allowed) this.#noteBlocked("request", details.url);
       callback(allowed ? {} : { cancel: true });
     });
@@ -453,6 +462,17 @@ export class GamePreview {
     this.#visibility.setOccluded(occluded);
   }
 
+  /** The copy of the game (a real path) whose backend instance this window's page may reach. */
+  backendRoot(): string | null {
+    return this.#backendRoot;
+  }
+
+  /** The one backend port this window's page may reach now: its copy's running instance, or none. */
+  #backendPorts(): ReadonlySet<number> {
+    const port = this.#backendRoot ? this.options.backendPort?.(this.#backendRoot) : null;
+    return port ? new Set([port]) : NO_BACKEND_PORTS;
+  }
+
   /** Serve files from the project folder, refusing anything that escapes it. */
   async #serve(request: Request): Promise<Response> {
     const url = new URL(request.url);
@@ -461,9 +481,11 @@ export class GamePreview {
 
   async #serveLoopback(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    const route = routeHttp(url, loopbackPorts);
+    const route = routeHttp(url, loopbackPorts, this.#backendPorts());
     // Never re-fetched from the main process: that sent a game's plain-http beacon off the machine.
     if (route.route === HttpRouteKind.Deny) return textResponse(HttpStatus.Forbidden);
+    // A running game backend's port is the one loopback address passed through, to that server.
+    if (route.route === HttpRouteKind.Backend) return net.fetch(request, { bypassCustomProtocolHandlers: true });
     return this.#serveFile(route.project, url.pathname, request);
   }
 
@@ -626,13 +648,14 @@ export class GamePreview {
     project: string,
     entry = "index.html",
     root?: string,
-    options: { loopback?: boolean; shim?: Partial<ShimOptions> } = {},
+    options: { loopback?: boolean; shim?: Partial<ShimOptions>; backendRoot?: string } = {},
   ): Promise<string> {
     this.#nativeDelivery = null;
     this.#pageSurfaceNoted = false;
     this.#stoppedUrl = null;
     this.#entryPath = String(entry ?? "index.html").split(/[?#]/)[0] ?? "index.html";
     this.#shimLoad = options.shim ?? null;
+    this.#backendRoot = options.backendRoot ?? null;
     this.#reach = { reach: "none", hooked: {} };
     await this.#profiler.invalidate("source loaded");
     const view = this.create();

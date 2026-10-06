@@ -50,7 +50,19 @@ export const DEFAULT_SHIM_OPTIONS = Object.freeze({
   pointerLock: true,
   counters: true,
   maxTimers: 4096,
+  backend: null,
 });
+
+/** A backend origin the studio may put on a page: plain http and ws on this Mac's loopback, and nothing else. */
+const BACKEND_HTTP = /^http:\/\/localhost:\d{1,5}$/;
+const BACKEND_WS = /^ws:\/\/localhost:\d{1,5}$/;
+
+/** The page's backend origins, when both are the loopback origins the studio sends; null otherwise. */
+function backendOption(raw: Foreign): { http: string; ws: string } | null {
+  if (!raw || typeof raw !== "object") return null;
+  const usable = BACKEND_HTTP.test(String(raw.http)) && BACKEND_WS.test(String(raw.ws));
+  return usable ? Object.freeze({ http: String(raw.http), ws: String(raw.ws) }) : null;
+}
 
 /** The seed the page is keyed with: none (`null`), the one sent, or the default. */
 function seedOption(seed: unknown): number | null {
@@ -75,6 +87,7 @@ export function normalizeShimOptions(raw: Foreign) {
     pointerLock: input.pointerLock !== false,
     counters: input.counters !== false,
     maxTimers: Math.round(num(input.maxTimers, DEFAULT_SHIM_OPTIONS.maxTimers, 16, 65_536)),
+    backend: backendOption(input.backend),
   };
 }
 
@@ -1721,6 +1734,9 @@ export function installStudioShim(rawOptions: Foreign) {
   const win: Foreign = globalThis;
   if (win.__studioClock && win.__studioClock.version === CLOCK_VERSION) return win.__studioClock;
   const options = normalizeShimOptions(rawOptions);
+  // Where this copy's game backend runs: the page asks this, never a fixed port, because every copy
+  // (the game folder, each worker's worktree) has an instance of its own.
+  if (options.backend) installPageGlobal(win, "__studioBackend", options.backend);
   const natives = nativesOf(win);
   if (natives.raf && natives.cancelRaf) {
     const gate = animationGate({ request: natives.raf, cancel: natives.cancelRaf });

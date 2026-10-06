@@ -98,6 +98,12 @@ export const RPC_CLASSES = {
   "game.tree": RpcClass.Record,
   "game.export": RpcClass.Work,
   "game.references": RpcClass.Record,
+  "game.backendStatus": RpcClass.Record,
+  // A start waits out the backend's own boot budget (at most five minutes, `MAX_BACKEND_BOOT_MS`).
+  "game.backendStart": RpcClass.Work,
+  "game.backendStop": RpcClass.Record,
+  "game.backendRestart": RpcClass.Work,
+  "game.backendLogs": RpcClass.Record,
   "preview.load": RpcClass.PageLoad,
   "preview.profile": RpcClass.PageLoad,
   "preview.reload": RpcClass.PageLoad,

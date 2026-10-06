@@ -162,7 +162,26 @@ export function gameRpc(core: StudioCore, x: CoreInternals) {
     // The stills in <project>/references/, sniffed and resized, for a run whose board is
     // empty (a resume, or a board attached in an earlier chat).
     [HostMethod.GameReferences]: async (p) => core.referenceStills(p.project, { max: p?.max, maxPx: p?.maxPx }),
+    // — the game's own server: one instance per copy, the game folder or a worktree of it —
+    [HostMethod.GameBackendStatus]: async (p) => core.backends.status(p.project, await backendRoot(x, core, p)),
+    [HostMethod.GameBackendStart]: async (p) => core.backends.start(p.project, await backendRoot(x, core, p)),
+    [HostMethod.GameBackendStop]: async (p) => core.backends.stop(p.project, await backendRoot(x, core, p)),
+    [HostMethod.GameBackendRestart]: async (p) => core.backends.restart(p.project, await backendRoot(x, core, p)),
+    [HostMethod.GameBackendLogs]: async (p) =>
+      core.backends.logs(await backendRoot(x, core, p), typeof p.lines === "number" ? p.lines : undefined),
   } satisfies Partial<HarnessHostHandlers>;
+}
+
+/**
+ * The copy a backend call names: a worktree of a library game under the studio's scratch (checked
+ * by real path), or the game folder when it names none.
+ */
+async function backendRoot(
+  x: CoreInternals,
+  core: StudioCore,
+  p: { project: string; root?: string | null },
+): Promise<string> {
+  return (await x.assertHarnessRoot(p.project, p.root)) ?? core.games.dirFor(p.project);
 }
 
 async function scaffold(

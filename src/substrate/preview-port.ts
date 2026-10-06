@@ -39,6 +39,11 @@ export interface ShimOptions {
   counters: boolean;
   /** Beyond this many outstanding timers the wrapper passes through to the natives. */
   maxTimers: number;
+  /**
+   * Where this copy's game backend instance is (`GameBackendOrigin`): the page reads it as
+   * `window.__studioBackend`. Null when the copy declares no backend or it does not run.
+   */
+  backend: { http: string; ws: string } | null;
 }
 
 /**
@@ -81,14 +86,16 @@ export interface PageAttachReport {
 export interface PreviewPort {
   invalidateProfile?(reason: string): Promise<void>;
   profile?(request: import("./preview-profiler.ts").ProfileRequest): Promise<unknown>;
-  /** `root` is a playable worktree; omit it to serve the live game folder. `loopback` serves it as http://localhost:<port>/ — what a game with its own shape expects. `shim` overrides the page shim for this load (the boot budget is the one that changes per game). */
+  /** `root` is a playable worktree; omit it to serve the live game folder. `loopback` serves it as http://localhost:<port>/ — what a game with its own shape expects. `shim` overrides the page shim for this load (the boot budget is the one that changes per game). `backendRoot` is the copy (a real path) whose game backend instance the page may reach. */
   load(
     project: string,
     entry?: string,
     root?: string,
-    options?: { loopback?: boolean; shim?: Partial<ShimOptions> },
+    options?: { loopback?: boolean; shim?: Partial<ShimOptions>; backendRoot?: string },
   ): Promise<string>;
   reload(): Promise<void>;
+  /** Optional: the copy of the game (a real path) whose backend instance this window's page may reach. */
+  backendRoot?(): string | null;
   /** Optional: the person's Stop — the page is taken off the view until `resume`. */
   stop?(): Promise<void>;
   /** Optional: the person's Play on a stopped page — the same page again, from the top. */

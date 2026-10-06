@@ -41,6 +41,12 @@ export function optimizationRpc(core: StudioCore, x: CoreInternals) {
       return result;
     },
     [HostMethod.OptimizationReconcile]: async (p) => core.candidates.reconcile(p.project, p.baseline, p.candidate),
-    [HostMethod.OptimizationClose]: async (p) => core.candidates.close(p.candidateId),
+    [HostMethod.OptimizationClose]: async (p) => {
+      // A candidate's two copies each may have run a game backend instance: stopped before they go.
+      const candidate = await core.candidates.get(p.candidateId).catch(() => null);
+      if (candidate)
+        await Promise.all([candidate.root, candidate.baselineRoot].map((root) => core.backends.discard(root)));
+      return core.candidates.close(p.candidateId);
+    },
   } satisfies Partial<HarnessHostHandlers>;
 }

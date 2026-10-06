@@ -48,6 +48,8 @@ async function clearWorktree(core: StudioCore, x: CoreInternals, project: string
   // H2: the old worktree is removed host-side and a new one made in its place; a link
   // planted under scratch (`autopilot/<runId> -> ~`) would carry both out of it.
   await x.assertNoLinkBelow(scratch, dir);
+  // The old copy's game backend goes with it: the new worktree starts an instance of its own.
+  await core.backends.discard(dir);
   await core.snapshots.removeWorktree(project, dir);
   core.builds.forget(dir);
   await x.assertNoLinkBelow(scratch, dir);
@@ -141,6 +143,8 @@ export function snapshotRpc(core: StudioCore, x: CoreInternals) {
       // Lexically inside is not enough: scratch is sandbox-writable, so a link planted in it
       // would carry the rm anywhere. Checked again right before the rm, after git's slow part.
       await x.assertNoLinkBelow(scratch, target);
+      // Its game backend instance runs in the folder about to go: stopped, and its data removed, first.
+      await core.backends.discard(target);
       await core.snapshots.removeWorktree(p.project, target);
       core.builds.forget(target);
       await x.assertNoLinkBelow(scratch, target);

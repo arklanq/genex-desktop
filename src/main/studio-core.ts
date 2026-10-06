@@ -88,7 +88,7 @@ import { PluginNativeServices } from "../substrate/plugins/native.ts";
 import { PluginRegistry } from "../substrate/plugins/registry.ts";
 import { PluginServices } from "../substrate/plugins/services.ts";
 import type { PreviewInputAction } from "../substrate/preview-input.ts";
-import { DEFAULT_POOL_MAX } from "../substrate/preview-pool.ts";
+import { DEFAULT_POOL_MAX, LIVE_HANDLE } from "../substrate/preview-pool.ts";
 import type { PreviewConsoleEntry, PreviewPixelStats, PreviewPort } from "../substrate/preview-port.ts";
 import { SnapshotEngine, SnapshotIndex, HARNESS_WORKSPACE } from "../substrate/snapshots.ts";
 import { claudeFolderDenyWrites, ProcessSandbox } from "../substrate/spawn.ts";
@@ -145,6 +145,15 @@ import { PluginConsent } from "./plugin-consent.ts";
 import { assertOwnedProject } from "./project-policy.ts";
 import { seedUpgradedPayload } from "./seed-upgrade-notice.ts";
 import { SeedUpgradeMode } from "../substrate/seed-upgrade.ts";
+import { killProcessTree } from "../substrate/process-tree.ts";
+import {
+  GameBackends,
+  dockerSocketPaths,
+  loopbackPortFree,
+  probeHealth,
+  processGroupAlive,
+  processStartTime,
+} from "./core/game-backends.ts";
 
 export type { PreviewInputAction };
 export type { PreviewConsoleEntry, PreviewPixelStats, PreviewPort };
@@ -305,6 +314,11 @@ export interface StudioCoreOptions {
   codexExecutable?: string;
   /** Disable the sandbox only in tests that assert the unsandboxed path. */
   sandbox?: boolean;
+  /**
+   * Game backends may reach the Docker socket (testcontainers). The person's switch
+   * (`STUDIO_ALLOW_GAME_BACKEND_DOCKER=1`), never something a game or an agent can set.
+   */
+  allowGameBackendDocker?: boolean;
   /** The self-edit gate's type check (substrate/type-gate.ts); the time limit is a test seam. */
   typeGate?: { timeoutMs?: number };
   /**
@@ -350,6 +364,8 @@ export class StudioCore {
   sandbox!: ProcessSandbox;
   /** Builds a game that builds itself — never inside the folder the user owns. */
   builds!: GameBuilds;
+  /** The server processes games declare in studio.json (`backend`), run in the sandbox. */
+  backends!: GameBackends;
   plugins!: PluginRegistry;
   pluginServices!: PluginServices;
   /**
@@ -555,6 +571,10 @@ export class StudioCore {
     this.sandbox = sandbox;
     await this.#wireMcp();
     this.builds = this.#createBuilds();
+    this.backends = this.#createBackends();
+    // What a crash of the last session left running goes before anything starts a new instance.
+    await this.backends.sweepOrphans();
+    this.backends.startIdleSweeps();
     this.#registerEngines();
     this.host = this.#createHarnessHost();
     mark("engines");
@@ -904,6 +924,43 @@ export class StudioCore {
     await this.plugins.syncMcpServers();
   }
 
+  /**
+   * Game backends: one instance per copy of a game, started in the sandbox, with the Docker socket
+   * only when the person allowed it, and at most as many at once as there are preview windows.
+   */
+  #createBackends(): GameBackends {
+    return new GameBackends({
+      spawn: async (launch) => (await this.sandbox.spawnLongLived(launch)).child,
+      probe: probeHealth,
+      portFree: loopbackPortFree,
+      killTree: (pid, signal) => killProcessTree(pid, { signal }),
+      processStart: processStartTime,
+      groupAlive: processGroupAlive,
+      inUse: (root) => this.#backendInUse(root),
+      maxInstances: () => this.#x.previewPool?.max ?? DEFAULT_POOL_MAX,
+      dataRoot: path.join(this.layout.scratch, "backends"),
+      dockerAllowed: this.options.allowGameBackendDocker === true,
+      dockerSockets: dockerSocketPaths(),
+      log: (line) => this.options.onLog?.(line, "stderr"),
+    });
+  }
+
+  /** A copy of a game is in use while a window shows it or a session works in it. */
+  #backendInUse(root: string): boolean {
+    const working = [...this.#x.activeDelegations.keys()].some((cwd) => path.resolve(cwd) === root);
+    if (working) return true;
+    const pool = this.#x.previewPool;
+    if (!pool) return false;
+    const handles = [LIVE_HANDLE, ...pool.leases().map((lease) => lease.handle)];
+    return handles.some((handle) => {
+      try {
+        return pool.port(handle).backendRoot?.() === root;
+      } catch {
+        return false;
+      }
+    });
+  }
+
   #createBuilds(): GameBuilds {
     return new GameBuilds({
       root: path.join(this.layout.scratch, "builds"),
@@ -1106,6 +1163,8 @@ export class StudioCore {
       );
     this.#x.pluginTurnLeases.clear();
     await this.#x.previewPool?.disposeAll().catch(() => {});
+    // A game's server belongs to this studio too: its port closes and its process tree goes.
+    await this.backends?.stopAll().catch(() => {});
     // A connector's child process belongs to this studio, not to the Mac: it goes when we go.
     await this.mcp?.close().catch(() => {});
     await this.ollamaSidecar.stop().catch(() => {});

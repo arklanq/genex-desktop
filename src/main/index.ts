@@ -580,6 +580,7 @@ async function createCore(userData: string): Promise<StudioCore> {
     // Smoke runs keep everything under their throwaway userData.
     ...launchCoreOptions(),
     ...(ollamaHost ? { ollamaHost } : {}),
+    allowGameBackendDocker: process.env.STUDIO_ALLOW_GAME_BACKEND_DOCKER === "1",
     // Electron's binary doubles as node for the harness child process.
     execPath: process.execPath,
     runAsNode: true,
@@ -738,6 +739,7 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
     gamesRoot: studio.layout.gamesRoot,
     vendorDir: path.join(resources, "vendor"),
     resolveRoot: (name) => studio.games.dirFor(name),
+    backendPort: (root) => studio.backends.portFor(root),
   });
   preview = view;
   studio.options.preview = view;
@@ -810,6 +812,7 @@ function createFacetPreview(studio: StudioCore, index: number, released: () => v
     // Builders, playtesters, reviewers and the lead all play the game here; only Live is heard.
     muted: true,
     resolveRoot: (name) => studio.games.dirFor(name),
+    backendPort: (root) => studio.backends.portFor(root),
   });
   port.attachTo(facetWin, { x: 0, y: 0, width: FACET_WINDOW.width, height: FACET_WINDOW.height });
   port.dispose = async () => {
