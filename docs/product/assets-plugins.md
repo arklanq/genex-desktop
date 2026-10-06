@@ -34,7 +34,7 @@ Genex bundles its MCP with the same account: game/animation search, owned games 
 generation status. Studio’s host tools handle generation, delivery, credits and publishing,
 and run the pinned Genex CLI outside the game: `genex__cli` free; `genex__cli-paid` and
 `genex__package` (pinned multiplayer or player-identity package, build games) after consent.
-Publish (a host-drawn dialog on the stage) updates draft and public version together.
+Publish (a host-drawn stage dialog) tests the draft before making it public.
 Agents read Genex’s guide and cards via `genex__skill`, never from game files.
 Plugin MCPs connect on first use; the composer shows only actionable failures.
 

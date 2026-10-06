@@ -29,6 +29,14 @@ import { EngineFailure } from "./outage.ts";
 import { VerdictSource } from "./verdict.ts";
 import { WorkerState } from "./outcomes.ts";
 import { clip, CLIP_DETAIL, CLIP_REASON } from "./text.ts";
+import type { HarnessWorkClass } from "../types/host-api.d.ts";
+
+/**
+ * Every model call a pass makes is improvement work. Without the tag the host books it as user
+ * work, so the budget ledger never refuses a pass while a build is running and never counts it
+ * against the improvement share (`substrate/budget.ts`).
+ */
+const IMPROVEMENT_WORK: HarnessWorkClass = "improvement";
 
 /** A replayable sub-task mined from the log: what was asked, whether it went well, and what showed it. */
 export interface ValidationTask {
@@ -370,6 +378,7 @@ async function distillLessons(
   const response = await ctx.call(HostMethod.EngineComplete, {
     engine,
     model,
+    class: IMPROVEMENT_WORK,
     systemPrompt: [
       "You maintain a short list of lessons that go into every game builder's brief. Each lesson is one concrete, general sentence a builder can act on (a helper's shape, a merge rule, a capture habit, a check to run before re-tuning).",
       "From the builders' own notes below, propose at most 4 NEW lessons that recur or would clearly recur, and name any CURRENT lesson that the notes show is wrong. Never restate a current lesson.",
@@ -707,6 +716,7 @@ async function analyse(
   const response = await ctx.call(HostMethod.EngineComplete, {
     engine,
     model,
+    class: IMPROVEMENT_WORK,
     systemPrompt,
     stream: false,
     effort: LIGHT_EFFORT,
@@ -760,6 +770,7 @@ async function describeEdits(
   const response = await ctx.call(HostMethod.EngineComplete, {
     engine,
     model,
+    class: IMPROVEMENT_WORK,
     systemPrompt,
     stream: false,
     effort: LIGHT_EFFORT,
@@ -859,6 +870,7 @@ async function gateCandidate(
     const response = await ctx.call(HostMethod.EngineComplete, {
       engine,
       model,
+      class: IMPROVEMENT_WORK,
       systemPrompt,
       stream: false,
       effort: LIGHT_EFFORT,

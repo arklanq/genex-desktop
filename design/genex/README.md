@@ -41,7 +41,8 @@ for principles and skill routing.
   Nothing claims to be empty (No matches, No screenshot, stripes for a missing still) before its
   read has answered, and a read that fails says so instead of checking forever. Media keeps a
   plain inset tile of its final size while it loads; an agent's turn keeps `LoadingState`; actions
-  swap their button label (**Sending…**) and disable it.
+  swap their button label (**Sending…**) and disable it; a long one (Publish) is `Button busy`:
+  a spinner, same fill, no second press.
 - **Interaction:** enabled controls and their children use pointer cursors. Keep visible
   keyboard focus through a contrasting 2px inset edge, appropriate disabled states, semantic
   names and safe dialog dismissal. Focus must be distinct from hover without external rings;

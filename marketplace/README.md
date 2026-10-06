@@ -39,8 +39,9 @@ The app enforces the same official ids and artifact origins itself (`STUDIO_CATA
 `policy.json` allows but the app does not is dropped by every Studio build. Change both together.
 
 Output:
-- `catalog/`: index, immutable release records, maintainer policy, submission guide, validator,
-  its tests and PR CI. The policy reserves each `official` package as
+- `catalog/`: index, immutable release records, maintainer policy, submission guide and pull
+  request template, validator, its tests, the artifact staging step for community submissions
+  (`scripts/stage-artifact.mjs`) and PR CI. The policy reserves each `official` package as
   `official[id] = {publisher, repos: [repo]}`; when an official source has moved, list its
   previous repositories after the current one.
 - `uploads/`: content-addressed envelopes, separate from Git metadata.

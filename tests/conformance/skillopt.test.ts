@@ -549,6 +549,57 @@ describe("skillopt: the gate", () => {
     }
   });
 
+  it("books every model call of a pass as improvement work, so the budget ledger can refuse it while a build runs", async () => {
+    const workspace = path.join(await tmpDir("skillopt-class-"), "ws");
+    await mkdir(path.join(workspace, "skills"), { recursive: true });
+    await writeFile(path.join(workspace, "skills", "camera.md"), SKILL);
+    const history = ["gap one", "gap two", "gap three", "gap four"].map((gap, i) => ({
+      id: String(i + 1),
+      data: {
+        type: "custom",
+        event_type: "run_iteration",
+        payload: { iteration: i + 1, winner: "incumbent", biggest_gap: gap },
+      },
+    }));
+    const classes: unknown[] = [];
+    const ctx = {
+      workspace,
+      cancelled: false,
+      setStatus() {},
+      notify() {},
+      async call(method: string, params: Record<string, unknown>) {
+        if (method === "thread.list") return [];
+        if (method === "events.list") return history;
+        if (method === "artifact.read") return [];
+        if (method === "artifact.write" || method === "events.append") return true;
+        if (method === "engine.complete") {
+          classes.push(params.class);
+          const text = (params.messages as Array<{ content: string }>)[0]!.content;
+          if (text.includes("SKILL FILE")) {
+            return {
+              message: {
+                content: JSON.stringify({
+                  edits: [{ op: "append", text: "- Keep the horizon level." }],
+                  rationale: "r",
+                }),
+              },
+            };
+          }
+          if (text.includes("PROPOSED EDITS")) return { message: { content: "{}" } };
+          return { message: { content: JSON.stringify({ pick: "tie", reason: "same" }) } };
+        }
+        throw new Error(`unexpected call ${method}`);
+      },
+    };
+    await runSkillOpt(ctx as never, { threadId: "t1" });
+    assert.ok(classes.length >= 3, "the analyst, its plain words and the gate votes all reached the engine");
+    assert.deepEqual(
+      [...new Set(classes)],
+      ["improvement"],
+      "an untagged call is booked as user work and slips past the improvement budget",
+    );
+  });
+
   it("golden-boot-glory: a skill serves every game, so the analyst proposes no rule for one sport or game and the gate counts one against a version", async () => {
     const workspace = path.join(await tmpDir("skillopt-general-"), "ws");
     await mkdir(path.join(workspace, "skills"), { recursive: true });

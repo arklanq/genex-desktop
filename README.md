@@ -40,6 +40,10 @@ Genex is early: expect rough edges, and tell us about them in
 → Unity and Unreal plugins soon\
 → Native C++ games soon
 
+> [!TIP]
+> Have a tool your games need? [Build a plugin](#build-a-plugin) and put it in the Genex
+> Marketplace for everyone.
+
 ### Contributing
 
 You need macOS on Apple Silicon, Git and Node 24.
@@ -55,6 +59,26 @@ npm run studio:dev -- start --profile first-run --fixture app-basics
 The fixture runs the app with scripted models and sample games, so it needs no account. Read
 [CONTRIBUTING.md](CONTRIBUTING.md) before you open a pull request; coding agents start at
 [AGENTS.md](AGENTS.md).
+
+### Build a plugin
+
+Plugins give Genex's agents new tools: an asset generator, an engine bridge, a service your
+game talks to. The Blender and Genex tools that ship with the app are plugins too. From a Genex
+checkout:
+
+```bash
+npm run plugin:new -- my-plugin --out ~/studio-plugins   # scaffold it from the example
+npm run plugin:doctor -- ~/studio-plugins/my-plugin      # check it the way Genex will
+```
+
+1. **Try it**: in the app, **Plugins → Add → Load local plugin…** and pick the folder.
+2. **Share it**: push it to a public GitHub repository and publish a release for each version.
+   Anyone can install it from there with **Plugins → Add → Install from GitHub…**.
+3. **List it**: open a pull request to
+   [genex-plugins](https://github.com/genex-games/genex-plugins/blob/main/CONTRIBUTING.md). A
+   maintainer reviews it, and it appears in every Genex app's Marketplace.
+
+The [plugin guide](docs/PLUGIN_GUIDE.md) covers tools, panels, settings and accounts.
 
 ### Documentation
 

@@ -157,8 +157,11 @@ export interface StudioApi {
   pluginAction(id: string, name: string, args: unknown, project?: string, ticket?: string): Promise<unknown>;
   /** The files Publish would put online for a game, for Studio's Publish dialog to show. Uploads nothing. */
   genexPublishReview(project: string): Promise<ExportReview>;
-  /** Publish the game to the Genex gallery from Studio's Publish dialog, after the person approved `review`. */
-  genexPublish(project: string, review: ExportReview): Promise<void>;
+  /**
+   * Publish the game to the Genex gallery from Studio's Publish dialog: its Publish press approved
+   * the files in `review`; `title` is the name players see.
+   */
+  genexPublish(project: string, review: ExportReview, title?: string): Promise<void>;
   pluginsIndex(refresh?: boolean): Promise<PluginIndexView>;
   pluginInstallGithub(spec: string): Promise<void>;
   /** What a pasted GitHub link leads to, pinned to one exact commit; nothing is installed. */

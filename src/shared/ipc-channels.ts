@@ -264,7 +264,7 @@ export interface StudioInvokePayloads {
   "studio:plugins.review": { id: string; name: string; args: unknown; project?: string };
   "studio:plugins.action": { id: string; name: string; args: unknown; project?: string; ticket?: string };
   "studio:plugins.genex-publish-review": { project: string };
-  "studio:plugins.genex-publish": { project: string; review: ExportReview };
+  "studio:plugins.genex-publish": { project: string; review: ExportReview; title?: string };
   "studio:plugins.index": { refresh?: boolean };
   "studio:plugins.install-github": { spec: string };
   "studio:plugins.lookup-github": { link: string; version?: GithubVersion };

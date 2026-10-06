@@ -67,7 +67,13 @@ unsigned Windows packages, remain Actions artifacts. Each packaged platform
 also exercises its terminal; Windows checks
 the installer/uninstaller and a scripted packaged chat turn. Apps and DMGs both
 need notarization/stapling. Platform provenance records the source and lock digest alongside
-artifact hashes; `SHA256SUMS` covers the final inventory. Existing public assets and drafts from
+artifact hashes; `SHA256SUMS` covers the final inventory. Download links use
+`releases/latest/download/<name>`, so every release, prereleases included, also carries
+version-free names: `Genex.dmg`, byte-identical copies of the Linux packages
+(`Genex-linux-amd64.deb`, `Genex-linux-x86_64.rpm`, `Genex-linux-x64.zip`, made by
+`scripts/release-downloads.mjs` beside the versioned files, which keep their names) and, once
+Windows ships, `Genex-Setup.exe`. A draft missing one is refused (`assertStableDownloads`).
+GitHub's `latest` is the newest full release, never a prerelease. Existing public assets and drafts from
 a different source cannot be replaced. The owner merges the version bump into `main`, and
 `tag-release.yml` creates the matching annotated tag on that commit and dispatches `release.yml`
 on it (a tag the workflow token pushes starts no workflow); a version whose tag exists is left

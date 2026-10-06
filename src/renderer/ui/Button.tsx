@@ -82,17 +82,39 @@ const buttonVariants = cva(
   },
 );
 
+/** The spinner a busy button leads with: current colour, still under reduced motion. */
+function ButtonSpinner() {
+  return (
+    <span
+      aria-hidden
+      data-button-spinner
+      className="size-3.5 shrink-0 animate-spin rounded-full border-[1.5px] border-current border-t-transparent motion-reduce:animate-none"
+    />
+  );
+}
+
+/**
+ * `busy`: the press is being carried out. The button keeps its fill and size (a working button
+ * never looks unavailable), leads with a spinner, says so to assistive tech and takes no second
+ * press; the caller swaps its label to the verb in progress ("Publishing…").
+ */
 function Button({
   className,
   variant,
   size,
   asChild = false,
+  busy = false,
+  children,
+  onClick,
+  "aria-disabled": ariaDisabled,
   ...props
 }: React.ComponentProps<"button"> &
   VariantProps<typeof buttonVariants> & {
     asChild?: boolean;
+    busy?: boolean;
   }) {
   const Comp = asChild ? Slot : "button";
+  const working = busy && !asChild;
 
   return (
     <Comp
@@ -100,9 +122,18 @@ function Button({
       data-variant={variant ?? "secondary"}
       data-size={size ?? "sm"}
       type="button"
-      className={cn(buttonVariants({ variant, size, className }))}
+      className={cn(
+        buttonVariants({ variant, size, className }),
+        working && "cursor-progress enabled:active:scale-100",
+      )}
+      aria-busy={working || undefined}
+      aria-disabled={working || ariaDisabled}
+      onClick={working ? undefined : onClick}
       {...props}
-    />
+    >
+      {working && <ButtonSpinner />}
+      {children}
+    </Comp>
   );
 }
 
