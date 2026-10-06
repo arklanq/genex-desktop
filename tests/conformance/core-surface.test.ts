@@ -122,6 +122,7 @@ const METHODS = [
 const ACCESSORS = ["assetCheckpoints", "pendingUpdateId", "planReviews", "settings"];
 /** Own enumerable fields after `init()` (true `#private` state is not visible and not listed). */
 const FIELDS = [
+  "backends",
   "budget",
   "builds",
   "candidates",

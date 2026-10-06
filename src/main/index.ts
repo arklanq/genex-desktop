@@ -116,7 +116,7 @@ import { openStudioLog } from "./logs.ts";
 import { migrateLegacyUserData, userDataMigrationLine } from "./user-data-migration.ts";
 import { confirmPluginInstall, reacquirePlugin } from "./plugin-install-dialog.ts";
 import { HttpStatus, textResponse } from "./page-serve.ts";
-import { GamePreview, registerGameScheme } from "./preview.ts";
+import { GamePreview, closeBackendPort, openBackendPort, registerGameScheme } from "./preview.ts";
 import { RunSummaryReader } from "./run-summary-reader.ts";
 import { registerRunSharingIpc } from "./ipc/run-sharing.ts";
 import { createRunSharing, finishedBuildRef, launchSends, runsOrigin } from "./run-sharing.ts";
@@ -580,6 +580,8 @@ async function createCore(userData: string): Promise<StudioCore> {
     // Smoke runs keep everything under their throwaway userData.
     ...launchCoreOptions(),
     ...(ollamaHost ? { ollamaHost } : {}),
+    allowGameBackendDocker: process.env.STUDIO_ALLOW_GAME_BACKEND_DOCKER === "1",
+    backendPorts: { open: openBackendPort, close: closeBackendPort },
     // Electron's binary doubles as node for the harness child process.
     execPath: process.execPath,
     runAsNode: true,

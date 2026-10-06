@@ -106,6 +106,7 @@ const STAND_IN_IDLE_MS = 2 * MINUTE_MS;
 /** Errors the user reads when a build cannot be shown or landed, and why a reference is no still. */
 const MESSAGE = {
   noPreview: "no preview is attached (headless mode)",
+  backendDown: (reason: string) => `The game's backend is not running: ${reason}`,
   profilingNeedsStage: "profiling requires a stage preview",
   previewChanged: "The selected preview changed while this build was preparing. Open the build again when ready.",
   noGameInSnapshot: "that snapshot has no game to play",
@@ -470,9 +471,12 @@ export class PreviewService {
     if (isLive)
       this.#showIdentity({ project: p.project, head: null, state: PreviewIdentityState.Loading, error: null });
     try {
+      const backendDown = await this.#core.backends?.ensureStarted(p.project, this.#core.games.dirFor(p.project));
       const served = await this.servedEntry(p.project, checkedRoot, p.entry, port, { fallback: isLive });
       if (!served) return unservedUrl(p);
       const url = await port.load(p.project, served.entry, served.root, { loopback: served.loopback });
+      // The page loads without its server; the console line says why its requests fail.
+      if (backendDown) port.note?.("error", MESSAGE.backendDown(backendDown));
       // Only now is Live current: a load that failed leaves what waited for Reload waiting.
       if (isLive) await this.#live.loaded(p.project, { print, root: checkedRoot });
       remembered.loaded = servedKey(served);
