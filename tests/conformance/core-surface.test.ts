@@ -52,6 +52,8 @@ const METHODS = [
   "listAllEvents",
   "liveState",
   "loadPreview",
+  // Home's Make your own writes a live background on the model the user picked (backdrop-generation.ts).
+  "makeBackdrop",
   "messageImages",
   // A game started from its first request is named before its folder is made (studio:game.name).
   "nameGame",

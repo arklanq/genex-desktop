@@ -5,6 +5,7 @@
  * counterparts, so a component under test hears pushes exactly as it would from the preload.
  */
 import type { StudioApi } from "../../src/shared/studio-api.ts";
+import { ShaderFailure } from "../../src/shared/backdrop-shader.ts";
 import { CliInstallPhase } from "../../src/shared/cli-install.ts";
 
 export type StudioMethod = keyof StudioApi;
@@ -84,6 +85,7 @@ const METHODS = [
   "games",
   "createGame",
   "nameGame",
+  "makeBackdrop",
   "pickGameLocation",
   "updateGame",
   "removeGame",
@@ -108,6 +110,12 @@ const METHODS = [
   "openCodeSignIn",
   "openRouterKeySave",
   "openRouterKeyClear",
+  "openRouterSignIn",
+  "openRouterSignInReopen",
+  "openRouterSignInCancel",
+  "localServerConnect",
+  "localServerForget",
+  "localServerFind",
   "terminalList",
   "terminalAccessibility",
   "terminalOpen",
@@ -291,6 +299,7 @@ function defaults(): Partial<Record<StudioMethod, () => unknown>> {
     pickProject: () => null,
     pickGameLocation: () => null,
     nameGame: () => ({ title: "Untitled game" }),
+    makeBackdrop: () => ({ ok: false, failure: ShaderFailure.NoModel }),
   };
 }
 

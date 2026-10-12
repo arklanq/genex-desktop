@@ -524,7 +524,7 @@ describe("the composer's plan limits", () => {
       engines: { has: (id: string) => id in engines, get: (id: string) => engines[id] },
     } as unknown as ModelsIpcDeps["core"];
     const { handle, invoke } = registrar();
-    registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: () => {} });
+    registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: () => {}, openRouterLogin: noSignIn });
     assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [{ engine: "claude-code", usage }] });
     engines.codex = {
       status: async () => ({ code: "ready" }),
@@ -643,7 +643,7 @@ it("model refresh validates provider identities before invoking discovery", asyn
   // Only the registrar's engine registry is needed; no profile or credentials are opened.
   const core = { engines };
   const { handle, invoke } = registrar();
-  registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: () => {} });
+  registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: () => {}, openRouterLogin: noSignIn });
   for (const provider of [undefined, null, 7, {}, "../codex", "ollama", ""]) {
     assert.equal((await invoke("studio:models.refresh", { provider })).ok, false);
     assert.equal(calls, 0);
@@ -673,12 +673,22 @@ it("model refresh and recheck reach OpenCode and OpenRouter, which have no subsc
     core: { engines },
     subscription: () => null,
     pushUiEvent: (event) => events.push(event),
+    openRouterLogin: noSignIn,
   });
   assert.deepEqual(await invoke("studio:models.refresh", { provider: "opencode" }), { ok: true, value: true });
   assert.deepEqual(await invoke("studio:engines.recheck", { engine: "openrouter" }), { ok: true, value: true });
   assert.deepEqual(refreshed, ["opencode true", "openrouter true"]);
   assert.deepEqual(events, [{ type: "engines.changed", payload: {} }]);
 });
+
+/** A browser sign-in that is never started: the registrars under test do not reach it. */
+const noSignIn: ModelsIpcDeps["openRouterLogin"] = {
+  start: async () => {
+    throw new Error("no browser sign-in in this test");
+  },
+  reopen: async () => false,
+  cancel: () => false,
+};
 
 /** The status code an engine-status answer carries. */
 const statusCode = (value: unknown): unknown => (value as { code?: unknown } | null)?.code;
@@ -700,6 +710,7 @@ it("the OpenRouter key is saved and forgotten through the engine, and only its s
       core: { engines },
       subscription: () => null,
       pushUiEvent: (event) => events.push(event),
+      openRouterLogin: noSignIn,
     });
     // Hostile payloads: nothing is kept, and no answer ever carries a key.
     for (const payload of [
@@ -729,6 +740,67 @@ it("the OpenRouter key is saved and forgotten through the engine, and only its s
   }
 });
 
+it("the browser sign-in hands its key to the engine, and only how it ended comes back", async () => {
+  const { EngineRegistry } = await import("../../src/substrate/engines/registry.ts");
+  const { OpenRouterEngine } = await import("../../src/substrate/engines/openrouter.ts");
+  const { memoryKeyStore } = await import("../../src/substrate/provider-keys.ts");
+  const { tmpDir } = await import("../helpers/tmp.ts");
+  const { startFakeOpenRouter, GOOD_KEY } = await import("../helpers/fake-openrouter.ts");
+  const server = await startFakeOpenRouter();
+  try {
+    const keys = memoryKeyStore(null);
+    const engines = new EngineRegistry();
+    engines.register(new OpenRouterEngine({ root: await tmpDir("ipc-openrouter-"), keys, baseUrl: server.baseUrl }));
+    const events: UiEvent[] = [];
+    const calls: string[] = [];
+    // The browser sign-in itself is `openrouter-login.test.ts`; here it returns with this key at once.
+    const returning = (key: string): ModelsIpcDeps["openRouterLogin"] => ({
+      start: async (saveKey) => {
+        calls.push("start");
+        const status = await saveKey(key);
+        return status.code === "ready" ? { outcome: "connected" } : { outcome: "failed", error: status.detail };
+      },
+      reopen: async () => {
+        calls.push("reopen");
+        return true;
+      },
+      cancel: () => {
+        calls.push("cancel");
+        return true;
+      },
+    });
+    const { handle, invoke } = registrar();
+    let login = returning("sk-or-v1-refused-refused-refused");
+    registerModelsIpc(handle, {
+      core: { engines },
+      subscription: () => null,
+      pushUiEvent: (event) => events.push(event),
+      openRouterLogin: {
+        start: (saveKey) => login.start(saveKey),
+        reopen: () => login.reopen(),
+        cancel: () => login.cancel(),
+      },
+    });
+    const refused = await invoke("studio:openrouter.signin");
+    assert.equal(refused.ok && (refused.value as { outcome?: string }).outcome, "failed");
+    assert.equal(await keys.read(), null, "a key OpenRouter refuses is not kept");
+    login = returning(GOOD_KEY);
+    const connected = await invoke("studio:openrouter.signin");
+    assert.deepEqual(connected, { ok: true, value: { outcome: "connected" } });
+    assert.equal(await keys.read(), GOOD_KEY);
+    assert.deepEqual(await invoke("studio:openrouter.signin.reopen"), { ok: true, value: true });
+    assert.deepEqual(await invoke("studio:openrouter.signin.cancel"), { ok: true, value: true });
+    assert.deepEqual(calls, ["start", "start", "reopen", "cancel"]);
+    assert.deepEqual(
+      events.map((event) => event.type),
+      ["engines.changed", "engines.changed"],
+      "each sign-in that ends says the engines changed",
+    );
+  } finally {
+    await server.close();
+  }
+});
+
 it("deleting a model asks the local engine that owns it and announces the change", async () => {
   const removed: string[] = [];
   const events: UiEvent[] = [];
@@ -740,7 +812,12 @@ it("deleting a model asks the local engine that owns it and announces the change
     engines: { has: (id: string) => id in engines, get: (id: string) => engines[id] },
   } as unknown as ModelsIpcDeps["core"];
   const { handle, invoke } = registrar();
-  registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: (event) => events.push(event) });
+  registerModelsIpc(handle, {
+    core,
+    subscription: () => null,
+    pushUiEvent: (event) => events.push(event),
+    openRouterLogin: noSignIn,
+  });
   assert.deepEqual(await invoke("studio:models.remove", { model: "bonsai-2:27b-ptq1_0" }), { ok: true, value: true });
   assert.deepEqual(await invoke("studio:models.remove", { model: "gemma4:12b" }), { ok: true, value: true });
   assert.deepEqual(removed, ["bonsai bonsai-2:27b-ptq1_0", "ollama gemma4:12b"]);

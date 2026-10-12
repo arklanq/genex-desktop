@@ -52,6 +52,7 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:hardware": "hardware",
   "studio:game.create": "createGame",
   "studio:game.name": "nameGame",
+  "studio:backdrop.make": "makeBackdrop",
   "studio:game.location.pick": "pickGameLocation",
   "studio:games-root.choose": "chooseGamesRoot",
   "studio:game.update": "updateGame",
@@ -122,6 +123,12 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:opencode.signin": "openCodeSignIn",
   "studio:openrouter.key.save": "openRouterKeySave",
   "studio:openrouter.key.clear": "openRouterKeyClear",
+  "studio:openrouter.signin": "openRouterSignIn",
+  "studio:openrouter.signin.reopen": "openRouterSignInReopen",
+  "studio:openrouter.signin.cancel": "openRouterSignInCancel",
+  "studio:local-server.connect": "localServerConnect",
+  "studio:local-server.forget": "localServerForget",
+  "studio:local-server.find": "localServerFind",
   "studio:terminal.list": "terminalList",
   "studio:terminal.accessibility": "terminalAccessibility",
   "studio:terminal.open": "terminalOpen",
@@ -235,6 +242,7 @@ export interface StudioInvokePayloads {
   "studio:hardware": undefined;
   "studio:game.create": { title: string } & NonNullable<Arg<"createGame", 1>>;
   "studio:game.name": Arg<"nameGame", 0>;
+  "studio:backdrop.make": Arg<"makeBackdrop", 0>;
   "studio:game.location.pick": undefined;
   "studio:games-root.choose": undefined;
   "studio:game.update": { project: string; patch: Arg<"updateGame", 1> };
@@ -306,6 +314,12 @@ export interface StudioInvokePayloads {
   "studio:opencode.signin": undefined;
   "studio:openrouter.key.save": { key: string };
   "studio:openrouter.key.clear": undefined;
+  "studio:openrouter.signin": undefined;
+  "studio:openrouter.signin.reopen": undefined;
+  "studio:openrouter.signin.cancel": undefined;
+  "studio:local-server.connect": { url: string; key?: string };
+  "studio:local-server.forget": undefined;
+  "studio:local-server.find": undefined;
   "studio:terminal.list": undefined;
   "studio:terminal.accessibility": undefined;
   "studio:terminal.open": { project: string };

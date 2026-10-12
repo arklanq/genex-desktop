@@ -1,4 +1,5 @@
 import type { ModelCatalogStatus } from "../../shared/model-catalog.ts";
+import type { LocalServerInfo } from "../../shared/local-server.ts";
 import type { ProviderUsage } from "../../shared/provider-usage.ts";
 import type { ModelPreferences } from "../../shared/model-preferences.ts";
 import type { EngineAccount, EngineKind, EngineStatus } from "../../shared/engine-descriptor.ts";
@@ -27,8 +28,9 @@ export type { EngineAccount, EngineStatus, EngineStatusCode } from "../../shared
  *    with its own subscription login (D8 — we never see or store a token), and each translates
  *    its own event stream into the one vocabulary the studio's log speaks.
  *
- * The one API key the studio holds is OpenRouter's, a direct engine on the same pi-ai path as
- * Ollama's: the key is pasted in Settings, kept in the OS secret store, and never leaves main.
+ * The API keys the studio holds are OpenRouter's and a local server's (`local-server.ts`), direct
+ * engines on the same pi-ai path as Ollama's: each key is pasted in Settings, kept in the OS secret
+ * store, and never leaves main.
  * OpenCode is a third delegated harness, which keeps its own sign-ins in its own store.
  */
 import type { Message } from "../types.ts";
@@ -463,6 +465,8 @@ export interface Engine {
   readUsage?(): Promise<ProviderUsage | null>;
   /** Subscription engines: login source and CLI summary for Settings. */
   account?(): Promise<EngineAccount>;
+  /** A local server engine: the saved server for Settings, or null while none is saved. */
+  server?(): Promise<LocalServerInfo | null>;
   readonly id: string;
   readonly label: string;
   readonly kind: EngineKind;

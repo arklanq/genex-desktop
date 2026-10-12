@@ -135,6 +135,7 @@ export class EngineRegistry {
           usage: engine.usageSnapshot?.() ?? null,
           catalog: engine.catalogSnapshot?.(),
           ...(engine.account ? { account: await engine.account().catch(() => null) } : {}),
+          ...(engine.server ? { server: await engine.server().catch(() => null) } : {}),
           provider: providerInfo(engine.id) ?? null,
           models: models.map(describedModel),
           defaultModel: (await engine.defaultModel?.()) ?? null,

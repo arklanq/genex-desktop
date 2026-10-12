@@ -43,12 +43,14 @@ function tabAfterKey(key: string, index: number): SectionTab | undefined {
 /** The body of one settings section. */
 function SectionBody({
   section,
+  onSection,
   engines,
   onEnginesRefresh,
   gamesRootLabel,
   onGamesRoot,
 }: {
   section: SettingsSection;
+  onSection: (section: SettingsSection) => void;
   engines: EngineDescriptor[];
   onEnginesRefresh: ModelSettingsProps["onEnginesRefresh"];
   gamesRootLabel: string;
@@ -62,7 +64,13 @@ function SectionBody({
   if (section === SettingsSection.Permissions) return <PermissionsSection />;
   if (section === SettingsSection.Privacy) return <PrivacySection />;
   if (section === SettingsSection.About) return <AboutSection />;
-  return <LocalModelsSection engines={engines} onEnginesRefresh={onEnginesRefresh} />;
+  return (
+    <LocalModelsSection
+      engines={engines}
+      onEnginesRefresh={onEnginesRefresh}
+      onOpenProviders={() => onSection(SettingsSection.Providers)}
+    />
+  );
 }
 
 /** Reference Genex settings layout, using the desktop dialog's focus and preview lifecycle. Its surfaces
@@ -158,6 +166,7 @@ export function SettingsDialog({
           >
             <SectionBody
               section={section}
+              onSection={onSection}
               engines={engines}
               onEnginesRefresh={onEnginesRefresh}
               gamesRootLabel={gamesRootLabel}

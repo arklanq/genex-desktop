@@ -27,6 +27,10 @@ export const STORAGE_KEYS = {
   appearance: "studio.appearance.v1",
   /** Home's background picture and effect (`home-backdrop/settings.ts` owns the format). */
   homeBackdrop: "studio.homeBackdrop.v1",
+  /** Live backgrounds a model made for home (`home-backdrop/made-shaders.ts` owns the format). */
+  homeBackdropShaders: "studio.homeBackdropShaders.v1",
+  /** Set ("1") once home's Background panel has been opened: its button stops glinting. */
+  homeBackdropFound: "studio.homeBackdropFound",
   /** The notifications feed (`notifications.ts` owns the format). */
   notifications: "studio.notifications",
   /** Set once the first-launch welcome is finished or skipped on this profile. */

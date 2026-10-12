@@ -736,6 +736,10 @@ Genex:
 - Genex's guide and seven platform cards are vendored behind Studio-written prefaces in
   `src/plugins/genex/skills` (`vendor.json` pins each source and hash; `npm run genex:skills`
   refreshes them; `genex-skills-vendor.test.ts` catches drift) and served as file skills.
+- The bundled CLI follows npm: every 6 hours `.github/workflows/genex-cli-follow.yml` compares
+  npm's `latest` `@genex-ai/cli-demo` with the pin. When npm is ahead, `scripts/follow-genex-cli.ts`
+  opens one bump PR against `dev` with the exact pin, refreshed skills, the plugin's next patch
+  version and the version mentions it lists.
 - Its backend and adapter import core substrate modules (session credentials, secrets, delivery,
   outcomes, atomic writes, snapshots), which `scripts/build-plugins.mjs` bundles from this repo.
 

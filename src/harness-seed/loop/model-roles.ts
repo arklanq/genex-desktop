@@ -40,6 +40,7 @@ export const EngineId = {
   Ollama: "ollama",
   OpenCode: "opencode",
   OpenRouter: "openrouter",
+  LocalServer: "local-server",
 } as const;
 export type EngineId = (typeof EngineId)[keyof typeof EngineId];
 
@@ -56,7 +57,12 @@ export function supportsSessions(
   return descriptor?.supportsSessions ?? descriptor?.kind === "delegated";
 }
 /** Session engines that are not delegated presets: they hold a session and can cross roles too. */
-const SESSION_ENGINES: readonly string[] = [EngineId.Bonsai, EngineId.OpenCode, EngineId.OpenRouter];
+const SESSION_ENGINES: readonly string[] = [
+  EngineId.Bonsai,
+  EngineId.OpenCode,
+  EngineId.OpenRouter,
+  EngineId.LocalServer,
+];
 
 /** Session engines: the delegated ones, and the others that hold a session (`SESSION_ENGINES`). */
 export function hasSessionRoles(engine: string | null | undefined): boolean {

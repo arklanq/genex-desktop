@@ -21,6 +21,8 @@ own model; Reviewers must see images.
 
 Local Models (Bonsai/Ollama) downloads and deletes. Metered OpenCode and OpenRouter show once set up,
 never auto-chosen unless Free and alone ([details](../connections-and-context.md#openrouter-and-opencode)).
+Local server connects your LM Studio, llama.cpp or TabbyAPI
+([details](../connections-and-context.md#your-own-model-server)).
 
 ## What the model knows
 
@@ -44,8 +46,8 @@ models, effort and Send/Stop.
 
 Every chat's pill after Mode picks **Auto** (Recommended; stops only dangerous actions),
 **Manual**, **Accept edits**, **Plan** or **Bypass permissions** (confirmed first; Rewind restores
-only the game folder); modes the engine cannot honour are greyed with why (Codex: Auto, Plan,
-Bypass; Bonsai, OpenRouter: no Bypass; OpenCode: Auto, Plan; Ollama: Auto). A chat keeps its mode; new chats take the last Auto,
+only the game folder); modes the engine cannot honour are greyed with why
+([by engine](../tool-permissions.md#other-engines)). A chat keeps its mode; new chats take the last Auto,
 Manual or Accept edits. Claude's chat and build lead work anywhere on your Mac with your access;
 unattended builds keep their sandbox ([details](../tool-permissions.md)).
 

@@ -20,10 +20,10 @@ unfocused, macOS notifications and the Dock badge carry them.
 ## First launch
 
 An empty, never-welcomed profile opens a full-window welcome: a prompt plays through Plan your
-game, Build with workers and Reviewers test it, then Claude Code, ChatGPT or a local model connects. Skip or
-Start building opens home; a typed idea waits in its composer.
+game, Build with workers and Reviewers test it, then Claude Code, ChatGPT, a local model, OpenRouter
+or OpenCode connects. Skip or Start building opens home, a typed idea in its composer.
 
-Then a bottom-right Genex Tools card offers **Connect Genex plugin** once.
+Then a Genex Tools card offers **Connect Genex plugin** once.
 
 A sandbox that cannot start opens **Set up the protected workspace**: what is missing or
 blocked, commands to copy, Retry.

@@ -45,6 +45,7 @@ export function registerGamesIpc(handle: IpcHandle, { core, runSummaryReader, pu
   );
   // The request is the user's own words, read by their own model; the name only names a folder later.
   handle("studio:game.name", async (payload) => core.nameGame(payload));
+  handle("studio:backdrop.make", async (payload) => core.makeBackdrop(payload));
   handle("studio:game.update", async (payload) => {
     const cover = payload.patch?.cover;
     if (cover?.kind === "image") {

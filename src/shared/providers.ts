@@ -11,7 +11,7 @@
  * How a provider signs in: Claude through a piped or embedded terminal plus status polling, Codex
  * through its native login reported from the in-app console, OpenCode through its own `auth login`
  * in the embedded terminal (which keeps every provider it signs in to), `none` for an engine with
- * no sign-in of its own (a local model, or OpenRouter, whose key is pasted in Settings).
+ * no sign-in of its own (a local model, a local server, or OpenRouter, whose key is pasted in Settings).
  */
 export type LoginKind = "terminal" | "console" | "cli" | "none";
 
@@ -65,6 +65,7 @@ export const EngineId = {
   Ollama: "ollama",
   OpenCode: "opencode",
   OpenRouter: "openrouter",
+  LocalServer: "local-server",
 } as const;
 export type EngineId = (typeof EngineId)[keyof typeof EngineId];
 
@@ -138,6 +139,15 @@ export const PROVIDERS = [
     login: "none",
     roles: "sessions",
     billing: "metered",
+    signIn: null,
+  },
+  {
+    id: EngineId.LocalServer,
+    label: "Local server",
+    subscription: false,
+    login: "none",
+    roles: "sessions",
+    billing: "local",
     signIn: null,
   },
 ] as const satisfies readonly ProviderInfo[];

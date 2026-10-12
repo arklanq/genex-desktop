@@ -113,10 +113,18 @@ local finish and the reference judge never pick one. Only the person's explicit 
 **OpenRouter** ([openrouter.ts](../src/substrate/engines/openrouter.ts)) is a direct engine on the
 same pi-ai path as Ollama ([pi-completions.ts](../src/substrate/engines/pi-completions.ts)), and a
 game chat or build runs as a Genex session (`LocalSessions`, under OpenRouter's own id), as Bonsai's
-does. Settings sends a pasted key over `studio:openrouter.key.save` (native); main checks it with
-`GET /key`, keeps it only when accepted (`openrouter-api-key` in the SecretStore under
-`userData/secrets/providers`, which no agent process may read) and answers with the engine status,
-never the key. A locked store saves nothing and says so. The public `/models` list is read without
+does. Settings and first launch send a pasted key over `studio:openrouter.key.save` (native); main
+checks it with `GET /key`, keeps it only when accepted (`openrouter-api-key` in the SecretStore
+under `userData/secrets/providers`, which no agent process may read) and answers with the engine
+status, never the key. First launch's Connect OpenRouter (`studio:openrouter.signin`, native) is
+OpenRouter's OAuth with PKCE ([openrouter-login.ts](../src/main/openrouter-login.ts)): the browser
+opens `openrouter.ai/auth` with an S256 challenge and a random `state`, comes back to a one-time
+callback on `localhost` (127.0.0.1 and ::1, a free port), and main redeems the code once with its
+verifier at `/auth/keys`; the key goes to the same `saveKey`, and the call answers only how it ended.
+A callback without this sign-in's state is refused; ten minutes without one ends it. While OpenCode's
+free models are all a person can build with, first launch lists them to pick one, OpenCode's
+default first (`opencode::default` names no model, so it follows OpenCode's own choice), and the
+pick seeds the first game's chat (`rememberWelcomeModel`). A locked store saves nothing and says so. The public `/models` list is read without
 the key; only tool-calling models are listed, with their context, reply cap, vision, reasoning
 efforts and price. OpenRouter picks no default model. Context is estimated from characters before
 each request (compaction runs early rather than late); 401/403 is a sign-in failure, 402 a usage
@@ -167,6 +175,46 @@ lists every OpenAI model even on a ChatGPT sign-in, where OpenAI refuses some, s
 signed in the picker starts OpenCode's GPT models with the ones Codex lists (`runnableModels` in
 `renderer/model-lineup.ts`). Recorded streams and listings: `tests/fixtures/transcripts/opencode-*`
 (OpenCode 1.18 and 2.0.20).
+
+## Your own model server
+
+**Local server** ([local-server.ts](../src/substrate/engines/local-server.ts)) connects a model
+server the person runs: TabbyAPI (ExLlamaV3 on an NVIDIA card), LM Studio, llama.cpp, vLLM, KoboldCpp
+or an Ollama elsewhere on the network, through its OpenAI-compatible API. Like OpenRouter it is a
+direct engine on the pi-ai path whose game chats and builds run as Genex sessions (`LocalSessions`
+under its own id), so Loop's workers and reviewers can use it; unlike OpenRouter it is
+`billing: "local"`, so it may be picked by itself and may take over a throttled run.
+
+Its row is the last in Settings → Model Providers (`LocalServerRow.tsx`); Local Models and the
+welcome's local screen link to it. Until a server is saved the row lists the servers answering on
+this computer's usual ports (`find`: 5000, 1234, 9931, 8080, 8000, 5001, 1337) and takes an address
+with an optional API key. `studio:local-server.connect`, `.forget` and `.find` are native. The
+address ([address.ts](../src/substrate/local-server/address.ts)) may be typed without a scheme or
+`/v1`, or pasted as an endpoint; `0.0.0.0` reads as this computer. It is refused, reaching nothing,
+unless it is `http(s)`, carries no user, password, query or fragment, and every address it names
+(a host name is resolved) is loopback, private, link-local or the shared range tailnets use: a
+hosted API that bills per token belongs to OpenRouter or OpenCode. The address is saved only when
+the server lists models with the key given (or the one already kept), in the engine home's
+`server.json`; the key goes to `local-server-api-key` beside OpenRouter's and travels as both
+`Authorization: Bearer` and `x-api-key` (TabbyAPI requires one by default). Only a JSON 401/403
+asks for a key: macOS's AirPlay receiver answers a bare 403 on port 5000. The Ollama the app
+already reaches as its own provider is refused.
+
+Discovery ([discovery.ts](../src/substrate/local-server/discovery.ts)) names the software by its
+model list's `owned_by`, llama-server's `Server` header, then each server's own signature (TabbyAPI's
+`/.well-known/serviceinfo`, KoboldCpp's `/api/extra/version`, `/lmstudio-greeting`, Ollama's root),
+and reads each model's runtime context and vision from what that server reports: `meta.n_ctx`,
+`max_model_len`, a single-model server's `/props`, LM Studio's `/api/v1/models` (or `v0`), Ollama's
+`/api/show` and `/api/ps`. llama.cpp's `chat_template_caps.supports_tools: false` lists a model that
+cannot build; LM Studio's embedding models are left out. A model whose context nobody reports is
+planned for 32K, compacted at that budget and never refused before the server is asked. Requests use
+the plain OpenAI shape every server reads (system role, `max_tokens`, no `store`, no strict tool
+schemas, no reasoning dial). Thinking a server leaves inline (`<think>…</think>`) is held out of the
+streamed answer and kept as reasoning. Statuses: no server (`not_installed`, row Not connected),
+nothing answering (`not_running`), a key wanted (`needs_login`), no models (`not_installed`), ready.
+A llama.cpp `exceed_context_size_error` is a context overflow; a cut whose server then answers
+nothing is `unavailable`, so another engine may take over. Tests: `engine-local-server.test.ts`
+against `helpers/fake-local-server.ts`, which speaks each server's dialect.
 
 Residual risk: the CLI must read its sign-ins and its shell tool shares its sandbox, so an OpenCode
 session can read OpenCode's own `auth.json`, and its commands can reach the provider host the session

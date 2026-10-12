@@ -26,6 +26,9 @@ const CATALOG_LABEL = {
 /** The model id that means "whatever the engine itself is set to". */
 const DEFAULT_MODEL = "default";
 
+/** The key of an engine's own default: no model is named, so the engine runs whatever it is set to now. */
+export const defaultModelKey = (engine: string): string => modelKey(engine, DEFAULT_MODEL);
+
 /** The person's Settings choices of which subscription models the picker shows, per engine and model. */
 export type PickerChoices = Readonly<Record<string, Readonly<Record<string, boolean>>>>;
 

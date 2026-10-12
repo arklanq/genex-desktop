@@ -24,6 +24,7 @@ import { ChatFileOpen } from "../shared/chat-files.ts";
 import { LiveBehindReason } from "../shared/live-behind.ts";
 import { AutoResumeCause, type CustomEvent, type CustomPayload } from "../shared/custom-events.ts";
 import { EngineFailureKind } from "../shared/engine-requests.ts";
+import { LocalServerProblem } from "../shared/local-server.ts";
 import type { GithubLookupProblem } from "../shared/plugins.ts";
 import type { GenexPublishPhase } from "../shared/genex.ts";
 import { RoundOutcome, roundOutcome, stoppedSource } from "../shared/run-state.ts";
@@ -1509,6 +1510,68 @@ export const METERED_PROVIDER_WORDS = {
     remove: "Remove key",
     cancel: "Cancel",
   },
+} as const;
+
+/** Settings → Model Providers: the person's own model server (`panels/LocalServerRow.tsx`). */
+export const LOCAL_SERVER_WORDS = {
+  name: "Local server",
+  notConnectedLine: "Use a model you run in LM Studio, llama.cpp, TabbyAPI, vLLM or KoboldCpp.",
+  addressLabel: "Server address",
+  addressPlaceholder: "http://127.0.0.1:5000/v1",
+  keyLabel: "API key",
+  keyPlaceholder: "API key (optional)",
+  connect: "Connect",
+  connecting: "Connecting…",
+  saveKey: "Save key",
+  cancel: "Cancel",
+  found: "Running on this computer",
+  use: "Use",
+  foundModels: (count: number) => `${count} ${count === 1 ? "model" : "models"}`,
+  foundNeedsKey: "asks for a key",
+  connected: "Connected",
+  notRunning: "Not running",
+  needsKey: "Needs a key",
+  noModels: "No models",
+  /** "TabbyAPI at 127.0.0.1:5000", or the address alone for a server Genex can't name. */
+  serverAt: (name: string | null, host: string) => (name ? `${name} at ${host}` : host),
+  notRunningLine: (host: string) => `Nothing answers at ${host}. Start the server, then check again.`,
+  needsKeyLine: (server: string) => `${server} asks for an API key.`,
+  noModelsLine: (name: string) => `Load a model in ${name}, then check again.`,
+  theServer: "the server",
+  menu: "Server",
+  menuName: "Local server options",
+  change: "Change address…",
+  changeLine: "Connect another server or port",
+  disconnect: "Disconnect",
+  models: "Models on this server",
+  context: (size: string) => `${size} context`,
+  seesImages: "sees images",
+  cannotCallTools: "can't call tools, so it can't build",
+  /** Where TabbyAPI keeps the key it asks for: it writes one on its first start. */
+  tabbyKeyHint: "TabbyAPI writes its key to api_tokens.yml in its folder on first start.",
+  otherServer: "Running another server?",
+  connectIt: "Connect it in Model Providers",
+  onboardingLine: "Already running LM Studio, llama.cpp or TabbyAPI?",
+  connectServer: "Connect your server",
+  problem: {
+    [LocalServerProblem.Empty]: "Enter the server's address, like 127.0.0.1:5000.",
+    [LocalServerProblem.Malformed]: "That isn't a server address. Enter one like http://127.0.0.1:5000/v1.",
+    [LocalServerProblem.Scheme]: "Use an address that starts with http:// or https://.",
+    [LocalServerProblem.Credentials]: "Leave the user name and password out of the address. Put a key under API key.",
+    [LocalServerProblem.NotLocal]:
+      "Genex connects to servers on this computer or your local network. For a hosted API, use OpenRouter or OpenCode.",
+    [LocalServerProblem.NotFound]:
+      "Couldn't find that computer on your network. Check the name, or use its IP address.",
+    [LocalServerProblem.NotAnswering]: "Nothing answers at that address. Start the server and check the port.",
+    [LocalServerProblem.NotOpenAi]:
+      "Something answers there, but not as a model server. Check the port, and that the address ends in /v1.",
+    [LocalServerProblem.NeedsKey]: "This server asks for an API key. Paste it under API key.",
+    [LocalServerProblem.KeyRefused]: "The server didn't accept that key. Check it and paste it again.",
+    [LocalServerProblem.BadKey]: "That doesn't look like a key. Paste the whole key, with no spaces.",
+    [LocalServerProblem.OwnOllama]: "That's the Ollama on this computer. Its models are already under Local models.",
+    [LocalServerProblem.StoreLocked]:
+      "This computer's secure storage is locked or unavailable, so the key can't be saved.",
+  } satisfies Record<LocalServerProblem, string>,
 } as const;
 
 /** Settings → Model Providers: which models the picker lists (`panels/PickerModels.tsx`). */

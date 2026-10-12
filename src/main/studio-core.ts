@@ -19,6 +19,7 @@ import path from "node:path";
 import type { BuildPreviewRequest } from "../shared/build-preview.ts";
 import { DEFAULT_BUILDERS, LEAD_WINDOWS } from "../shared/builders.ts";
 import type { ConnectionSnapshot } from "../shared/connections.ts";
+import type { BackdropShaderRequest, BackdropShaderResult } from "../shared/backdrop-shader.ts";
 import type { GameLocation, GameName, GameNameRequest } from "../shared/game-project.ts";
 import type { GameSoundRequest } from "../shared/game-sound.ts";
 import { latestRun } from "../shared/coordinator.ts";
@@ -67,7 +68,9 @@ import { OllamaEngine, OllamaSidecar } from "../substrate/engines/ollama.ts";
 import { OpenCodeEngine } from "../substrate/engines/opencode.ts";
 import { LOCK_RECOVERY_DIR } from "../substrate/engines/ownership-locks.ts";
 import { OpenRouterEngine } from "../substrate/engines/openrouter.ts";
-import { OPENROUTER_KEY_SECRET, secretKeyStore } from "../substrate/provider-keys.ts";
+import { LocalServerEngine } from "../substrate/engines/local-server.ts";
+import { serverSettings } from "../substrate/local-server/settings.ts";
+import { LOCAL_SERVER_KEY_SECRET, OPENROUTER_KEY_SECRET, secretKeyStore } from "../substrate/provider-keys.ts";
 import { EngineRegistry } from "../substrate/engines/registry.ts";
 import type { Engine, LiveToolResult } from "../substrate/engines/types.ts";
 import { EventStore } from "../substrate/event-store.ts";
@@ -109,6 +112,7 @@ import { ConversationService } from "./core/conversation.ts";
 import { DelegationService } from "./core/delegation.ts";
 import { GameFileService } from "./core/game-files.ts";
 import { nameFromIdea, nameGame } from "./core/game-naming.ts";
+import { makeBackdropShader } from "./core/backdrop-generation.ts";
 import { GENEX_PLUGIN_ID, GenexCliService, genexHostPreflight, genexHostTool } from "./core/genex-cli.ts";
 import { GenexPackageService } from "./core/genex-package.ts";
 import { GameThreadService } from "./core/game-threads.ts";
@@ -978,6 +982,7 @@ export class StudioCore {
     this.engines.setPreferredOrder([
       EngineId.Bonsai,
       EngineId.Ollama,
+      EngineId.LocalServer,
       ...SUBSCRIPTION_ENGINES,
       EngineId.OpenCode,
       EngineId.OpenRouter,
@@ -993,6 +998,17 @@ export class StudioCore {
         toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
       }),
       new OllamaEngine({ ...(this.options.ollamaHost ? { host: this.options.ollamaHost } : {}) }),
+      // The person's own model server (LM Studio, llama.cpp, TabbyAPI, …), once connected in Settings.
+      new LocalServerEngine({
+        root: path.join(this.layout.engineHomes, EngineId.LocalServer),
+        scratchRoot: path.join(this.layout.scratch, EngineId.LocalServer),
+        protectedPaths: this.#protectedPaths(),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
+        settings: serverSettings(path.join(this.layout.engineHomes, EngineId.LocalServer, "server.json")),
+        keys: secretKeyStore(path.join(this.layout.secrets, "providers"), LOCAL_SERVER_KEY_SECRET),
+        ...(this.options.ollamaHost ? { ollamaHost: this.options.ollamaHost } : {}),
+        onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.LocalServer }),
+      }),
       new ClaudeCodeEngine({
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.ClaudeCode }),
         engineHome: path.join(this.layout.engineHomes, EngineId.ClaudeCode),
@@ -1489,6 +1505,11 @@ export class StudioCore {
   /** A name for a game started from its first request, before its folder is made (`core/game-naming.ts`). */
   nameGame(request: GameNameRequest): Promise<GameName> {
     return nameGame({ engines: this.engines, budget: this.budget }, request);
+  }
+
+  /** A live background for home from a description (`core/backdrop-generation.ts`). */
+  makeBackdrop(request: BackdropShaderRequest): Promise<BackdropShaderResult> {
+    return makeBackdropShader({ engines: this.engines, budget: this.budget }, request);
   }
 
   /** Games being named from an idea now: a second message while the first names it waits its turn. */

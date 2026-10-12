@@ -145,7 +145,7 @@ function HomeScreen({
       <HomeBackground />
       <div className="home-header titlebar-drag">
         {chrome.sidebarHidden && <ShowSidebarButton onToggle={chrome.toggleSidebar} />}
-        <HomeBackdropButton />
+        <HomeBackdropButton picked={model.selected} />
       </div>
       <div className="home-body">
         <h1 className="home-title">{MESSAGE.title}</h1>

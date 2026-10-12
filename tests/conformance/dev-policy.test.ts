@@ -14,6 +14,7 @@ import { CodexEngine } from "../../src/substrate/engines/codex.ts";
 import { ClaudeCodeEngine } from "../../src/substrate/engines/claude-code.ts";
 import { OpenCodeEngine } from "../../src/substrate/engines/opencode.ts";
 import { OpenRouterEngine } from "../../src/substrate/engines/openrouter.ts";
+import { LocalServerEngine } from "../../src/substrate/engines/local-server.ts";
 test("pre-init injection avoids every real engine status/models/auth probe and keeps sandbox enabled", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "dev-policy-"));
   for (const proto of [
@@ -22,6 +23,7 @@ test("pre-init injection avoids every real engine status/models/auth probe and k
     ClaudeCodeEngine.prototype,
     OpenCodeEngine.prototype,
     OpenRouterEngine.prototype,
+    LocalServerEngine.prototype,
   ])
     for (const key of ["status", "models", "probeAuth"])
       if (typeof (proto as any)[key] === "function")
@@ -43,8 +45,8 @@ test("pre-init injection avoids every real engine status/models/auth probe and k
   });
   await core.start();
   assert.equal(core.host.state, "ready");
-  // Flipped (OpenCode, OpenRouter): five scripted engines, never a real one.
-  assert.equal((await core.engines.describe()).length, 5);
+  // Flipped (OpenCode, OpenRouter, a local server): six scripted engines, never a real one.
+  assert.equal((await core.engines.describe()).length, 6);
   assert.equal(core.sandbox.enabled, true);
   await core.updateSettings({ architect: true });
   let calls = 0;

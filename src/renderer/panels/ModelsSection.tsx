@@ -1,6 +1,6 @@
 /**
  * Settings → Model Providers. One row per subscription, then the metered providers
- * (`MeteredProviders.tsx`): name and CLI version, one status plate, one line of context, and at most
+ * (`MeteredProviders.tsx`) and the person's own model server (`LocalServerRow.tsx`): name and CLI version, one status plate, one line of context, and at most
  * one visible action. Account changes, a recheck (which also refreshes
  * the model list) and updating the CLI live in the row's Account menu; the model list speaks up
  * only while it loads or after a refresh failed (`catalog-note.ts`).
@@ -30,6 +30,7 @@ import { PickerModels } from "./PickerModels.tsx";
 import { CatalogNoteKind, catalogNote } from "./catalog-note.ts";
 import { type ProviderWords, RowHeading, RowTone, type RowView } from "./provider-row.tsx";
 import { MeteredProviderRows } from "./MeteredProviders.tsx";
+import { LocalServerRow } from "./LocalServerRow.tsx";
 
 const PROVIDERS: Record<string, ProviderWords> = {
   [EngineId.ClaudeCode]: {
@@ -484,12 +485,14 @@ export function ModelProvidersSection({ engines, onEnginesRefresh }: ModelSettin
   useEffect(() => {
     onEnginesRefresh();
   }, [onEnginesRefresh]);
+  const localServer = engines.find((engine) => engine.id === EngineId.LocalServer);
   return (
     <div className="flex flex-col gap-3">
       {SUBSCRIPTION_ENGINES.map((id) => (
         <ProviderRow key={id} engineId={id} engines={engines} onEnginesRefresh={onEnginesRefresh} />
       ))}
       <MeteredProviderRows engines={engines} onEnginesRefresh={onEnginesRefresh} />
+      {localServer && <LocalServerRow engine={localServer} onEnginesRefresh={onEnginesRefresh} />}
     </div>
   );
 }
