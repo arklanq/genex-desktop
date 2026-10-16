@@ -302,6 +302,108 @@ describe("OpenCode sessions", () => {
     assert.deepEqual(invocation?.sandbox.writableRoots.slice(0, 1), [invocation?.cwd]);
   });
 
+  it("hands a session its live tools as a local MCP server in its own sandbox, allowed without asking", async () => {
+    const shims: string[] = [];
+    const { engine, seen } = await engineWith(async function* (invocation) {
+      const config = JSON.parse(invocation.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+      const command = config.mcp?.studio?.command as string[] | undefined;
+      if (command?.[1]) {
+        await access(command[1], constants.R_OK);
+        shims.push(command[1]);
+      }
+      yield* replay([]);
+    });
+    const cwd = await game();
+    const computer = {
+      name: "computer",
+      description: "hands",
+      parameters: { type: "object" as const, properties: {} },
+    };
+    await engine.delegate({
+      cwd,
+      prompt: "Play it",
+      readOnly: true,
+      liveTools: [computer],
+      onLiveTool: async () => "ok",
+    });
+    const config = JSON.parse(seen[0]?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+    assert.equal(config.mcp.studio.type, "local");
+    assert.equal(config.mcp.studio.enabled, true);
+    assert.equal(config.mcp.studio.command[0], "node");
+    assert.equal(shims.length, 1, "the shim was there while the session ran");
+    assert.ok(shims[0]!.startsWith(seen[0]!.cwd), "inside the session's own folder, so inside its sandbox");
+    assert.equal(config.permission["studio_*"], "allow", "OpenCode's run rejects any tool it would ask about");
+    assert.match(seen[0]?.prompt ?? "", /studio_computer/);
+    assert.match(seen[0]?.prompt ?? "", /node \.studio\/bridge\/tool\.mjs/, "the bridge stays the fallback");
+  });
+
+  it("keeps a session on the bridge alone when its MCP tools are switched off, or it has no tool", async () => {
+    const off = await engineWith(async function* () {
+      yield* replay([]);
+    });
+    const cwd = await game();
+    const quiet = new OpenCodeEngine({
+      scratchRoot: path.join(off.root, "scratch2"),
+      protectedPaths: [],
+      execFn: (invocation) => {
+        off.seen.push(invocation);
+        return replay([]);
+      },
+      resolveCli: ready,
+      listModels: () => fixture("opencode-models-1.18.txt"),
+      mcpTools: false,
+    });
+    const computer = {
+      name: "computer",
+      description: "hands",
+      parameters: { type: "object" as const, properties: {} },
+    };
+    await quiet.delegate({ cwd, prompt: "Play", readOnly: true, liveTools: [computer], onLiveTool: async () => "ok" });
+    await off.engine.delegate({ cwd, prompt: "Build" });
+    for (const invocation of off.seen) {
+      const config = JSON.parse(invocation.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+      assert.equal(config.mcp, undefined);
+      assert.equal(config.permission["studio_*"], undefined);
+    }
+  });
+
+  it("a blind judge reads nothing: no file tool, nothing outside its folder, only its live tools", async () => {
+    const { engine, seen } = await engineWith(async function* () {
+      yield* replay([]);
+    });
+    const cwd = await game();
+    const computer = {
+      name: "computer",
+      description: "hands",
+      parameters: { type: "object" as const, properties: {} },
+    };
+    await engine.delegate({
+      cwd,
+      prompt: "Judge by playing",
+      readOnly: true,
+      blind: true,
+      liveTools: [computer],
+      onLiveTool: async () => "ok",
+    });
+    const config = JSON.parse(seen[0]?.env.OPENCODE_CONFIG_CONTENT ?? "{}");
+    for (const tool of ["read", "glob", "grep", "list", "edit", "external_directory"])
+      assert.equal(config.permission[tool], "deny", `${tool} is not a blind judge's`);
+    assert.equal(config.permission["studio_*"], "allow");
+  });
+
+  it("tells a Loop's reviewer the build it tests is the folder it reads, never its own empty home", async () => {
+    const { engine, seen, root } = await engineWith(async function* () {
+      yield* replay([]);
+    });
+    const home = path.join(root, "reviewers", "abc", "opencode", "call");
+    await mkdir(home, { recursive: true });
+    const reads = await game();
+    await engine.delegate({ cwd: home, prompt: "review the claim", readOnly: true, reviewer: { reads } });
+    const prompt = seen[0]?.prompt ?? "";
+    assert.ok(prompt.includes(`The build you are testing is at ${reads}.`), prompt);
+    assert.ok(!prompt.includes(`is at ${home}`) && !prompt.includes(`is at ${seen[0]?.cwd}.`), "never its home");
+  });
+
   it("plans in Plan: read-only, from a folder of its own", async () => {
     const { engine, seen } = await engineWith(() => replay([]));
     const cwd = await game();
@@ -615,6 +717,42 @@ const decide = (rules: Rule[], action: string, resource = "anything") =>
   rules.findLast(
     (rule) => (rule.action === "*" || rule.action === action) && (rule.resource === "*" || rule.resource === resource),
   )?.effect;
+
+/** What 2.x decides with its own wildcard matching (`*` matches any run of characters), as `permission.ts` does. */
+const decideWild = (rules: Rule[], action: string) => {
+  const matches = (pattern: string, value: string) =>
+    new RegExp(
+      `^${pattern
+        .split("*")
+        .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
+        .join(".*")}$`,
+    ).test(value);
+  return rules.findLast((rule) => matches(rule.action, action) && matches(rule.resource, "anything"))?.effect;
+};
+
+describe("OpenCode 2.x and the studio's MCP tools", () => {
+  it("declares the studio's server under mcp.servers, Code Mode off, and allows only its tools past the deny of everything", () => {
+    const command = ["node", "/run/.studio/bridge/mcp.mjs"];
+    const config = JSON.parse(openCodeConfigV2(OpenCodeAccess.ReadOnly, true, command));
+    assert.deepEqual(config.mcp.servers.studio.command, command);
+    assert.equal(config.mcp.servers.studio.type, "local");
+    assert.equal(config.mcp.servers.studio.codemode, false, "tools are called directly, pictures come back as content");
+    const rules = config.permissions as Rule[];
+    assert.equal(decideWild(rules, "studio_computer"), "allow");
+    assert.equal(decideWild(rules, "other_server_tool"), "deny");
+    assert.deepEqual(config.agents.build.permissions, rules, "the build agent carries the same rules");
+    const none = JSON.parse(openCodeConfigV2(OpenCodeAccess.ReadOnly, true));
+    assert.equal(none.mcp, undefined);
+    assert.equal(decideWild(none.permissions as Rule[], "studio_computer"), "deny");
+  });
+
+  it("a blind judge on 2.x reads no file either", () => {
+    const rules = JSON.parse(openCodeConfigV2(OpenCodeAccess.Blind, true, ["node", "x"])).permissions as Rule[];
+    for (const action of ["read", "glob", "grep", "external_directory", "edit"])
+      assert.equal(decideWild(rules, action), "deny", action);
+    assert.equal(decideWild(rules, "studio_computer"), "allow");
+  });
+});
 
 describe("OpenCode 2.x's model list", () => {
   it("reads `GET /api/model`: runnable models as provider/id, their limits, price, variants and the free ones", async () => {

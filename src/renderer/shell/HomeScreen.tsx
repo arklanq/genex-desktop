@@ -64,16 +64,25 @@ export function useCoveredByHome(): boolean {
   return (atHome || launch !== null) && launch !== LaunchPhase.Handed;
 }
 
-/** Home over the workspace while it is up; nothing otherwise. */
-export function HomeLayer(props: {
+/** Home over the workspace while it is up; nothing otherwise. Under a remix being made it takes nothing. */
+export function HomeLayer({
+  under,
+  ...props
+}: {
   app: Studio;
   dialogs: Dialogs;
   chrome: ShellChrome;
   handoff: ComposerHandoff;
+  /** A Play remix being made covers it (`RemixLayer`). */
+  under: boolean;
 }): JSX.Element | null {
   const { shown, launch } = useHomeShown();
   if (!shown) return null;
-  return <HomeScreen {...props} launch={launch} />;
+  return (
+    <div className="contents" inert={under}>
+      <HomeScreen {...props} launch={launch} />
+    </div>
+  );
 }
 
 function HomeScreen({
@@ -125,6 +134,7 @@ function HomeScreen({
         value={draft}
         onChange={setDraft}
         onSend={send}
+        mentionSide="bottom"
       />
     </div>
   );

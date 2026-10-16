@@ -356,7 +356,11 @@ function ColorGroup({ settings }: { settings: BackdropSettings }): JSX.Element {
           />
         )}
         {picked && (
-          <Button variant="ghost" className="ms-auto" onClick={useTheme}>
+          <Button
+            variant="ghost"
+            className="ms-auto bg-foreground/[0.07] hover:bg-foreground/[0.12]"
+            onClick={useTheme}
+          >
             {MESSAGE.useTheme}
           </Button>
         )}

@@ -49,7 +49,7 @@ export function HomeBackdropButton({ picked }: { picked: string | null }): JSX.E
         <div className="backdrop-panel-heading">
           <h2>{MESSAGE.heading}</h2>
           {settings.source !== BackdropSource.Off && (
-            <Button variant="ghost" onClick={resetBackdrop}>
+            <Button variant="ghost" className="bg-foreground/[0.07] hover:bg-foreground/[0.12]" onClick={resetBackdrop}>
               {MESSAGE.reset}
             </Button>
           )}

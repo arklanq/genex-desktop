@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { GenexTools } from "./adapter.ts";
+import { COVER_CLIP } from "./clip.ts";
 import { type CoverCamera, CoverOperation, COVER_STILL, MESSAGE as COVER_MESSAGE } from "./cover.ts";
 import { SessionCredentials } from "../../substrate/session-credentials.ts";
 import {
@@ -9,6 +10,7 @@ import {
   type GenexJob,
   GenexJobStatus,
   GenexOperation,
+  GenexPluginEvent,
   GenexPublishJobState,
   GenexPublishKind,
   type GenexPublishState,
@@ -88,13 +90,21 @@ function coverCamera(ctx: Invocation, service: Service, invokedAt: number): Cove
   if (!project || !directory) return undefined;
   return {
     invokedAt,
-    shoot: () => service(PluginService.Observe, { project, root: directory, files: [], still: { ...COVER_STILL } }),
+    shoot: (view) => {
+      const still = view ? { ...stillSize(COVER_STILL), camera: view.camera } : { ...COVER_STILL };
+      return service(PluginService.Observe, { project, root: directory, files: [], still });
+    },
+    record: () => service(PluginService.Observe, { project, root: directory, files: [], clip: { ...COVER_CLIP } }),
   };
 }
+
+/** A still's size and byte limit without its view, for another view at the same size. */
+const stillSize = ({ width, height, maxBytes }: typeof COVER_STILL) => ({ width, height, maxBytes });
 
 /** The agent's cover tool: shoot the genex-cover demo, or report the cover. Asks nothing, uploads nothing. */
 function coverTool(genex: GenexTools, project: string, args: Args, camera: CoverCamera | undefined) {
   if (args.operation === CoverOperation.Shoot && camera) return genex.coverShoot(project, camera);
+  if (args.operation === CoverOperation.Clip && camera) return genex.coverClip(project, camera);
   if (args.operation === CoverOperation.Status) return genex.coverStatus(project);
   throw new Error(COVER_MESSAGE.BadOperation);
 }
@@ -150,6 +160,14 @@ async function assetTool(genex: GenexTools, project: string, directory: string, 
       ctx.signal,
       false,
       ctx.threadId,
+      {
+        // While the generation waits on Genex's terms, the app reads the account again and offers Review.
+        termsPending: (pending) =>
+          ctx.host(PluginService.EventsEmit, { kind: GenexPluginEvent.Terms, pending }).then(
+            () => {},
+            () => {},
+          ),
+      },
     )) as Record<string, unknown>;
     await ctx.host(PluginService.EventsEmit, {
       operation: args.operation,
@@ -248,6 +266,7 @@ const ACTIONS: Record<string, Action> = {
     const status = await genex.status(ctx.project);
     return { verifyUrl: status.legal?.acceptUrl };
   },
+  [GenexAction.TermsStatus]: (genex) => genex.termsStatus(),
   [GenexAction.Disconnect]: (genex) => genex.disconnect(),
   [GenexAction.CancelConnect]: (genex, _args, ctx) => {
     genex.cancelConnect();
@@ -265,6 +284,8 @@ const ACTIONS: Record<string, Action> = {
     genex.publishAllowNewUpload(project, String(args.jobId ?? "")),
   ),
   [GenexAction.PublishOpen]: withProject((genex, project, args) => genex.publishLinks(project, args.target)),
+  [GenexAction.CoverAuto]: withProject((genex, project, _args, _service, camera) => genex.coverAuto(project, camera)),
+  [GenexAction.CoverPick]: withProject((genex, project, args) => genex.coverPick(project, args.sha256)),
   [GenexAction.PublishBadge]: async (genex, args, ctx) => {
     if (!ctx.project) return {};
     return publishButtonStatus(
@@ -296,6 +317,7 @@ export async function createGenexPlugin(api?: string) {
       deliver: async (output, _root, jobId) =>
         service(PluginService.AssetsDeliver, { output, jobId }) as Promise<string[]>,
       preload: path.join(path.dirname(fileURLToPath(import.meta.url)), "preload.mjs"),
+      embedSdk: path.join(path.dirname(fileURLToPath(import.meta.url)), "embed-sdk"),
       observe: async (project, root, files) =>
         service(PluginService.Observe, { project, root, files }) as ReturnType<GenexObserver>,
     });

@@ -2,6 +2,7 @@
  * Legacy model exports remain for user-edited harness imports; catalogs live in the provider adapters.
  */
 
+import { effortCap } from "./effort-cap.ts";
 import type { AnyRecord } from "../types/harness.d.ts";
 import type { RunRoles } from "../types/host-api.d.ts";
 
@@ -365,7 +366,12 @@ export function toolSyntax(engine: string | null | undefined): string {
   return "call each one by its name";
 }
 
-/** The composer's primary dial belongs to the planner, never another provider's worker. */
-export function roleEffort(run: RoleRun, role: string): string | undefined {
+/** The effort the user chose for `role`: the composer's primary dial belongs to the planner, never another provider's worker. */
+export function chosenEffort(run: RoleRun, role: string): string | undefined {
   return run.roles?.efforts?.[role as RoleKey] ?? (role === RoleKey.Planner ? run.effort : undefined);
+}
+
+/** The effort `role` runs at: the user's choice for it, a worker's and a reviewer's capped (effort-cap.ts). */
+export function roleEffort(run: RoleRun, role: string): string | undefined {
+  return effortCap(chosenEffort(run, role), role === RoleKey.Planner);
 }

@@ -1,14 +1,18 @@
-/** One game, one row. The chrome and navigation stay put; only the game list scrolls. */
-import type { ComponentPropsWithRef, JSX, ReactNode, RefObject } from "react";
+/**
+ * One game, one row. The chrome and navigation stay put; the game list scrolls, and under it the
+ * friends scroll on their own.
+ */
+import type { ComponentPropsWithRef, CSSProperties, JSX, ReactNode, RefObject } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { type ReadyUpdate, UpdateAction } from "../../shared/app-update.ts";
 import { ThreadKind } from "../../shared/event-log.ts";
-import { FEEDBACK_WORDS, PLUGIN_UPDATE_WORDS, statusWords, UPDATE_WORDS } from "../words.ts";
+import { FEEDBACK_WORDS, statusWords, UPDATE_WORDS } from "../words.ts";
 import type { ConversationRecord, GameProject, ThreadMeta } from "../types.ts";
 import { Dot, IconButton } from "../ui/kit.tsx";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { GenexLogo } from "../ui/GenexLogo.tsx";
 import { GameAvatar } from "../ui/GameAvatar.tsx";
+import { projectKindLabel } from "../project-kind.ts";
 import { Shortcut } from "../ui/Shortcut.tsx";
 import { Tooltip, TooltipTrigger, TooltipContent } from "../ui/tooltip.tsx";
 import {
@@ -19,9 +23,26 @@ import {
   DropdownMenuSeparator,
 } from "../ui/dropdown-menu.tsx";
 import { NotificationsMenu } from "./NotificationsMenu.tsx";
+import { SidebarPluginUpdates } from "./SidebarPluginUpdates.tsx";
+import { GenexTermsLine } from "./plugins/genex/GenexTermsLine.tsx";
+import type { PluginUpdate } from "../state/plugins.ts";
 import type { Notice } from "../notifications.ts";
 import type { LaunchInSidebar } from "../state/launch.ts";
 import { sidebarGames } from "../state/threads.ts";
+import { PLAY_SHELVES, PlayShelf } from "../../shared/play.ts";
+import { formatCount } from "../play/play-model.ts";
+import { PlayPromo } from "../play/PlayPromo.tsx";
+import { ProfilePlate } from "../play/ProfilePlate.tsx";
+import { usePeopleSync } from "../play/use-people-sync.ts";
+import { PlayRecent } from "../play/PlayRecent.tsx";
+import { PlaySwitch } from "../play/PlaySwitch.tsx";
+import { SidebarFriends } from "../play/SidebarFriends.tsx";
+import { usePeople, usePlay, useShallow } from "../state/hooks.ts";
+import { PlayPage } from "../state/play.ts";
+import { besideRemix, remixCovers, remixShare } from "../play/remix-model.ts";
+import { remixTitle } from "../../shared/play.ts";
+import { studio as studioApp } from "../state/studio.ts";
+import { PLAY_WORDS } from "../words.ts";
 
 interface Props {
   threads: ConversationRecord[];
@@ -47,10 +68,16 @@ interface Props {
   onSettings: () => void;
   pluginsOpen: boolean;
   onPlugins: () => void;
+  /** Play is up: the rooms fold away and the list is the games played last. */
+  playOpen: boolean;
+  /** Play or Create, from the switch under the wordmark. */
+  onPlayMode: (play: boolean) => void;
   stagedCount: number;
   onNewGame: () => void;
   onSelectThread: (threadId: string) => void;
   onSelectGame: (project: string) => void;
+  /** Back to the Play remix being made, from its row. */
+  onShowRemix: () => void;
   onRenameGame: (game: GameProject) => void;
   onPinGame: (game: GameProject) => void;
   onDeleteGame: (game: GameProject) => void;
@@ -61,12 +88,14 @@ interface Props {
   onRestartToUpdate: () => Promise<boolean>;
   /** Open the waiting release's download page (Linux). */
   onDownloadUpdate: () => void;
-  /** The plugin releases waiting to be installed, as the tooltip names them ("Local Blender 1.2.0"). */
-  pluginUpdates: readonly string[];
+  /** The plugin updates waiting to be installed (`pluginUpdates`). */
+  pluginUpdates: readonly PluginUpdate[];
   /** Update plugins is installing them. */
   updatingPlugins: boolean;
-  /** Install every waiting plugin update, one after another. */
-  onUpdatePlugins: () => void;
+  /** Install every waiting plugin update but the unticked ones (`updateKey`), one after another. */
+  onUpdatePlugins: (skipped: ReadonlySet<string>) => void;
+  /** Open Plugins at one plugin's page. */
+  onOpenPlugin: (id: string) => void;
 }
 const meta = (thread: ConversationRecord) => (thread.metadata ?? {}) as ThreadMeta;
 
@@ -99,7 +128,7 @@ function Hint({
 const SCROLL_SETTLE_MS = 800;
 
 /** The games in the sidebar's order (`sidebarGames`). */
-function useSortedGames(games: GameProject[], threads: ConversationRecord[]): GameProject[] {
+function useSortedGames(games: readonly GameProject[], threads: ConversationRecord[]): GameProject[] {
   return useMemo(() => sidebarGames(games, threads), [games, threads]);
 }
 
@@ -126,7 +155,18 @@ export function Sidebar(props: Props): JSX.Element {
   const harnessOpen = !!studio && studio.id === activeThreadId;
   const nav = useRef<HTMLElement>(null);
   const { scrolled, onScroll } = useScrollState(nav);
-  const sorted = useSortedGames(games, threads);
+  // Only the adopted name: the remix's steps and bytes are its row's to follow, not the whole list's.
+  const adopted = usePlay((s) => s.making?.name ?? null);
+  const listed = useMemo(() => besideRemix(games, adopted), [games, adopted]);
+  const sorted = useSortedGames(listed, threads);
+  const pending = (
+    <>
+      <RemixRow onShow={props.onShowRemix} />
+      <PendingLaunch launching={props.launching} />
+    </>
+  );
+  const { playOpen } = props;
+  usePeopleSync();
   return (
     <nav
       ref={nav}
@@ -135,27 +175,44 @@ export function Sidebar(props: Props): JSX.Element {
       aria-label="Main navigation"
       className="game-sidebar"
       data-scrolled={scrolled}
+      data-play={playOpen}
     >
       <SidebarTop {...props} studio={studio} harnessOpen={harnessOpen} />
       <div className="sidebar-list">
-        <div className="sidebar-scroll" data-sidebar-scroll onScroll={(event) => onScroll(event.currentTarget)}>
-          <div className="sidebar-games">
-            {sorted.map((game, index) => (
-              <Fragment key={game.name}>
-                {props.launching.placeholder && index === firstUnpinned(sorted) ? (
-                  <LaunchRow title={props.launching.title} />
-                ) : null}
-                <SidebarGame {...props} game={game} harnessOpen={harnessOpen} />
-              </Fragment>
-            ))}
-            {props.launching.placeholder && firstUnpinned(sorted) === sorted.length ? (
-              <LaunchRow title={props.launching.title} />
-            ) : null}
+        <div className="sidebar-lists">
+          <div
+            className="sidebar-scroll play-recent-scroll"
+            data-off={!playOpen}
+            inert={!playOpen}
+            onScroll={(event) => onScroll(event.currentTarget)}
+          >
+            <PlayRecent />
           </div>
+          <div
+            className="sidebar-scroll"
+            data-sidebar-scroll
+            data-off={playOpen}
+            inert={playOpen}
+            onScroll={(event) => onScroll(event.currentTarget)}
+          >
+            <div className="sidebar-games">
+              {sorted.map((game, index) => (
+                <Fragment key={game.name}>
+                  {index === firstUnpinned(sorted) ? pending : null}
+                  <SidebarGame {...props} game={game} harnessOpen={harnessOpen} />
+                </Fragment>
+              ))}
+              {firstUnpinned(sorted) === sorted.length ? pending : null}
+            </div>
+          </div>
+          <span className="sidebar-fade" aria-hidden="true" />
         </div>
-        <span className="sidebar-fade" aria-hidden="true" />
+        <SidebarFriends onPlayMode={props.onPlayMode} />
         <SidebarFooter {...props} />
       </div>
+      {/* Shown once, until the first sign-in: the account plate stays under it. */}
+      {playOpen && <PlayPromo />}
+      <ProfilePlate onPlayMode={props.onPlayMode} />
     </nav>
   );
 }
@@ -165,6 +222,35 @@ const firstUnpinned = (sorted: GameProject[]): number => {
   const index = sorted.findIndex((game) => !game.pinned);
   return index === -1 ? sorted.length : index;
 };
+
+/** The game home is starting, until it is made and has its own row; nothing when there is none. */
+function PendingLaunch({ launching }: { launching: LaunchInSidebar }): JSX.Element | null {
+  return launching.placeholder ? <LaunchRow title={launching.title} /> : null;
+}
+
+/**
+ * A Play remix being made, working: the cover it copies inside a ring that fills as it is made.
+ * Selected while Create shows it; pressed, it comes back. Its game, once adopted, waits off the
+ * list for it.
+ */
+function RemixRow({ onShow }: { onShow: () => void }): JSX.Element | null {
+  const making = usePlay((s) => s.making);
+  if (!making) return null;
+  const shown = remixCovers(making);
+  const share = { "--remix-share": remixShare(making) } as CSSProperties;
+  return (
+    <div className="sidebar-game" data-remixing={making.step} data-active={shown} data-busy="true">
+      <button type="button" className="sidebar-game-select" aria-current={shown ? "page" : undefined} onClick={onShow}>
+        <span className="remix-avatar" style={share} aria-hidden="true">
+          {making.coverUrl ? <img src={making.coverUrl} alt="" /> : <span />}
+        </span>
+        <span className="min-w-0 flex-1 truncate">{remixTitle(making.title)}</span>
+        <span className="sr-only">{PLAY_WORDS.making.row}</span>
+      </button>
+      <GameRowEnd busy pinned={false} />
+    </div>
+  );
+}
 
 /** The game home is starting, selected and working, until it is made and has its own row. */
 function LaunchRow({ title }: { title: string | null }): JSX.Element {
@@ -181,8 +267,8 @@ function LaunchRow({ title }: { title: string | null }): JSX.Element {
 }
 
 /**
- * What waits to be installed, over the foot of the game list: Update plugins above the app's own
- * Relaunch to update or Download.
+ * What waits for the person, over the foot of the game list: Genex's updated terms to review, the
+ * plugin updates line, then the app's own Relaunch to update or Download.
  */
 function SidebarFooter({
   update,
@@ -191,46 +277,27 @@ function SidebarFooter({
   pluginUpdates,
   updatingPlugins,
   onUpdatePlugins,
+  onPlugins,
+  onOpenPlugin,
 }: Props): JSX.Element | null {
   const pluginsWait = pluginUpdates.length > 0 || updatingPlugins;
-  if (!update && !pluginsWait) return null;
+  const genexTerms = usePeople((s) => s.genexTermsPending);
+  if (!update && !pluginsWait && !genexTerms) return null;
   return (
     <div className="sidebar-footer">
+      <GenexTermsLine />
       {pluginsWait && (
-        <SidebarPluginUpdates releases={pluginUpdates} updating={updatingPlugins} onUpdate={onUpdatePlugins} />
+        <SidebarPluginUpdates
+          updates={pluginUpdates}
+          updating={updatingPlugins}
+          onUpdate={onUpdatePlugins}
+          onOpenPlugins={onPlugins}
+          onOpenPlugin={onOpenPlugin}
+        />
       )}
       {update?.action === UpdateAction.Download && <SidebarDownload update={update} onDownload={onDownloadUpdate} />}
       {update?.action === UpdateAction.Restart && <SidebarUpdate update={update} onRestart={onRestartToUpdate} />}
     </div>
-  );
-}
-
-/** Update plugins: installs every waiting plugin update, each after its own approval. */
-function SidebarPluginUpdates({
-  releases,
-  updating,
-  onUpdate,
-}: {
-  releases: readonly string[];
-  updating: boolean;
-  onUpdate: () => void;
-}): JSX.Element {
-  // The last release installs before the run ends: nothing is left to name then.
-  const hint = releases.length > 0 ? PLUGIN_UPDATE_WORDS.hint(releases) : PLUGIN_UPDATE_WORDS.updating;
-  return (
-    <Hint label={hint} side="top">
-      <button
-        type="button"
-        className="sidebar-update"
-        data-plugins-update
-        aria-busy={updating}
-        disabled={updating}
-        onClick={onUpdate}
-      >
-        <span>{updating ? PLUGIN_UPDATE_WORDS.updating : PLUGIN_UPDATE_WORDS.update(releases.length)}</span>
-        <Icon name="reload" size={16} />
-      </button>
-    </Hint>
   );
 }
 
@@ -310,8 +377,8 @@ function SidebarGame({
 }
 
 /**
- * The fixed top: the toggle and Send feedback, the brand with search and notifications, the rooms,
- * the games heading.
+ * The fixed top: the toggle with search, notifications and Send feedback; the brand with the Play /
+ * Create switch; the rooms in Create or the shelves in Play; the games or Recent heading.
  */
 function SidebarTop({
   studio,
@@ -335,9 +402,12 @@ function SidebarTop({
   onSelectThread,
   atHome,
   onHome,
+  playOpen,
+  onPlayMode,
 }: Props & { studio: ConversationRecord | undefined; harnessOpen: boolean }): JSX.Element {
   const studioStatus = studio ? threadStatus[studio.id]?.status : undefined;
   const studioBusy = Boolean(studio && busyThreads.has(studio.id));
+  const hasRecent = usePlay((s) => s.recent.length > 0);
   return (
     <div className="sidebar-fixed">
       <div className="titlebar-drag sidebar-titlebar">
@@ -353,30 +423,7 @@ function SidebarTop({
             <Icon name="sidebar" />
           </button>
         </Hint>
-        <Hint label={FEEDBACK_WORDS.title}>
-          <button
-            type="button"
-            className="no-drag sidebar-toggle sidebar-feedback"
-            data-feedback-open
-            aria-label={FEEDBACK_WORDS.title}
-            aria-haspopup="dialog"
-            onClick={onFeedback}
-          >
-            <Icon name="bug" />
-          </button>
-        </Hint>
-      </div>
-      <div className="sidebar-brand-row">
-        <button
-          type="button"
-          className="sidebar-home"
-          aria-label="Home"
-          aria-current={atHome ? "page" : undefined}
-          onClick={onHome}
-        >
-          <GenexLogo className="brand sidebar-wordmark" />
-        </button>
-        <div className="sidebar-brand-actions">
+        <div className="no-drag sidebar-brand-actions">
           <IconButton
             icon="search"
             label="Search games"
@@ -392,55 +439,132 @@ function SidebarTop({
             onRead={onReadNotices}
             onClear={onClearNotices}
           />
+          <Hint label={FEEDBACK_WORDS.title}>
+            <button
+              type="button"
+              className="sidebar-toggle sidebar-feedback"
+              data-feedback-open
+              aria-label={FEEDBACK_WORDS.title}
+              aria-haspopup="dialog"
+              onClick={onFeedback}
+            >
+              <Icon name="bug" />
+            </button>
+          </Hint>
         </div>
       </div>
-      <div className="sidebar-nav">
-        <Hint label="New game" shortcut="⌘N">
-          <NavRow icon="new-game" aria-keyshortcuts="Meta+N Control+N" onClick={onNewGame}>
-            New game
-          </NavRow>
-        </Hint>
-        <NavRow icon="plugins" aria-label="Plugins" current={pluginsOpen} onClick={onPlugins}>
-          Plugins
-        </NavRow>
-        {studio && (
-          <Hint label="Harness" shortcut="⌘2">
-            <NavRow
-              icon="harness"
-              data-thread="studio"
-              current={harnessOpen}
-              busy={studioBusy}
-              onClick={() => onSelectThread(studio.id)}
-            >
-              <span className="min-w-0 flex-1 truncate">Harness</span>
-              {stagedCount > 0 && (
-                <span className="sidebar-badge" aria-label={`${stagedCount} skill improvements to review`}>
-                  {stagedCount}
-                </span>
-              )}
-              {studioBusy && studioStatus && <span className="sr-only">{statusWords(studioStatus).short}</span>}
+      <div className="sidebar-brand-row">
+        <button
+          type="button"
+          className="sidebar-home"
+          aria-label="Home"
+          aria-current={atHome && !playOpen ? "page" : undefined}
+          onClick={onHome}
+        >
+          <GenexLogo className="brand sidebar-wordmark" />
+        </button>
+        <PlaySwitch playing={playOpen} onChange={onPlayMode} />
+      </div>
+      <div className="sidebar-fold" data-folded={!playOpen} inert={!playOpen}>
+        <PlayShelfRows />
+      </div>
+      <div className="sidebar-fold" data-folded={playOpen} inert={playOpen}>
+        <div className="sidebar-nav">
+          <Hint label="New game" shortcut="⌘N">
+            <NavRow icon="new-game" aria-keyshortcuts="Meta+N Control+N" onClick={onNewGame}>
+              New game
             </NavRow>
           </Hint>
-        )}
+          <NavRow icon="plugins" aria-label="Plugins" current={pluginsOpen} onClick={onPlugins}>
+            Plugins
+          </NavRow>
+          {studio && (
+            <Hint label="Harness" shortcut="⌘2">
+              <NavRow
+                icon="harness"
+                data-thread="studio"
+                current={harnessOpen}
+                busy={studioBusy}
+                onClick={() => onSelectThread(studio.id)}
+              >
+                <span className="min-w-0 flex-1 truncate">Harness</span>
+                {stagedCount > 0 && (
+                  <span className="sidebar-badge" aria-label={`${stagedCount} skill improvements to review`}>
+                    {stagedCount}
+                  </span>
+                )}
+                {studioBusy && studioStatus && <span className="sr-only">{statusWords(studioStatus).short}</span>}
+              </NavRow>
+            </Hint>
+          )}
+        </div>
+      </div>
+      {/* Settings is in both Create and Play: under whichever rows are up. */}
+      <div className="sidebar-nav sidebar-nav-shared">
         <NavRow icon="settings" aria-label="Settings" aria-haspopup="dialog" onClick={onSettings}>
           Settings
         </NavRow>
       </div>
-      <div className="sidebar-games-heading">
-        <span>Games</span>
-        <IconButton
-          icon="plus"
-          label="Create game"
-          title="Create game · ⌘N"
-          className="sidebar-icon"
-          onClick={onNewGame}
-        />
-      </div>
+      {playOpen ? (
+        // Nothing played yet, nothing to head: Recent appears with the first game played.
+        hasRecent && (
+          <div className="sidebar-games-heading" key="recent">
+            <span>{PLAY_WORDS.recent}</span>
+          </div>
+        )
+      ) : (
+        <div className="sidebar-games-heading" key="games">
+          <span>Games</span>
+          <IconButton
+            icon="plus"
+            label="Create game"
+            title="Create game · ⌘N"
+            className="sidebar-icon"
+            onClick={onNewGame}
+          />
+        </div>
+      )}
     </div>
   );
 }
 
-/** New game, Plugins, Harness and Settings: one stack of equal rows. */
+/** Each shelf's glyph in Play's sidebar. */
+const SHELF_ICONS = {
+  [PlayShelf.Games]: "gamepad",
+  [PlayShelf.Tools]: "wrench",
+  [PlayShelf.Assets]: "box",
+} as const satisfies Record<PlayShelf, IconName>;
+
+/**
+ * Play's shelves in the rooms' place: Games, Tools and Assets, each with its count, as genex.games
+ * lists them. Friends are under the games (`SidebarFriends`), not a row here.
+ */
+function PlayShelfRows(): JSX.Element {
+  const onShelf = usePlay((s) => s.view.page === PlayPage.Shelf);
+  const shown = usePlay((s) => s.shelf);
+  const counts = usePlay(useShallow((s) => s.counts));
+  return (
+    <div className="sidebar-nav" role="group" aria-label={PLAY_WORDS.shelvesLabel}>
+      {PLAY_SHELVES.map((shelf) => {
+        const count = counts[shelf];
+        return (
+          <NavRow
+            key={shelf}
+            icon={SHELF_ICONS[shelf]}
+            current={onShelf && shelf === shown}
+            data-play-shelf={shelf}
+            onClick={() => studioApp().play.chooseShelf(shelf)}
+          >
+            <span className="min-w-0 flex-1 truncate">{PLAY_WORDS.shelves[shelf]}</span>
+            {count !== null && <span className="sidebar-count">{formatCount(count)}</span>}
+          </NavRow>
+        );
+      })}
+    </div>
+  );
+}
+
+/** New game, Plugins, Harness (or Play's shelves) and Settings: one stack of equal rows. */
 function NavRow({
   icon,
   current = false,
@@ -502,6 +626,8 @@ function GameRow({
   onCover: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  // A project that isn't a game says what it is beside its name.
+  const kind = projectKindLabel(game);
   // The row's end is one slot: the working dot, else the pin — and ⋯ in their place on hover.
   return (
     <div className="sidebar-game" data-game={game.name} data-active={active} data-busy={busy} data-menu-open={open}>
@@ -510,12 +636,15 @@ function GameRow({
         data-project={game.name}
         data-thread={threadId}
         aria-current={active ? "page" : undefined}
-        title={game.pathLabel}
+        title={kind ? `${game.pathLabel} · ${kind}` : game.pathLabel}
         className="sidebar-game-select"
         onClick={onSelect}
       >
         <GameAvatar cover={game.cover} active={active} gameKey={game.name} />
-        <span className="min-w-0 flex-1 truncate">{game.title}</span>
+        {/* The kind label keeps its words: the name shortens first, down to its first letters, and only a
+            row narrower than that shortens the label too. */}
+        <span className="min-w-8 flex-1 truncate">{game.title}</span>
+        {kind && <span className="ms-1.5 min-w-0 truncate text-ink-3">{kind}</span>}
         {busy && <span className="sr-only">Working</span>}
       </button>
       <GameRowEnd busy={busy} pinned={game.pinned} />

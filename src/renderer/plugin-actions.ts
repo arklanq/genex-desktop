@@ -3,6 +3,7 @@
  * dialog, a toolbar button. One implementation of the review → ticket → native approval
  * sequence, so a confirmed action reaches main the same way from every surface.
  */
+import { UserCancelledError } from "../shared/errors.ts";
 import type { PluginInfo } from "../shared/plugins.ts";
 
 /** The pictures a review may show: inline PNG, JPEG or WebP, never a link to fetch. */
@@ -48,7 +49,8 @@ export async function runPluginAction({
       const yes = await new Promise<boolean>((resolve) =>
         review({ message: info.message ?? declaration.confirmation ?? declaration.label, images, resolve }),
       );
-      if (!yes) throw new Error("Cancelled");
+      // The same cancel as declining the native confirmation, so every surface reads it one way.
+      if (!yes) throw new UserCancelledError();
     }
   }
   return window.studio.pluginAction(plugin.manifest.id, name, actual, project ?? undefined, ticket);

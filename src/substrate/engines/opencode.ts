@@ -27,7 +27,7 @@ import { runCommand } from "./claude-cli.ts";
 import { lockUnowned, ownershipBriefing, releaseLocks, releaseStaleLocks, type LockRecord } from "./ownership-locks.ts";
 import { StudioBridge, answerBridgeCall, bridgeTools } from "./studio-bridge.ts";
 import { writeDelegateStills } from "./codex.ts";
-import { JUDGE_RULES, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
+import { JUDGE_RULES, mcpToolsNote, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
 import {
   OPENCODE_AGENT,
   OpenCodeAccess,
@@ -152,6 +152,11 @@ export interface OpenCodeEngineOptions {
   resolveCli?: () => Promise<{ ready: boolean; path?: string; version?: string; detail: string }>;
   /** Where locks are recovered from after a crash (as Codex's). */
   lockRecovery?: string;
+  /**
+   * Hand a session the studio's live tools as a local MCP server too (`studio-mcp-shim.ts`), so
+   * pictures reach the model inline; the file bridge stays as the fallback. On unless set false.
+   */
+  mcpTools?: boolean;
 }
 
 /** What a session has done so far. */
@@ -177,6 +182,7 @@ export class OpenCodeEngine implements Engine {
   readonly #listModels: (() => Promise<string>) | undefined;
   readonly #resolveCli: () => Promise<{ ready: boolean; path?: string; version?: string; detail: string }>;
   readonly #lockRecovery: string | undefined;
+  readonly #mcpTools: boolean;
   #hosts = new Map<string, string[]>();
   /** Whether the last listing named a model some provider's sign-in runs, not only OpenCode's free ones. */
   #signedIn = false;
@@ -192,6 +198,7 @@ export class OpenCodeEngine implements Engine {
     this.#listModels = options.listModels;
     this.#resolveCli = options.resolveCli ?? defaultResolveCli;
     this.#lockRecovery = options.lockRecovery;
+    this.#mcpTools = options.mcpTools !== false;
   }
 
   async status(): Promise<EngineStatus> {
@@ -299,6 +306,7 @@ export class OpenCodeEngine implements Engine {
         cwd,
         runDir,
         bridge: Boolean(bridge),
+        mcpCommand: bridge?.mcpCommand() ?? null,
         prompt: this.#brief(request, { access, cwd, scratch, locks, bridge }),
         files: stills.paths,
         signal: controller.signal,
@@ -376,6 +384,7 @@ export class OpenCodeEngine implements Engine {
         cwd: scratch,
         runDir: scratch,
         bridge: false,
+        mcpCommand: null,
         prompt: answerPrompt(request),
         files: stills.paths,
         signal,
@@ -401,6 +410,8 @@ export class OpenCodeEngine implements Engine {
       cwd: runDir,
       tools,
       onCall: async (name, args) => answerBridgeCall(name, args, request),
+      // Only the live tools go over MCP: interview tools stay the bridge's, recorded for the harness.
+      mcp: this.#mcpTools && Boolean(request.liveTools?.length),
     });
   }
 
@@ -431,10 +442,16 @@ export class OpenCodeEngine implements Engine {
     return [
       request.prompt,
       ctx.bridge?.instructions() ?? "",
+      ctx.bridge?.mcpCommand() ? mcpToolsNote((request.liveTools ?? []).map((tool) => tool.name)) : "",
       hasSeam && request.ownership ? ownershipBriefing(request.ownership) : "",
       plan
         ? planModeNote(ctx.cwd, ctx.scratch ?? "")
-        : readOnlyNote(ctx.cwd, ctx.scratch, request.director ? path.resolve(request.director.root) : null),
+        : readOnlyNote(
+            // A reviewer's cwd is its own empty home: the build it tests is the folder it reads.
+            request.reviewer?.reads ?? ctx.cwd,
+            ctx.scratch,
+            request.director ? path.resolve(request.director.root) : null,
+          ),
       offLimitsNote([...this.#protectedPaths, ...credentialHomes(), ...(request.denyReads ?? [])]),
     ]
       .filter((part) => part.trim())
@@ -449,6 +466,7 @@ export class OpenCodeEngine implements Engine {
       cwd: string;
       runDir: string;
       bridge: boolean;
+      mcpCommand: string[] | null;
       prompt: string;
       files: string[];
       signal: AbortSignal;
@@ -652,11 +670,14 @@ function sessionArgv(
  */
 function sessionEnv(
   dialect: OpenCodeDialect,
-  ctx: { access: OpenCodeAccess; bridge: boolean; runDir: string; home: string },
+  ctx: { access: OpenCodeAccess; bridge: boolean; mcpCommand: string[] | null; runDir: string; home: string },
 ): Record<string, string> {
   const v2 = dialect === OpenCodeDialect.V2;
+  const config = v2
+    ? openCodeConfigV2(ctx.access, ctx.bridge, ctx.mcpCommand)
+    : openCodeConfig(ctx.access, ctx.bridge, ctx.mcpCommand);
   const env: Record<string, string> = {
-    OPENCODE_CONFIG_CONTENT: v2 ? openCodeConfigV2(ctx.access, ctx.bridge) : openCodeConfig(ctx.access, ctx.bridge),
+    OPENCODE_CONFIG_CONTENT: config,
     OPENCODE_DISABLE_AUTOUPDATE: "1",
     ...(v2 ? { OPENCODE_DISABLE_PROJECT_CONFIG: "1", PWD: ctx.runDir, OPENCODE_TEST_HOME: ctx.home } : {}),
   };
@@ -670,6 +691,7 @@ function sessionEnv(
 
 /** What a session's tools may do: a build edits; a read-only session, a lead while its build runs and Plan only look. */
 function sessionAccess(request: DelegateRequest): OpenCodeAccess {
+  if (request.blind) return OpenCodeAccess.Blind;
   const readOnly = Boolean(request.readOnly) && !request.coordinator;
   return readOnly || chatMode(request) === PermissionMode.Plan ? OpenCodeAccess.ReadOnly : OpenCodeAccess.Build;
 }

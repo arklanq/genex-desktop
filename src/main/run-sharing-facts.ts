@@ -11,10 +11,12 @@
  * `FieldEventNames` (their registered `CustomEvent` names by default); a log without them leaves
  * those measurements null or absent, never zero.
  *
- * Tokens are normalized as the eval collectors normalize them (`normalizedTokens`, Rule 13), and a
- * session's `by_model` totals add what its main loop does not count: its own model's surplus
- * (subagents) and every other model it called (auxiliary). Each engine call counts once: a
- * delegated turn's reply and its `build_observation` carry the same contractor report, which is
+ * Tokens are normalized as the eval collectors normalize them (`normalizedTokens`, Rule 13), and an
+ * engine call's `by_model` adds what its main loop does not count: its own model's surplus
+ * (subagents) and every other model it called (auxiliary). A delegated call's `by_model` is its own
+ * share of its session's running totals (`substrate/engines/session-cost.ts`), so the calls of one
+ * resumed session add up rather than counting its early turns again. Each engine call counts once:
+ * a delegated turn's reply and its `build_observation` carry the same contractor report, which is
  * read from the reply (`repeatedBuildUsages`).
  */
 import { SessionActivityRole } from "../shared/chat-activity.ts";
@@ -129,8 +131,8 @@ function surplus(total: TokenUsage | null, part: TokenUsage | null): TokenUsage 
 }
 
 /**
- * One usage record: its main-loop counts, and the session's `by_model` totals split into the main
- * model's surplus and the other models. A record whose `by_model` names no share for its main
+ * One usage record: its main-loop counts, and its call's `by_model` split into the main model's
+ * surplus and the other models. A record whose `by_model` names no share for its main
  * model adds nothing beyond its main loop: which share is the main loop's is unknown there.
  */
 function readUsage(usage: unknown, engine: unknown, model: unknown): UsageReading {

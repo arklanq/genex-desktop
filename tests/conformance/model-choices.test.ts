@@ -10,6 +10,7 @@ import {
   unifiedEffort,
   roleChoices,
   autoChoice,
+  withoutFreeWord,
 } from "../../src/renderer/model-choices.ts";
 import { sendKey } from "../../src/renderer/chat/send-route.ts";
 import type { ComposerModel } from "../../src/renderer/chat/use-composer-model.ts";
@@ -150,6 +151,14 @@ test("one effort serves every role at the closest level each model accepts", () 
     "medium",
   );
   assert.equal(mixed.efforts?.planner, "medium");
+});
+test("one effort runs the lead at it and the workers and reviewers at most high; a lower one is every role's", () => {
+  const choices = toChoices(engines);
+  const picks = { planner: "bonsai-pq", builder: "bonsai-pq", judge: "bonsai-pq" };
+  const max = withRoleEfforts(picks, choices, "bonsai", "max");
+  assert.deepEqual(max.efforts, { planner: "max", builder: "high", judge: "high" });
+  const medium = withRoleEfforts(picks, choices, "bonsai", "medium");
+  assert.deepEqual(medium.efforts, { planner: "medium", builder: "medium", judge: "medium" });
 });
 test("an effort a model lacks becomes its nearest level, the faster one on a tie", () => {
   assert.equal(nearestEffort("ultra", ["low", "medium", "high", "max"]), "max");
@@ -532,8 +541,8 @@ test("OpenCode with no provider signed in lists its first three free models, mar
   ]);
   const rows = choices.filter((choice) => !choice.hidden);
   assert.ok(
-    rows.every((choice) => choice.detail === "Free" && choice.free === true),
-    "each says it costs nothing",
+    rows.every((choice) => choice.detail === undefined && choice.free === true),
+    "each says it costs nothing in a tag beside its name, not on a line of its own",
   );
   assert.deepEqual(visible(toChoices([openCodeFreeOnly], { opencode: { "opencode/exo-free": false } })), [
     "opencode::opencode/big-pickle",
@@ -590,4 +599,14 @@ test("with nothing picked, the picker never chooses a paid or hidden model on th
     "a timed build never starts on a paid model",
   );
   assert.equal(sendKey(composer(toChoices([openRouter(ready), claude])), timed), "claude-code::claude-opus-5-5");
+});
+
+test("a free model's own trailing Free gives way to its tag", () => {
+  assert.equal(withoutFreeWord("Cat Jam Free"), "Cat Jam");
+  assert.equal(withoutFreeWord("DeepSeek V4.1 Flash Free"), "DeepSeek V4.1 Flash");
+  assert.equal(withoutFreeWord("Ling 3.1 (free)"), "Ling 3.1");
+  assert.equal(withoutFreeWord("qwen3:free"), "qwen3");
+  assert.equal(withoutFreeWord("Big Pickle"), "Big Pickle");
+  assert.equal(withoutFreeWord("Freedom 2"), "Freedom 2", "only a trailing word goes");
+  assert.equal(withoutFreeWord("Free"), "Free", "a name that is only the word keeps it");
 });

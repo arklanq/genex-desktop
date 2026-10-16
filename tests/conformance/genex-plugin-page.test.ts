@@ -9,6 +9,7 @@ import type { PluginInfo, PluginManifest } from "../../src/shared/plugins.ts";
 import manifest from "../../src/plugins/genex/plugin.json" with { type: "json" };
 import { accountPanel, hasOwnPage } from "../../src/renderer/panels/plugins/labels.ts";
 import {
+  accountCreditsOf,
   CreditsKind,
   GENEX_ACTIVE_POLL_MS,
   GENEX_IDLE_POLL_MS,
@@ -41,6 +42,14 @@ const job = (over: Partial<GenexJob>): GenexJob => ({
   files: [],
   createdAt: "2026-09-27T10:00:00.000Z",
   ...over,
+});
+
+describe("the Credits tab's balance", () => {
+  it("says Unlimited only when genex.games does, and never mistakes a balance it couldn't read for one", () => {
+    assert.deepEqual(accountCreditsOf({ balance: 1240, unlimited: false }), { kind: CreditsKind.Count, count: 1240 });
+    assert.deepEqual(accountCreditsOf({ balance: null, unlimited: true }), { kind: CreditsKind.Unlimited });
+    assert.deepEqual(accountCreditsOf({ balance: null, unlimited: false }), { kind: CreditsKind.Unknown });
+  });
 });
 
 describe("Genex account state", () => {

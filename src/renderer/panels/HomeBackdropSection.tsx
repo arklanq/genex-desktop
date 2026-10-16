@@ -44,7 +44,11 @@ export function HomeBackdropSection(): JSX.Element {
       <div className="appearance-theme-heading">
         <h3>{MESSAGE.heading}</h3>
         {!off && (
-          <Button variant="ghost" className="ms-auto" onClick={resetBackdrop}>
+          <Button
+            variant="ghost"
+            className="ms-auto bg-foreground/[0.07] hover:bg-foreground/[0.12]"
+            onClick={resetBackdrop}
+          >
             {MESSAGE.reset}
           </Button>
         )}

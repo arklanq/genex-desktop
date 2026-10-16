@@ -318,7 +318,10 @@ describe("native Codex login", () => {
       execFn: async function* (invocation) {
         assert.equal(invocation.env.CODEX_HOME, f.home);
         assert.equal(invocation.argv[0], "exec", "auth overrides must be in the exec command scope");
-        assert.deepEqual(invocation.argv.slice(-loginArgs.length - 1, -1), loginArgs);
+        // Flipped: the features every session turns off follow the auth overrides, before the prompt.
+        const features = invocation.argv.indexOf("--disable");
+        assert.ok(features > 0, "every session turns Codex's own features off");
+        assert.deepEqual(invocation.argv.slice(features - loginArgs.length, features), loginArgs);
         assert.ok(invocation.argv.includes("--ignore-user-config"));
         calls.push(invocation.argv);
         yield { type: "thread.started", thread_id: "resume-me" };

@@ -1,6 +1,6 @@
 # Desktop data and privacy
 
-Updated October 9, 2026. Contact: **team@genex.games**. This describes the desktop
+Updated October 14, 2026. Contact: **team@genex.games**. This describes the desktop
 application. Connected providers, plugins and the hosted Genex service have separate policies.
 
 ## Local storage
@@ -51,6 +51,7 @@ undo a remote action or recall data already sent.
 | Blender assets | Blender on this Mac, or one click downloads a pinned release from download.blender.org |
 | Plugin catalog | Anonymous downloads from `plugins.genex.games` and GitHub |
 | Genex asset generation, credits and hosted publishing | A Genex account (paid credits); publishing also needs `git-lfs` |
+| Play | Nothing to browse and play; likes, signed-in play, invite links, profiles and friends need a Genex account; Remix needs `git`; voice chat needs microphone access (macOS asks once) |
 
 Studio finds Claude Code and Codex through a manual override, your login-shell `PATH`, then
 standard locations, and never installs or updates them unless you choose that in Settings.
@@ -62,6 +63,65 @@ bundled Genex CLI runs with its crash reporting off unless you set `GENEX_TELEME
 Opening a folder does not authorize its Claude settings or hooks. The Open Game trust checkbox
 is an explicit choice because hooks can run commands with the user's access. Interactive
 permission modes and native plugins have broader reach than unattended sandboxed workers.
+
+## Play
+
+Play reads the genex.games catalog from `https://api.genex.games` without a sign-in: the lists of
+games, tools and assets, which tabs have something in them, the search catalog and, every 20 seconds while the dashboard
+is in view, how many people are in its multiplayer games. Covers and author pictures load from
+cdn.genex.technology, assets.genex.games, assets.genex.technology, api.genex.games, Google
+(lh3.googleusercontent.com) and GitHub (avatars.githubusercontent.com). A game's five-second cover
+clip loads from cdn.genex.technology only while you rest the pointer on its card.
+
+Playing a game loads it from its own `https://<name>.genex.technology/` address, and genex.games
+counts the play. The game runs in Play's own storage, apart from your games and the rest of the
+app, where it keeps its saves; it may use only pointer lock, full screen and clipboard writes, and
+links that leave Genex games open in your browser. A game in voice chat gets a microphone the app
+controls: your microphone feeds it only while you turn on the mic in the game's header (off for
+every game until you do), and a game never gets a camera. What the game does with that audio is
+the game's: a Genex game in voice chat sends it to the other players in its room, directly or
+through Genex's relay. Which games you left the mic on for, and the microphone you chose, stay in
+the app profile. Signed in to Genex, the app sends
+the account's token to the Genex API to get a single-use sign-in ticket for that game (without
+one, the game plays as a guest), to read a game's likes including yours, to save or remove a like,
+and to read your referral code, which Invite a friend adds to the link it copies. Share and Invite
+only copy a genex.games link to the clipboard.
+
+Signed in, the app also reads, with that token, who the account is (its name, nickname, whether
+you chose it, picture, Pro and join date; the email the API returns never leaves the app's main
+process) and the Friends page: your friends with the game each is in when they share it, requests
+both ways, whether friends see the game you are in, and your invite link. Who the account is is read at launch, when
+the window comes to the front, when the Mac is back online, when plugins change and, while a sign-in
+waits in your browser, every 2 seconds; the Friends page at launch, every 2 minutes
+for the sidebar's count of waiting requests, every 20 seconds while Friends is open and after each
+change you make there. A profile reads that account's public profile (name, picture, Pro, join date,
+published games) and, signed in, how you stand with them. Adding, accepting, declining, cancelling
+and removing a friend, changing who sees your game, renaming your account and a new picture (made
+into a 512-pixel WebP in the app, then uploaded to the address Genex hands back) are sent with the
+token; people search sends what you type (2 to 40 characters). A nickname you type is sent, with
+the token, a moment after your last key to ask whether it is free (unless the app can tell at once
+that it is malformed or already yours), and once more when you save it. Post on X opens X's post
+page in your browser with your link filled in, and Share… hands the link to the Mac's share menu:
+neither sends anything until you post or choose an app there. A profile also reads that person's
+friends (yours first) and how many people played their games. Your own stats (plays and players
+per game per day, and who plays now) are read with the token only while your profile or the Stats
+page shows them, and only you see them. Top creators are read without a sign-in. Choosing your
+generated avatar or your photo, and Regenerate's new variant (a number), are sent with the token;
+the generated avatar itself is drawn in the app from your account id and that number and sends
+nothing. The Genex plugin's Credits tab reads, with the token,
+your balance, Pro allowance, invite bonus and last few spends, and the public price list; Get
+credits opens genex.games/plans in your browser. That an account has seen its avatar's welcome
+(and been asked for its nickname) stays in the app profile, as do the account last signed in (its
+id, name, nickname, picture addresses, Pro, join date and avatar choice) and its last balance, so
+the app shows them while offline; signing out removes them. Signing in happens in your browser, on genex.games; signing out forgets the
+account on this Mac; turning the Genex plugin off signs nothing out.
+
+Remix clones the game's public source over https from git.genex.games into a new folder in your
+games folder, without its history, hooks, content filters or symbolic links; files the game keeps
+in Git LFS come from that same repository, through your Mac's git-lfs. The copy's
+Claude settings and hooks are not trusted. Recent (the last 12 games played) and a dismissed Genex
+card stay in the app profile. Development fixture launches answer from local data and open no
+connection.
 
 ## Publication
 

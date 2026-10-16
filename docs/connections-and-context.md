@@ -61,7 +61,8 @@ A plugin's missing account or required setting is a global setup requirement, so
 visible even before that project's transport has been opened.
 
 Disable/remove blocks further dispatch immediately, even while the current session holds an
-older tool list. Stop aborts local connector/plugin waiting associated with that conversation.
+older tool list. Genex is the exception for what is the person's: turned off, its account,
+sign-in and Publish actions keep running, and it can't be removed ([Play](play.md)). Stop aborts local connector/plugin waiting associated with that conversation.
 An accepted remote request may continue; local cancellation does not prove remote cancellation
 or a refund. Changes to unrelated sources do not wait behind another project's session.
 
@@ -85,6 +86,23 @@ cross-provider roles are never silently replaced. New unset roles and effort def
 under Genex's launch policy. Settings can update the selected CLI; provider operations and updates
 are mutually exclusive. The app never silently installs a different executable or auto-updates.
 A sign-in event names its own provider; its adjacent harness reply replaces duplicate narration.
+
+### Several accounts per subscription
+
+Claude Code and Codex each run on one account at a time: the Terminal login (the CLI's own home),
+Studio's first login (`engine-homes/<engine>`) or an added one (`engine-homes/accounts/<engine>/account-N`),
+listed by `SubscriptionAccounts` (`substrate/engines/subscription-accounts.ts`), which keeps the
+choice and the emails in `accounts.json` beside the added homes. A chosen account runs whether or
+not it is signed in, never another one silently; with no choice the old order holds (environment,
+Studio's own, Terminal). A finished sign-in remembers its account and chooses it
+(`settleSignIn`); `studio:subscription.signin` takes `account` (an id, or `new` for a fresh home),
+and Codex never signs in to `~/.codex`. `studio:subscription.accounts` lists them for the renderer
+only, asking each CLI for its email once a run (`claude auth status --json`, Codex `account/read`);
+emails never reach `engine.describe` or plan usage. `studio:subscription.use-account` switches from
+the next message on (Codex refuses while work is in flight); a resumed session another account made
+starts fresh. Settings shows the accounts as tabs under the provider with + to add one, and the
+usage panel names a plan's account when there are several; a switch to a signed-out account starts
+its web sign-in. Signing out deletes only that Studio-owned home and runs the next signed-in account.
 
 ## Install a coding CLI
 
@@ -165,7 +183,15 @@ reachable. `OPENCODE_CONFIG_CONTENT` sets every permission to allow or deny, nev
 fetch, skills and other folders to a build, and lets a read-only session run only the studio bridge
 (`node .studio/bridge/tool.mjs`), which carries the studio's tools as it does for Codex. On 2.x,
 which allows any tool it has no rule for, the rules open with a deny of everything and are repeated
-on the `build` agent so the person's own agent rules cannot widen them. Compact now is refused on
+on the `build` agent so the person's own agent rules cannot widen them.
+A session with live tools (the `computer`) also gets them as a local MCP server, `studio`
+([studio-mcp-shim.ts](../src/substrate/engines/studio-mcp-shim.ts)): OpenCode starts
+`node .studio/bridge/mcp.mjs` as its own child inside the same sandbox, the shim relays each call
+over the same bridge, and a picture comes back as MCP image content the model sees inline. Both
+dialects allow `studio_*` (1.18's `run` rejects any tool it would ask about; 2.x's rules deny
+everything first); 2.x declares it under `mcp.servers` with Code Mode off. The bridge command stays
+the fallback, and `mcpTools: false` turns the server off. A blind judge (`OpenCodeAccess.Blind`)
+reads no file on either dialect. Compact now is refused on
 both: OpenCode compacts its own sessions. A provider's HTTP status in an `error` event (1.18's
 `data.statusCode`, 2.x's `status`) decides the failure kind, as for OpenRouter; a 400 or 404 for a
 picked model ends the build saying which model the provider refused and to pick another; a 403 for
@@ -226,12 +252,18 @@ server the person runs without a password stays reachable.
 
 ## MCP setup
 
-Studio supports stdio, streamable HTTP and SSE. A stdio command uses argument arrays; each
-argument has its own row so spaces survive editing/import. Studio resolves its launch environment
-through the user's login-shell PATH. A changed launch command requires renewed user trust.
-Imports from Claude Code/Codex configuration are reviewed before installation; unsupported
-fields are reported rather than silently treated as working configuration.
-Save and connect completes setup in one Studio flow. A connected row shows its tool count;
+Add server opens one window: a paste box, then On this Mac or From a URL, a name, the command
+or URL, secret rows (environment variables or headers) and More options (only in this game, see
+this game's folder, start-in folder). Pasting JSON, Codex TOML, a URL, a command line or a
+`claude`/`codex mcp add` line fills the form (`shared/mcp-import.ts` `parseMcpInput`); inline
+values become secrets and unsupported fields are reported. The command is one line split like a
+shell without expansion (`shared/command-line.ts`) and saved as an argument array, quoted back
+when edited. The id comes from the name (`github`, `github-2`) and never changes after saving.
+A URL saves as streamable HTTP and falls back to SSE when the server refuses it; an existing SSE
+server stays SSE. A URL server signs in through the browser when it asks, unless an
+Authorization header is given. Studio resolves its launch environment through the user's
+login-shell PATH. A changed launch command requires renewed user trust.
+Connect completes setup in one Studio flow. A connected row shows its tool count;
 Connect is offered for recovery, not as an extra required step after a successful connection.
 
 Folder roots are opt-in. A server receives only the host-bound project's root when the user
@@ -254,7 +286,7 @@ not proof that every provider's sign-in flow works.
 Genex Connect advances one account flow without an extra Studio confirmation: existing browser authorization
 when required, and host-owned completion polling. Closing its panel does not discard the flow.
 An already unlocked account is leased in memory to Genex's backend and declared MCP transports;
-restarting a child does not independently reread Keychain. A successful connection/unlock records host-owned remember intent. On app restart, enabled installed plugins with that intent restore the saved encrypted credential once. Explicit re-enable or reinstall also restores that saved authorization once, without browser sign-in. A refused OS unlock remains failed until another explicit action; duplicate enable requests and status polling never retry. Explicit disconnect clears remember intent before credential deletion. Older installations establish intent on their next successful Connect/Unlock.
+restarting a child does not independently reread Keychain. A successful connection/unlock records host-owned remember intent. On app restart, enabled installed plugins with that intent (and Genex, on or off) restore the saved encrypted credential once. Explicit re-enable or reinstall also restores that saved authorization once, without browser sign-in. A refused OS unlock remains failed until another explicit action; duplicate enable requests and status polling never retry. Explicit disconnect clears remember intent before credential deletion. Older installations establish intent on their next successful Connect/Unlock.
 Studio never resets Keychain. Legitimate OS consent remains possible. On Linux, non-KDE sessions
 use the Secret Service backend and KDE keeps KWallet; without OS-backed encryption the
 connection remains locked and credentials are never stored through Electron's `basic_text` fallback.
@@ -286,6 +318,21 @@ the host's attributed tool record supplies the source.
 Codex bridge instructions use JSON for numeric/boolean plugin arguments as well as nested MCP
 schemas. String-only tools retain simple flags; validation never silently coerces a string into
 an agent's numeric or boolean request.
+
+Codex dynamic tools are an opt-in alternative to the bridge
+(`CodexEngineOptions.codexDynamicTools`, off until a live spike confirms CLI 0.159's experimental
+`dynamicTools`). With it on, a new session with live tools on CLI 0.159.0 or later runs its turn
+on `codex app-server` (`substrate/engines/codex-turns.ts`): `initialize` opts into
+`experimentalApi`, `thread/start` declares every tool the bridge would carry as a function with
+its schema, and each `item/tool/call` goes to the bridge's handler, its pictures sent inline as
+data URLs (`codex-dynamic-tools.ts`: answers capped at 12 MiB; malformed calls, undeclared tools,
+another thread's calls and arguments over 1 MiB are refused in words). Notifications are
+rewritten as `codex exec --json` events, so the log and chat read the same, and the brief is told
+its bridge commands are function tools. The sandbox and approvals are the exec turn's, as `-c`
+config and typed `thread/start`/`turn/start` params; `-c mcp_servers={}` stands in for the
+missing `--ignore-user-config`. A handshake refusal falls back to exec and the bridge for that
+turn and the engine's lifetime; resumed sessions, older CLIs and the default keep exec. The
+session's `system/init` event records `tool_delivery` (`dynamic_tools` or `file_bridge`).
 
 A read-only follow-up that leaves the game's content unchanged does not reload the preview or
 warn about an untouched empty scaffold. The bounded content stamp includes Git-ignored runtime
@@ -334,7 +381,7 @@ Resetting policy also refreshes the displayed threshold to its effective inherit
 
 ### Compact now
 
-Compact now is the context panel's button, or `/compact` typed as the whole message: "/" opens the
+Compact now is the context panel's Compact button (on the reading's line), or `/compact` typed as the whole message: "/" opens the
 composer's command list (`ui/ComposerCommandMenu.tsx`), which runs it instead of sending the text,
 and lists it as waiting while a turn or a build runs (`loop/session-compact.ts`).
 
@@ -371,7 +418,10 @@ opens to the summary in one framed box when there is one.
 The person may switch a game chat's model at any message, and the chat stays one conversation
 (`loop/chat-continuity.ts`). A session goes on only while it is the chat's latest (`goesOn`): a
 model switched back to after another one answered starts a fresh session, since its own missed
-those turns, and Compact now works on that latest session only. A fresh session mid-conversation
+those turns, and Compact now works on that latest session only. A session the engine cannot
+resume — it throws, or answers that it has no such conversation (another account's, one never
+saved) — is replaced by a fresh one in the same turn (`loop/chat-steer.ts`), so the chat never
+stays stuck on it. A fresh session mid-conversation
 is briefed with the original request, the latest instruction, the last messages verbatim
 (`loop/brief-window.ts`: 20 messages, at most 18,000 characters) and the latest written summary
 (`compactedSummary`, which reads past a Codex compaction's sealed one). When that brief cannot
@@ -425,7 +475,9 @@ names windows by length and scopes non-default buckets. Claude sessions at work 
 usage (see Native context telemetry). Each engine reuses a reading under a
 minute old, shares an in-flight read and falls
 back to its last reading on failure; a Recheck clears it. The composer asks when its ring panel
-opens or the ring is hovered, and every minute while open. Fixture engines report fixed limits.
+opens or the ring is hovered, and every minute while open; until the first reading it draws each
+plan this setup uses at full size with shimmering bars for its limits. Its last row opens Settings →
+Model Providers. Fixture engines report fixed limits.
 `promptbar-redesign.test.ts` covers both normalizers; account access is proven only against a
 real login.
 
@@ -508,8 +560,8 @@ flow installs this added server with launch-change review and preserves the save
 
 ### Genex skills, CLI and packages
 
-Genex 1.5.0 reaches existing installations through the standard Update flow, whose trust dialog
-lists its skills and the tools Studio runs for it. Builder briefs index Genex's guide and its
+Genex 1.5.0 reaches existing installations through the standard Update flow, which installs a
+bundled plugin's newer version without a trust dialog. Builder briefs index Genex's guide and its
 platform cards (multiplayer, player identity, LLM in games, monetization, publishing, cover, updates);
 agents read a card with `genex__skill` before that work, and the host serves it from the plugin,
 never from or into the game folder.
@@ -520,8 +572,10 @@ commands (doctor, budget, LLM models, job status and cancel, shop list) and, aft
 in a throwaway folder of its own, never the game, with only the Genex API reachable; setup,
 sign-in, publishing and generation commands are refused and point to the matching Genex tool.
 `genex__package` adds `@genex-ai/multiplayer` or `@genex-ai/embed-sdk` at Studio's pin to a
-build game after consent, opening the npm registry for that one install; Studio-template games
-without `package.json` cannot add them. Multiplayer is tested only on the published draft: build,
+build game after consent, opening the npm registry for that one install. A Studio-template game
+gets player identity by mapping Studio's copy in its import map instead, and Studio then calls
+`initEmbed()` for it; multiplayer cannot be added there yet. Studio connects every web game it
+publishes that brings no SDK of its own, so genex.games can sign its players in. Multiplayer is tested only on the published draft: build,
 add the package, publish a draft with `genex__publish`, then play the draft link. Studio's
 preview stays single-player. Fixture profiles refuse the CLI and package tools.
 
@@ -544,9 +598,12 @@ consent card. Bytes Genex already answered for, and a cover the owner picked on 
 never uploaded again; the owner's pick is recorded (`kept_owner`) whenever Genex reports it, at a
 send or a status check, a shot kept or not; a refused, rate-limited, failed or silent send leaves the publish done with a
 warning in `genex__publish-status`. Nothing is read from or written to the game folder for it.
-While the plugin reports no shot to send and no cover the owner chose, Studio's own Publish dialog
-offers Ask for a cover, which leaves the request in the game's chat composer, unsent
-([plugins](plugins.md#first-party-privileges)). The thread's latest kept shot shows in the chat as
+Once the turns on the open game settle, and as the Publish dialog opens with no shot, Studio asks
+the plugin for the cover itself (`cover-auto`): the `genex-cover` demo, or for a game with none a
+plain frame of it as it loads, and the `genex-clip` demo's five-second clip; never over the
+person's pick or the owner's cover. The dialog's banner flips between the last four frames
+(`cover-pick` pins one, and a publish then sends it as it is) and its Another cover sends a request
+to the game's chat ([plugins](plugins.md#first-party-privileges)). The thread's latest kept shot shows in the chat as
 a Genex cover card whose Publish opens that dialog; since Genex 1.6.3 the guidance tells the builder
 to shoot the winner last and then say one line, never how to publish.
 

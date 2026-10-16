@@ -18,10 +18,13 @@ import {
   pluginIconUrl,
   RowAccountStep,
   rowAccountStep,
+  routerLine,
   shownDescription,
   shownName,
 } from "./labels.ts";
 import type { PluginsPage } from "./page.ts";
+import { CreditsShard } from "../../play/CreditsShard.tsx";
+import { signInToGenex } from "../../play/use-genex-sign-in.ts";
 
 const ACCOUNT_WORDS = PLUGINS_WORDS.account;
 /** Credits read with the reader's own digit grouping. */
@@ -123,6 +126,26 @@ function creditsWords(credits: CreditsView | null | undefined): string | null {
   return credits?.kind === CreditsKind.Count ? ACCOUNT_WORDS.credits(NUMBER.format(credits.count)) : null;
 }
 
+/** A row's Connect; Genex's account is the app's, so its row signs in as the plate and Settings do. */
+function ConnectButton({ plugin, page }: { plugin: PluginInfo; page: PluginsPage }): JSX.Element {
+  const genex = plugin.manifest.id === GENEX_PLUGIN_ID;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <Button
+          variant={genex ? "default" : "secondary"}
+          disabled={page.busy}
+          aria-label={genex ? ACCOUNT_WORDS.signInLabel : `Connect ${shownName(plugin)}`}
+          onClick={genex ? () => void signInToGenex() : () => void connectAccount(plugin, page)}
+        >
+          {genex ? ACCOUNT_WORDS.signIn : ACCOUNT_WORDS.connect}
+        </Button>
+      </TooltipTrigger>
+      <TooltipContent>{ACCOUNT_WORDS.connectHint}</TooltipContent>
+    </Tooltip>
+  );
+}
+
 /**
  * A plugin's account where its row (or page) needs it: one Connect button, the browser step with
  * Cancel, Reconnect after a failure, or, once connected, the balance and no button at all.
@@ -144,21 +167,7 @@ export function AccountStep({
   const connect = () => void connectAccount(plugin, page);
   switch (step) {
     case RowAccountStep.Connect:
-      return (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              variant={manifest.id === GENEX_PLUGIN_ID ? "default" : "secondary"}
-              disabled={page.busy}
-              aria-label={`Connect ${name}`}
-              onClick={connect}
-            >
-              {ACCOUNT_WORDS.connect}
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>{ACCOUNT_WORDS.connectHint}</TooltipContent>
-        </Tooltip>
-      );
+      return <ConnectButton plugin={plugin} page={page} />;
     case RowAccountStep.Reconnect:
       return (
         <Button disabled={page.busy} aria-label={`Reconnect ${name}`} onClick={connect}>
@@ -182,7 +191,12 @@ export function AccountStep({
       );
     default: {
       const balance = step === RowAccountStep.Connected ? creditsWords(credits) : null;
-      return balance ? <span className="extension-credits">{balance}</span> : null;
+      return balance ? (
+        <span className="extension-credits">
+          <CreditsShard size={13} />
+          {balance}
+        </span>
+      ) : null;
     }
   }
 }
@@ -193,6 +207,17 @@ export function ReinstallButton({ plugin, page }: { plugin: PluginInfo; page: Pl
     <Button disabled={page.busy} onClick={() => void page.act(() => window.studio.pluginInstall(plugin.manifest.id))}>
       {plugin.removed ? "Reinstall" : "Allow…"}
     </Button>
+  );
+}
+
+/** The line under a row's name: Genex's in two parts, the account's half quieter; any other plugin's as it wrote it. */
+function RowLine({ plugin, description }: { plugin: PluginInfo; description: string }): JSX.Element {
+  if (plugin.manifest.id !== GENEX_PLUGIN_ID) return <>{description}</>;
+  const { lead, tail } = routerLine(plugin);
+  return (
+    <>
+      {lead} <span className="extension-description-tail">{tail}</span>
+    </>
   );
 }
 
@@ -222,7 +247,7 @@ function PluginRow({
         <span className="extension-copy">
           <span className="extension-name">{name}</span>
           <span className="extension-description" title={description}>
-            {description}
+            <RowLine plugin={plugin} description={description} />
           </span>
           {plugin.error && <span className="text-xs text-red">{plugin.error}</span>}
           {plugin.pendingVersion && (

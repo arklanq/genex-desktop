@@ -1,6 +1,7 @@
 /** Model roles preserve explicit selections. Unset slots use the selected CLI's default.
  * Legacy model exports remain for user-edited harness imports; catalogs live in the provider adapters.
  */
+import { ReasoningEffort } from "./model-preferences.ts";
 import type { RunRoles } from "./protocol.ts";
 import { EngineId } from "./providers.ts";
 
@@ -220,4 +221,24 @@ export function describeRoles(engine: string, model: string | null | undefined, 
   if (planner === builder && builder === judge) return `${planner} plans, builds and judges`;
   if (builder === judge) return `${planner} plans · ${builder} builds & judges`;
   return `${planner} plans · ${builder} builds · ${judge} judges`;
+}
+
+/** Every effort an engine names, from least to most thinking. */
+const EFFORT_ORDER: readonly string[] = Object.values(ReasoningEffort);
+
+/**
+ * The most a worker or a reviewer thinks. Deeper thinking fills a round's context with tokens
+ * nobody reads, paid again on every later call, and outlasts a reviewer's few minutes; the lead
+ * plans at the user's own setting.
+ */
+export const WORKER_EFFORT_CEILING = ReasoningEffort.High;
+
+/**
+ * The effort `role` runs at for the user's `effort`: the lead's as set; a worker's or a reviewer's
+ * at most `WORKER_EFFORT_CEILING`, so a lower setting is every role's. A level no engine names is
+ * left as it is. The seed's copy is loop/effort-cap.ts `effortCap`.
+ */
+export function roleEffortCap(role: RoleKey, effort: string | undefined): string | undefined {
+  if (effort === undefined || role === "planner") return effort;
+  return EFFORT_ORDER.indexOf(effort) > EFFORT_ORDER.indexOf(WORKER_EFFORT_CEILING) ? WORKER_EFFORT_CEILING : effort;
 }

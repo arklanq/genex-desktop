@@ -43,7 +43,12 @@ describe("host-owned Genex tools", () => {
     );
     for (const key of ["user-approved", "out-dir", "env", "api-url", "approve-remesh"])
       assert.throws(() => validateGenexRequest({ operation: "model", options: { [key]: "x" } }));
-    validateGenexRequest({ operation: "creature.animate", id: "existing", options: { action: "walk", lean: true } });
+    // Flipped: the pinned CLI's creature animate reads verbs, locomotion, video, duration and lean,
+    // never a catalog action, so the host now refuses the action it would have dropped.
+    validateGenexRequest({ operation: "creature.animate", id: "existing", options: { locomotion: true, lean: true } });
+    assert.throws(() =>
+      validateGenexRequest({ operation: "creature.animate", id: "existing", options: { action: "walk" } }),
+    );
     validateGenexRequest({ operation: "creature", prompt: "fixture", options: { animation: [466, "walk"] } });
     assert.throws(() => validateGenexRequest({ operation: "creature", options: { animation: ["--user-approved"] } }));
     assert.deepEqual(parseGenexJson('progress\n{\n"id":"123"\n}\n'), { id: "123" });
@@ -513,6 +518,42 @@ async function countingGenex(
   return { api, during, close };
 }
 
+it("an asset command gives the CLI a HOME of its own, so the user's own Genex skills survive it", async () => {
+  const temp = await mkdtemp(path.join(os.tmpdir(), "studio-genex-home-"));
+  const genex = await countingGenex(
+    () => undefined,
+    () => undefined,
+  );
+  // The user's home as the CLI's legacy skills cleanup finds it: os.homedir() reads HOME, and USERPROFILE on Windows.
+  const user = path.join(temp, "user");
+  const skill = path.join(user, ".claude", "skills", "genex-mine", "SKILL.md");
+  await mkdir(path.dirname(skill), { recursive: true });
+  await writeFile(skill, "installed by the user\n");
+  const saved = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+  process.env.HOME = user;
+  process.env.USERPROFILE = user;
+  try {
+    const tools = fixtureTools(path.join(temp, "host"), genex.api);
+    await fixtureCredentials(tools.root).set("fixture-token");
+    // A fresh update check in either HOME keeps the CLI off the npm registry.
+    for (const home of [user, path.join(tools.root, "projects", "game", "home")]) {
+      await mkdir(path.join(home, ".genex"), { recursive: true });
+      const cache = { checkedAt: new Date().toISOString(), latest: {} };
+      await writeFile(path.join(home, ".genex", "update-check.json"), `${JSON.stringify(cache)}\n`);
+    }
+    const status = await tools.status("game");
+    assert.equal(status.error, undefined, "the budget read ran the CLI");
+    assert.equal(await readFile(skill, "utf8"), "installed by the user\n");
+  } finally {
+    for (const [name, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+    await genex.close();
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
 const total = (hits: Map<string, number>) => [...hits.values()].reduce((a, b) => a + b, 0);
 /** A job id for the n-th record: a UUID, as Studio's job folders are. */
 const jobId = (n: number) => `${String(n).padStart(8, "0")}-0000-4000-8000-000000000000`;
@@ -719,7 +760,7 @@ it("disconnect blocks a new submission even while protected credential deletion 
     await deleting;
     const job = (await tools.execute("game", temp, { operation: "image", prompt: "fixture" })) as any;
     assert.equal(job.status, "failed");
-    assert.match(job.error, /Connect Genex Tools first/);
+    assert.match(job.error, /Connect the Genex plugin first/);
     assert.equal(job.requestId, undefined);
   } finally {
     release();

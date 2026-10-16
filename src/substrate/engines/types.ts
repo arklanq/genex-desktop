@@ -13,6 +13,7 @@ import type {
   PermissionMode,
   ToolPermissionAnswer,
 } from "../../shared/permissions.ts";
+import type { NeverTouchList } from "./never-touch.ts";
 /** What the UI reads about an engine is a contract; it lives in `shared/engine-descriptor.ts`. */
 export type { EngineAccount, EngineStatus, EngineStatusCode } from "../../shared/engine-descriptor.ts";
 /**
@@ -242,6 +243,12 @@ export interface DelegateRequest {
   /** Every message the contractor emits, for mirroring into our event log. */
   onEvent?: (event: DelegateEvent) => void;
   /**
+   * The checkpoint made real: when set, the studio's `checkpoint` tool reports its note as before
+   * and then answers what this answers (Genex's checkpoint of the game folder, its plugins' steps
+   * around the snapshot, `main/core/plugin-hooks.ts`). Absent, the tool only shows the note.
+   */
+  onCheckpoint?: (note: string) => Promise<string>;
+  /**
    * Studio intake tools exposed to the contractor as MCP tools (`mcp__studio__<name>`) — the
    * bridge that lets a Loop chat session ask a question or launch a build itself. Flat schemas
    * only (string properties). Calls are reported back in `studioToolCalls`; the harness owns
@@ -287,6 +294,13 @@ export interface DelegateRequest {
    * asks in the chat's mode (`leadAsks`: a waking run's lead, the run's coordinator).
    */
   readOnly?: boolean;
+  /**
+   * A judge that plays: read-only, and it may not read files either. It sees the build only through
+   * its live tools, from an empty folder, so a note the builder left in the code cannot sway it.
+   */
+  blind?: boolean;
+  /** A Loop's reviewer: the folder it reads (its cwd is a home of its own, which its brief must not name as the build). */
+  reviewer?: { reads: string };
   /** Host-owned stable coordinator workspace; keep session cwd across chat turns. */
   coordinator?: boolean;
   /**
@@ -333,6 +347,32 @@ export interface DelegateRequest {
    * `engine.delegate` has no such field), never together with `permissions`.
    */
   leadAsks?: LeadAsks;
+  /**
+   * A worker of a chat's lead, in the chat's mode: its seat, as the host found and built it. Only
+   * the host sets it (the harness asks with a grant the host honours on its own finding), never
+   * together with `permissions` or `leadAsks`. Absent, the engine keeps the unattended contract.
+   */
+  worker?: WorkerSeat;
+}
+
+/**
+ * A worker's seat: the mode it runs in (the chat's, mapped for the engine; Plan keeps it
+ * read-only), the folders it may write, what it never reaches in any mode, whether it may search
+ * the web, and how it asks. Claude Code boxes it in every mode: Bypass writing the home folder and
+ * `writeRoots`, Auto, Accept edits and Manual only `writeRoots`; Codex always boxes it (codex.ts
+ * `workerBox`).
+ */
+export interface WorkerSeat {
+  id: string;
+  title: string;
+  mode: PermissionMode;
+  /** Absolute real folders its box lets it write: its working folder, the chat's granted folders, plugin folders. */
+  writeRoots: string[];
+  neverTouch: NeverTouchList;
+  /** It may search and read the web even as a reader. */
+  research: boolean;
+  /** How its questions reach the chat; absent for a seat whose engine cannot ask. */
+  asks?: WorkerAsks;
 }
 
 /** One tool call Claude Code wants to make and cannot decide alone. */
@@ -427,6 +467,15 @@ export interface LeadAsks extends DelegateAsks {
    * studio's own tools, each time: the chat's mode is read then, not when the session started.
    */
   screen(call: ScreenedCall): Promise<WithdrawnAnswer | AskFirst | null>;
+}
+
+/**
+ * What a worker that asks is handed: a lead's way of asking (its questions go to the chat; its own
+ * ways to ask or to plan are refused; its mode is never its own to change), naming the worker.
+ * Only the host builds it.
+ */
+export interface WorkerAsks extends LeadAsks {
+  worker: { id: string; title: string };
 }
 
 /** What a session a person is answering is handed: its mode as well, and the picker's reach into it. */

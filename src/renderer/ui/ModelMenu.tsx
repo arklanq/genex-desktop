@@ -14,7 +14,8 @@ import { PickerLabel, PickerSeparator, pickerRow } from "./PickerPanel.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip.tsx";
 import { Icon } from "./icons.tsx";
 import { openSettings, SettingsSection } from "../settings-navigation.ts";
-import { autoChoice, findChoice, roleChoices } from "../model-choices.ts";
+import { MODEL_PICKER_WORDS } from "../words.ts";
+import { autoChoice, findChoice, roleChoices, withoutFreeWord } from "../model-choices.ts";
 import { modelKey as keyOf, parseModelKey } from "../model-key.ts";
 import { RovingAxis, rovingTarget } from "./roving-focus.ts";
 import type { RunRoles } from "../../shared/protocol.ts";
@@ -200,7 +201,16 @@ function ModelList({
                 }}
               >
                 <span className="flex min-w-0 flex-col text-left">
-                  <span className="truncate">{shortModelName(choice.name)}</span>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate">
+                      {choice.free ? withoutFreeWord(shortModelName(choice.name)) : shortModelName(choice.name)}
+                    </span>
+                    {choice.free && (
+                      <span className="model-free-tag" data-free-tag>
+                        {MODEL_PICKER_WORDS.free}
+                      </span>
+                    )}
+                  </span>
                   {choice.detail && <span className="truncate text-micro text-muted-foreground">{choice.detail}</span>}
                 </span>
                 {current === choice.key && <Icon name="check" className="ml-auto" />}

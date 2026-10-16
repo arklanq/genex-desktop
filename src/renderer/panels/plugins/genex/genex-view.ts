@@ -11,6 +11,8 @@ import {
   type GenexStatus,
   GenexUseStage,
 } from "../../../../shared/genex.ts";
+import { genexMaking, MakingKind } from "../../../../shared/asset-making.ts";
+import { kindLook } from "../../../asset-making.ts";
 import { isReviewImage } from "../../../plugin-actions.ts";
 import type { IconName } from "../../../ui/icons.tsx";
 import { GENEX_WORDS } from "../../../words.ts";
@@ -95,6 +97,15 @@ export function creditsOf(status: GenexStatus): CreditsView {
     : { kind: CreditsKind.Unknown };
 }
 
+/**
+ * The account's balance as the Credits tab shows it: Unlimited only when genex.games says so, and
+ * Unknown (never Unlimited) when it couldn't read the balance.
+ */
+export function accountCreditsOf(credits: { balance: number | null; unlimited: boolean }): CreditsView {
+  if (credits.unlimited) return { kind: CreditsKind.Unlimited };
+  return credits.balance === null ? { kind: CreditsKind.Unknown } : { kind: CreditsKind.Count, count: credits.balance };
+}
+
 /** The game's spend from the CLI's budget answer, only when it is a real number. */
 export function spentOf(allowance: unknown): number | null {
   const spent = (allowance as { spent?: unknown } | null)?.spent;
@@ -157,33 +168,12 @@ const JOB_STATE: Partial<Record<string, JobState>> = {
   [GenexJobStatus.Unresolved]: JobState.Unsure,
 } satisfies Partial<Record<GenexJobStatus, JobState>>;
 
-/** An asset family: its label on the page and the glyph it wears. */
-const ModelFamily = { label: GENEX_WORDS.kind.model, icon: "box" } as const;
-const CharacterFamily = { label: GENEX_WORDS.kind.character, icon: "character" } as const;
-const AnimationFamily = { label: GENEX_WORDS.kind.animation, icon: "character" } as const;
+/** A lookup the page still names by what it looks up: a character's clips are its animations. */
+const LOOKUP_KIND: Partial<Record<string, MakingKind>> = { [GenexOperation.CharacterMotions]: MakingKind.Animation };
 
-const OPERATION: Partial<Record<string, { label: string; icon: IconName }>> = {
-  [GenexOperation.Model]: ModelFamily,
-  [GenexOperation.ModelImport]: ModelFamily,
-  [GenexOperation.ModelSegment]: ModelFamily,
-  [GenexOperation.ModelRig]: { label: GENEX_WORDS.kind.rig, icon: "character" },
-  [GenexOperation.ModelAnimate]: AnimationFamily,
-  [GenexOperation.Character]: CharacterFamily,
-  [GenexOperation.CharacterPreview]: CharacterFamily,
-  [GenexOperation.CharacterFinalize]: CharacterFamily,
-  [GenexOperation.CharacterImport]: CharacterFamily,
-  [GenexOperation.Creature]: { label: GENEX_WORDS.kind.creature, icon: "character" },
-  [GenexOperation.CharacterAnimate]: AnimationFamily,
-  [GenexOperation.CreatureAnimate]: AnimationFamily,
-  [GenexOperation.CharacterMotions]: AnimationFamily,
-  [GenexOperation.Image]: { label: GENEX_WORDS.kind.image, icon: "image" },
-  [GenexOperation.Texture]: { label: GENEX_WORDS.kind.texture, icon: "image" },
-  [GenexOperation.Video]: { label: GENEX_WORDS.kind.video, icon: "image" },
-  [GenexOperation.Sfx]: { label: GENEX_WORDS.kind.sfx, icon: "sound" },
-  [GenexOperation.Music]: { label: GENEX_WORDS.kind.music, icon: "sound" },
-  [GenexOperation.Voice]: { label: GENEX_WORDS.kind.voice, icon: "sound" },
-};
-const UNKNOWN_OPERATION = { label: GENEX_WORDS.kind.asset, icon: "box" } as const;
+/** What a generation is called and the glyph it wears on the page; an unnamed asset for one Studio does not know. */
+const familyOf = (operation: string) =>
+  kindLook(genexMaking(operation)?.kind ?? (Object.hasOwn(LOOKUP_KIND, operation) ? LOOKUP_KIND[operation] : null));
 
 /** One generation, as the page lists it. */
 export interface GenexJobRow {
@@ -239,7 +229,7 @@ const fileName = (file: string | undefined): string | null => (file ? (file.spli
 /** The game's generations, newest first. */
 export function genexJobRows(jobs: readonly GenexJob[]): GenexJobRow[] {
   return [...jobs].reverse().map((job) => {
-    const family = OPERATION[job.operation] ?? UNKNOWN_OPERATION;
+    const family = familyOf(job.operation);
     const state = stateOf(job);
     const candidates = candidatesOf(job, state);
     return {

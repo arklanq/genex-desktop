@@ -16,6 +16,8 @@ import { CodexLoginController } from "./codex-login.ts";
 import type { TerminalService } from "./terminal-service.ts";
 import { EngineId } from "../shared/providers.ts";
 import { TerminalKind } from "../shared/terminal.ts";
+import type { EngineStatus } from "../shared/engine-descriptor.ts";
+import type { SubscriptionAccounts } from "../substrate/engines/subscription-accounts.ts";
 
 /**
  * Both subscriptions answer the same three questions — which login would I use, sign me in,
@@ -25,8 +27,32 @@ import { TerminalKind } from "../shared/terminal.ts";
  */
 export interface SubscriptionEngine {
   engineHome: string;
+  /** The CLI's own home: the Terminal login. */
+  systemHome: string;
+  /** The accounts the engine can run on and the one chosen. */
+  accounts: SubscriptionAccounts;
   resolveLogin(): Promise<{ source: "env" | "isolated" | "system" | "none"; home: string | null }>;
   recheckLogin(): Promise<unknown>;
+  /** Run on account `id` from now on. */
+  runOnAccount(id: string): Promise<EngineStatus>;
+  /** The email the CLI reports for the account signed in to `home`, if any. */
+  accountEmail(home: string): Promise<string | null>;
+}
+
+/**
+ * A sign-in into `home` finished: its account is remembered (with its email) and runs from now on,
+ * so signing in to another account is also switching to it. A home that is no account's (one the
+ * environment names) only rechecks.
+ */
+export async function settleSignIn(engine: SubscriptionEngine, home: string | null, email?: string): Promise<void> {
+  const signedIn = home ?? engine.systemHome;
+  const id = engine.accounts.idFor(signedIn);
+  if (id) {
+    const known = email ?? (await engine.accountEmail(signedIn).catch(() => null));
+    await engine.accounts.remember(id, { email: known });
+    await engine.accounts.choose(id).catch(() => {});
+  }
+  await engine.recheckLogin();
 }
 
 export interface LoginControllerDeps {
@@ -74,8 +100,9 @@ export function createLoginControllers({
       }
       lastCodexLoginPhase = state.phase;
     },
-    onConnected: async () => {
-      await subscription(EngineId.Codex)?.recheckLogin();
+    onConnected: async (home) => {
+      const engine = subscription(EngineId.Codex);
+      if (engine) await settleSignIn(engine, home);
       pushUiEvent({ type: UiEvent.EnginesChanged, payload: {} });
     },
   });
@@ -101,8 +128,9 @@ export function createLoginControllers({
     },
     openExternal,
     onState: showClaudeState,
-    onConnected: async () => {
-      await subscription(EngineId.ClaudeCode)?.recheckLogin();
+    onConnected: async (home, email) => {
+      const engine = subscription(EngineId.ClaudeCode);
+      if (engine) await settleSignIn(engine, home, email);
       pushUiEvent({ type: UiEvent.EnginesChanged, payload: {} });
     },
   });

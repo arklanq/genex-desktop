@@ -4,16 +4,17 @@ import type { AppDialogs as Dialogs } from "../panels/AppDialogs.tsx";
 import { feedbackAbout } from "../feedback-about.ts";
 import { BootstrapGate } from "../panels/BootstrapGate.tsx";
 import { Sidebar } from "../panels/Sidebar.tsx";
-import { shownRelease } from "../panels/plugins/labels.ts";
-import { useLaunch, usePlugins, useShallow, useSidebarLibrary, useThreadsView, useUpdate } from "../state/hooks.ts";
+import { useLaunch, usePlugins, useSidebarLibrary, useThreadsView, useUpdate } from "../state/hooks.ts";
 import { launchInSidebar } from "../state/launch.ts";
 import { pluginUpdates } from "../state/plugins.ts";
 import type { Studio } from "../state/studio.ts";
 import { busyThreadIds, Room } from "../state/threads.ts";
 import { notifyProblem, ToastTone } from "../state/toasts.ts";
+import { openPluginsAt } from "../ui/ComposerAddMenu.tsx";
 import { LoadFailed } from "../ui/LoadFailed.tsx";
 import type { Notifications } from "../use-notifications.ts";
 import { problemWords } from "../words.ts";
+import { useCoveredByRemix } from "./RemixLayer.tsx";
 import type { Navigation } from "./use-navigation.ts";
 import type { ShellChrome } from "./use-shell-chrome.ts";
 
@@ -27,6 +28,7 @@ export function AppSidebar({
   navigation,
   notices,
   welcoming,
+  covered = false,
 }: {
   app: Studio;
   chrome: ShellChrome;
@@ -34,22 +36,25 @@ export function AppSidebar({
   navigation: Navigation;
   notices: Notifications;
   welcoming: boolean;
+  /** Something modal is over it (a game playing in Play): shown, but out of reach. */
+  covered?: boolean;
 }): JSX.Element {
   const { records: threads, status: threadStatus, activeThreadId, activeThread, project, room } = useThreadsView();
   const launch = useLaunch((s) => s.launch);
   const atHome = room === Room.Home && !launch;
   const { games, building, stagedCount } = useSidebarLibrary();
   // A game home is starting has one row: a placeholder until it is made and listed, then its own.
-  const launching = useMemo(
-    () => launchInSidebar(launch, (name) => games.some((game) => game.name === name)),
-    [launch, games],
-  );
+  const launching = useMemo(() => launchInSidebar(launch, games), [launch, games]);
   const update = useUpdate((s) => s.ready);
-  // Strings, compared one by one: the sidebar re-renders when a release comes or goes, not on every plugin read.
-  const pluginReleases = usePlugins(useShallow((s) => pluginUpdates(s.list, s.index).map(shownRelease)));
+  const pluginList = usePlugins((s) => s.list);
+  const pluginIndex = usePlugins((s) => s.index);
+  const waitingUpdates = useMemo(() => pluginUpdates(pluginList, pluginIndex), [pluginList, pluginIndex]);
   const updatingPlugins = usePlugins((s) => s.updating);
   const busyThreads = useMemo(() => busyThreadIds(threadStatus), [threadStatus]);
   const { pluginsOpen } = chrome;
+  // A remix Create shows is the selected row; nothing else is.
+  const remixing = useCoveredByRemix();
+  const unselected = pluginsOpen || remixing;
   const hidden = !chrome.sidebarVisible || welcoming;
   const notifyFailure = notifyProblem(app.notify);
   const restartToUpdate = (): Promise<boolean> =>
@@ -60,14 +65,14 @@ export function AppSidebar({
   const downloadUpdate = (): void => {
     void app.api.openUpdateDownload().catch(notifyFailure);
   };
-  const updatePlugins = (): void => {
+  const updatePlugins = (skipped: ReadonlySet<string>): void => {
     // One cause (no connection) refuses every update alike: it is said once.
-    void app.plugins.updateAll().then((failures) => {
+    void app.plugins.updateAll(skipped).then((failures) => {
       for (const words of new Set(failures.map(problemWords))) app.notify(words, ToastTone.Error);
     });
   };
   return (
-    <aside className="studio-sidebar" inert={hidden} aria-hidden={hidden}>
+    <aside className="studio-sidebar" inert={hidden || covered} aria-hidden={hidden}>
       <BootstrapGate
         failed={({ error, retry, retrying }) => (
           <div className={SIDEBAR_PANE}>
@@ -94,13 +99,15 @@ export function AppSidebar({
           }
           pluginsOpen={pluginsOpen}
           onPlugins={chrome.openPlugins}
+          playOpen={chrome.playOpen}
+          onPlayMode={chrome.setPlayOpen}
           onSettings={() => dialogs.openSettings()}
           stagedCount={stagedCount}
           threads={threads}
           games={games}
-          activeThreadId={pluginsOpen ? null : activeThreadId}
-          activeProject={pluginsOpen || room === Room.Home ? null : project}
-          atHome={atHome && !pluginsOpen}
+          activeThreadId={unselected ? null : activeThreadId}
+          activeProject={unselected || room === Room.Home ? null : project}
+          atHome={atHome && !unselected}
           onHome={navigation.goHome}
           launching={launching}
           building={building}
@@ -109,6 +116,7 @@ export function AppSidebar({
           onNewGame={navigation.newGame}
           onSelectThread={navigation.selectThread}
           onSelectGame={navigation.selectGame}
+          onShowRemix={navigation.showRemix}
           onRenameGame={(game) => dialogs.dispatch({ type: "game", kind: "rename", game })}
           onPinGame={(game) => {
             void app.saveGame(game.name, { pinned: !game.pinned }).catch(notifyFailure);
@@ -118,9 +126,10 @@ export function AppSidebar({
           update={update}
           onRestartToUpdate={restartToUpdate}
           onDownloadUpdate={downloadUpdate}
-          pluginUpdates={pluginReleases}
+          pluginUpdates={waitingUpdates}
           updatingPlugins={updatingPlugins}
           onUpdatePlugins={updatePlugins}
+          onOpenPlugin={openPluginsAt}
         />
       </BootstrapGate>
     </aside>
