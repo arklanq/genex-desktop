@@ -26,7 +26,9 @@ export function nextFold(fold: StripFold, { scroll, client }: StripWidths): Stri
  * Whether the strip's labels are folded. One observer watches the strip (a window or pane resize)
  * and the groups inside it (a button coming or going, a label changing). A group that changed size
  * on its own (not by a fold this hook made) measures afresh from the labelled row; otherwise only
- * the strip's width is compared. Every change lands before the frame is painted.
+ * the strip's width is compared. A fold lands one frame after the resize that called for it:
+ * folding inside the observer resizes the groups it watches in the same frame, which Chromium reports
+ * as a renderer error ("ResizeObserver loop completed with undelivered notifications").
  */
 export function useStripFold(strip: RefObject<HTMLElement | null>, groups: RefObject<HTMLElement | null>[]): boolean {
   const [folded, setFolded] = useState(false);
@@ -46,17 +48,28 @@ export function useStripFold(strip: RefObject<HTMLElement | null>, groups: RefOb
     const remember = () => {
       for (const part of parts) widths.set(part, part.offsetWidth);
     };
-    const observer = new ResizeObserver((entries) => {
-      const changed = entries.some(
-        (entry) => entry.target !== row && widths.get(entry.target) !== (entry.target as HTMLElement).offsetWidth,
-      );
-      if (changed) apply(UNFOLDED);
+    let frame = 0;
+    let groupChanged = false;
+    const settle = () => {
+      if (groupChanged) apply(UNFOLDED);
+      groupChanged = false;
       measure();
       remember();
+    };
+    const observer = new ResizeObserver((entries) => {
+      // A group that changed on its own is kept until the frame settles, so a later resize can't drop it.
+      groupChanged ||= entries.some(
+        (entry) => entry.target !== row && widths.get(entry.target) !== (entry.target as HTMLElement).offsetWidth,
+      );
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(settle);
     });
     observer.observe(row);
     for (const part of parts) observer.observe(part);
-    return () => observer.disconnect();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, []);
   return folded;
 }
