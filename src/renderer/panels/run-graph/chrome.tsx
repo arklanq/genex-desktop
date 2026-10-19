@@ -246,10 +246,20 @@ function useRoom(): [number, (element: HTMLElement | null) => (() => void) | und
   const [room, setRoom] = useState(Number.POSITIVE_INFINITY);
   const measure = useCallback((element: HTMLElement | null) => {
     if (!element) return;
-    const observer = new ResizeObserver(() => setRoom(element.clientWidth));
+    let frame = 0;
+    // The width is taken a frame later: set inside the observer's callback, it can swap the tabs for
+    // the picker and resize the bar again in the same frame, which Chromium reports as a renderer
+    // error ("ResizeObserver loop completed with undelivered notifications") on a slower machine.
+    const observer = new ResizeObserver(() => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => setRoom(element.clientWidth));
+    });
     observer.observe(element);
     setRoom(element.clientWidth);
-    return () => observer.disconnect();
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
   }, []);
   return [room, measure];
 }
