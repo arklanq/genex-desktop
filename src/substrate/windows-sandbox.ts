@@ -756,7 +756,7 @@ export interface WindowsSessionDeps {
    * Lets the sandbox user start srt-win, before an initialize ({@link grantLauncherFolders});
    * answers how to take that back, which a failed initialize does.
    */
-  launcher?: () => Promise<() => void>;
+  launcher?: () => Promise<() => void | Promise<void>>;
   /** Where the session says how long each step of a start took (Genex's log). */
   log?: (line: string) => void;
 }
@@ -923,7 +923,7 @@ export class WindowsSandboxSession {
       } catch (error) {
         if (egressCheckTimedOut(error) && attempt < INITIALIZE_ATTEMPTS) continue;
         // srt's reset takes back only what an initialize recorded; the launcher's grant is ours.
-        release?.();
+        await release?.();
         throw error;
       }
     }
@@ -1107,14 +1107,14 @@ export function sandboxSidOnce(
  * to grant to, and initialize says so. A grant that fails is taken back at once and leaves
  * initialize to report what that costs (an install outside the profile needs none).
  */
-export async function grantLauncherFolders(srtWin: string, dirs: readonly string[]): Promise<() => void> {
+export async function grantLauncherFolders(srtWin: string, dirs: readonly string[]): Promise<() => Promise<void>> {
   const sid = await srtSandboxSid(srtWin);
-  if (!sid) return () => {};
+  if (!sid) return async () => {};
   const srt = await import(SRT_PACKAGE);
   const acl = { sandboxUserSid: sid, srtWin: srt.resolveSrtWin({ path: srtWin }) };
-  const release = () => {
+  const release = async () => {
     try {
-      srt.revokeWindowsAcl(acl);
+      await srt.revokeWindowsAclAsync(acl);
     } catch {
       // A read grant on the app's own files; the next start's grant replaces it.
     }
@@ -1123,7 +1123,7 @@ export async function grantLauncherFolders(srtWin: string, dirs: readonly string
     // The async grant (patched into sandbox-runtime): a sync one holds the start window's thread.
     await srt.grantWindowsAclAsync({ ...acl, read: [...dirs], write: [] });
   } catch {
-    release();
+    await release();
   }
   return release;
 }

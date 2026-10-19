@@ -306,6 +306,7 @@
   "tests/conformance/vendor-git-for-windows.test.ts",
   "tests/conformance/window-chrome.test.ts",
   "tests/conformance/window-ready.test.ts",
+  "tests/conformance/windows-acl-cleanup.test.ts",
   "tests/conformance/windows-install.test.ts",
   "tests/conformance/windows-sandbox-setup.test.ts",
   "tests/conformance/windows-sandbox.test.ts",

@@ -59,7 +59,7 @@ after(async () => {
 });
 
 describe("Windows sandbox: a first start", { skip: SKIP, timeout: TEST_TIMEOUT_MS }, () => {
-  it("keeps the event loop turning while it checks the network and grants the folders", async () => {
+  it("keeps the event loop turning during the first start and the last session's cleanup", async () => {
     // Long names, as the app's own folders have: `os.tmpdir()` can be spelled with an 8.3 name.
     root = realpathSync.native(await tmpDir("genex-sandbox-start-"));
     const workspace = path.join(root, "workspace");
@@ -80,5 +80,10 @@ describe("Windows sandbox: a first start", { skip: SKIP, timeout: TEST_TIMEOUT_M
       stall <= LONGEST_STALL_MS,
       `the start held the event loop for ${stall} ms at once (the whole start took ${took} ms)`,
     );
+    const cleanupProbe = stallProbe();
+    await sandbox.dispose();
+    sandbox = undefined;
+    const cleanupStall = cleanupProbe.stop();
+    assert.ok(cleanupStall <= LONGEST_STALL_MS, `session cleanup held the event loop for ${cleanupStall} ms at once`);
   });
 });

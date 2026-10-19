@@ -104,7 +104,8 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   then it fades up and out, and macOS's window buttons go with it (on Windows and Linux it stays up,
   since their window controls can't). A game holding the mouse doesn't bring it back. A held Esc
   gives the bar the keyboard. Only Studio's own page and the bar's may post or delete a comment. A single-use ticket in the address's fragment signs the player in; a guest is offered
-  sign-in. The rest of the app is inert until the game closes.
+  sign-in. The rest of the app is inert until the game closes. Closing the window closes it; another
+  window over the studio's, another desktop or minimizing leaves it playing (`view-drop.ts`).
 - Comments (the count, or the icon alone) opens a modal over the dimmed game: its count as the
   title, genex.games' comments newest first in pages of 20, a footer pinned under the list (Sign in
   signed out, else the field with Post inside it once something is typed; at most 500 characters).

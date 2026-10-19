@@ -33,7 +33,7 @@ import { linkGate, playAddress, playNavigationAllowed } from "./game-address.ts"
 import type { PlayGallery } from "./gallery.ts";
 import { playPermissionShown, playPermitted } from "./game-permissions.ts";
 import { type MicGate, micGate, micGateFor } from "./mic.ts";
-import { closePage, dropGameView } from "./view-drop.ts";
+import { closePage, closeWithWindow, dropGameView } from "./view-drop.ts";
 import type { PlayMicStore } from "./mic-store.ts";
 import { playViewer, type PlayViewer } from "./viewer.ts";
 
@@ -422,11 +422,7 @@ export function wirePlayViewer(deps: PlayViewDeps): PlayViewer {
   });
   viewer = made;
   win.on("resize", () => made.resized());
-  // A hidden or closed window takes its game with it: no sound, no timers on a window that is gone.
-  win.on("hide", () => made.close());
-  win.on("closed", () => {
-    made.close();
-    bar.destroy();
-  });
+  closeWithWindow(win, () => made.close());
+  win.on("closed", () => bar.destroy());
   return made;
 }

@@ -267,18 +267,20 @@ jobs:
           cache: npm
       - run: npm ci
       # A publishing run with the SIGNPATH_API_TOKEN secret (SignPath's CI user) has SignPath sign
-      # the app and Genex-Setup.exe with the release-signing policy (.github/actions/windows-signpath);
-      # candidates and runs without the token stay unsigned. A failed signing request fails this
-      # job, which leaves Windows out of the draft.
+      # the app and Genex-Setup.exe with the release-signing policy (.github/actions/windows-signpath),
+      # but only once the repository variable WINDOWS_SIGNING is `on`: SignPath refuses the policy until
+      # the production certificate is imported, and that refusal used to drop Windows from the release.
+      # Candidates, runs without the token and runs with signing off stay unsigned. A failed signing
+      # request fails this job, which leaves Windows out of the draft.
       - name: Windows signing (SignPath, publishing runs only)
         id: winsign
         env:
-          SIGNPATH_API_TOKEN: ${{ needs.validate.outputs.publish == 'true' && secrets.SIGNPATH_API_TOKEN || '' }}
+          SIGNPATH_API_TOKEN: ${{ needs.validate.outputs.publish == 'true' && vars.WINDOWS_SIGNING == 'on' && secrets.SIGNPATH_API_TOKEN || '' }}
           RELEASE_PUBLISH: ${{ needs.validate.outputs.publish }}
         run: |
           if [ -z "$SIGNPATH_API_TOKEN" ]; then
-            if [ "$RELEASE_PUBLISH" = true ]; then echo "::notice::No SignPath token: Windows ships unsigned, as a preview."; fi
-            echo "No SignPath token: building unsigned."
+            if [ "$RELEASE_PUBLISH" = true ]; then echo "::notice::Windows signing is off or has no SignPath token: Windows ships unsigned, as a preview."; fi
+            echo "No SignPath signing: building unsigned."
             echo "signed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi

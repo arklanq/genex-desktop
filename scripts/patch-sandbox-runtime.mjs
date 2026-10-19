@@ -8,6 +8,8 @@
  *    "Not Responding". The same srt-win calls run through SRT's own `runSrtWinAsync` instead.
  * 3. Those steps report how long they took (`setStudioStepLog`), so Genex's log shows which part
  *    of a slow start the time went to.
+ * 4. Rollback and reset also yield during ACL cleanup (two 60-second commands). Only the actual
+ *    process exit event keeps synchronous cleanup, including partially applied initialization.
  *
  * Policy generation, arguments and outcomes are untouched. */
 import { createRequire } from "node:module";
@@ -35,6 +37,110 @@ async function patchFile(dist, file, marker, patch) {
 
 const WHICH_MARKER = "// Studio: absolute executable lookup";
 const ASYNC_MARKER = "// Studio: srt-win off the event loop";
+const CLEANUP_MARKER = "// Studio: async ACL cleanup with synchronous exit fallback";
+
+/** Derive an async twin from the pinned implementation, retaining its arguments, parsing and errors. */
+function asyncTwin(original, name, from, to) {
+  const signature = `function ${name}(`;
+  if (original.split(signature).length !== 2) throw new Error(`SRT ${name} changed; review the cleanup patch`);
+  const start = original.indexOf(signature);
+  const end = original.indexOf("\n}", start);
+  if (end < 0) throw new Error(`SRT ${name} has no function boundary; review the cleanup patch`);
+  return replaceOnce(
+    original.slice(start, end + 2),
+    [
+      [signature, `async function ${name}Async(`],
+      [from, to],
+    ],
+    name,
+  );
+}
+
+function patchManagerCleanup(original) {
+  return replaceOnce(
+    original,
+    [
+      [
+        "grantWindowsAclAsync, stampWindowsAclAsync,",
+        "grantWindowsAclAsync, stampWindowsAclAsync, revokeWindowsAclAsync, restoreWindowsAclAsync,",
+      ],
+      ["let windowsFsStampedSet;", `${CLEANUP_MARKER}\nlet studioWindowsAclPending = false;\nlet windowsFsStampedSet;`],
+      [
+        "const cleanupHandler = () => reset().catch(e => {",
+        "const cleanupHandler = (exiting = false) => reset(exiting).catch(e => {",
+      ],
+      ["process.once('exit', cleanupHandler);", "process.once('exit', () => cleanupHandler(true));"],
+      ["process.once('SIGINT', cleanupHandler);", "process.once('SIGINT', () => cleanupHandler());"],
+      ["process.once('SIGTERM', cleanupHandler);", "process.once('SIGTERM', () => cleanupHandler());"],
+      [
+        "windowsFsSbUserSid = sb;",
+        `windowsFsSbUserSid = sb;
+            // Exit must release partial grants too, including while rollback is awaiting srt-win.
+            studioWindowsAclPending = [acc.grantRead, acc.grantWrite, acc.denyRead, acc.denyWrite].some(paths => paths.length > 0);`,
+      ],
+      [
+        "                revokeWindowsAcl({ sandboxUserSid: windowsFsSbUserSid, srtWin });",
+        "                await revokeWindowsAclAsync({ sandboxUserSid: windowsFsSbUserSid, srtWin });",
+      ],
+      [
+        "                restoreWindowsAcl({ sandboxUserSid: windowsFsSbUserSid, srtWin });",
+        "                await restoreWindowsAclAsync({ sandboxUserSid: windowsFsSbUserSid, srtWin });",
+      ],
+      [
+        "            windowsFsSbUserSid = undefined;",
+        "            studioWindowsAclPending = false;\n            windowsFsSbUserSid = undefined;",
+      ],
+      ["async function reset() {", "async function reset(synchronousWindowsAcl = false) {"],
+      [
+        "if (windowsFsStampedSet && windowsFsSbUserSid) {",
+        "if ((windowsFsStampedSet || studioWindowsAclPending) && windowsFsSbUserSid) {",
+      ],
+      [
+        "        for (const e of revokeWindowsAcl({ sandboxUserSid: sb, srtWin }) ?? []) {",
+        `        // Promises cannot finish in process's exit event; all live teardown yields instead.
+        const revoked = synchronousWindowsAcl
+            ? revokeWindowsAcl({ sandboxUserSid: sb, srtWin })
+            : await revokeWindowsAclAsync({ sandboxUserSid: sb, srtWin });
+        for (const e of revoked ?? []) {`,
+      ],
+      [
+        "        for (const e of restoreWindowsAcl({ sandboxUserSid: sb, srtWin }) ?? []) {",
+        `        const restored = synchronousWindowsAcl
+            ? restoreWindowsAcl({ sandboxUserSid: sb, srtWin })
+            : await restoreWindowsAclAsync({ sandboxUserSid: sb, srtWin });
+        for (const e of restored ?? []) {`,
+      ],
+      [
+        "    windowsFsStampedSet = undefined;",
+        "    studioWindowsAclPending = false;\n    windowsFsStampedSet = undefined;",
+      ],
+    ],
+    "SandboxManager's Windows cleanup",
+  );
+}
+
+async function patchCleanup(dist) {
+  await patchFile(dist, "sandbox/windows-sandbox-utils.js", CLEANUP_MARKER, (original) => {
+    const parser = asyncTwin(
+      original,
+      "runSrtWinJsonAllowFail",
+      "runSrtWin(args, opts)",
+      "await runSrtWinAsync(args, opts)",
+    );
+    const twins = ["revokeWindowsAcl", "restoreWindowsAcl"].map(
+      (name) => `export ${asyncTwin(original, name, "runSrtWinJsonAllowFail(", "await runSrtWinJsonAllowFailAsync(")}`,
+    );
+    return `${original}\n${CLEANUP_MARKER}.\n${parser}\n${twins.join("\n")}\n`;
+  });
+  await patchFile(dist, "sandbox/sandbox-manager.js", CLEANUP_MARKER, patchManagerCleanup);
+  await patchFile(
+    dist,
+    "index.js",
+    CLEANUP_MARKER,
+    (original) =>
+      `${original}\n${CLEANUP_MARKER}.\nexport { revokeWindowsAclAsync, restoreWindowsAclAsync } from './sandbox/windows-sandbox-utils.js';\n`,
+  );
+}
 
 /**
  * The async twins of SRT's `grantWindowsAcl` and `stampWindowsAcl` (same arguments, same errors),
@@ -145,4 +251,5 @@ export async function patchSandboxRuntime() {
     (original) =>
       `${original}\n${ASYNC_MARKER}.\nexport { grantWindowsAclAsync, stampWindowsAclAsync, setStudioStepLog } from './sandbox/windows-sandbox-utils.js';\n`,
   );
+  await patchCleanup(dist);
 }

@@ -18,6 +18,12 @@ the setup screen opens on `git-missing`. What differs from macOS:
   session's roots is refused (`not-granted`); network changes stay live (`updateConfig`).
   `initialize()` is tried up to three times only when srt-win's egress check (`wfp`) times out; a
   timed-out ACL step fails at once, since a retry would repeat its walk under the denied path's parent.
+- The version-guarded [SRT patch](../scripts/patch-sandbox-runtime.mjs) runs initialization,
+  failed-initialization rollback, launcher rollback and session reset ACL commands asynchronously.
+  Revoke and restore each keep their 60-second deadline, holder PID, SID and best-effort outcomes;
+  a slow cleanup must not hold Electron's main thread. The actual process `exit` event retains
+  synchronous cleanup, since promises cannot finish there. Partial grants remain eligible for
+  that exit cleanup while initialization or its rollback is pending.
 - That egress check starts srt-win as the sandbox user before any grant, and Windows opens its
   program and working folder as that user. A per-user install lives in the profile, so the session
   grants the install folder (and srt-win's, when apart) for reading first

@@ -8,6 +8,7 @@
  * A held Esc in the game moves the keyboard to the bar; Esc there gives it back. A guest with no
  * Genex account is offered the Genex plugin in the bar until its ×.
  */
+import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { ESC_HOLD_MS } from "../../src/main/game-full-screen.ts";
@@ -20,7 +21,7 @@ import {
   playNavigationAllowed,
 } from "../../src/main/play/game-address.ts";
 import { BAR_FADE_MS, BAR_LINGER_MS, BAR_SHOWN_MS } from "../../src/main/play/bar-reveal.ts";
-import { closePage, dropGameView } from "../../src/main/play/view-drop.ts";
+import { closePage, closeWithWindow, dropGameView } from "../../src/main/play/view-drop.ts";
 import {
   BAR_EDGE_PX,
   NOTE_MS,
@@ -906,6 +907,42 @@ describe("Play viewer's views leaving the window", () => {
     closePage(early.view.webContents);
     closePage(null);
     assert.deepEqual(early.log, ["window.focus", "page.close"]);
+  });
+});
+
+describe("Play viewer and the studio window", () => {
+  /** The studio window, emitting its events as Electron does, and how often the viewer was closed. */
+  function studioWindow() {
+    const win = new EventEmitter();
+    let closes = 0;
+    closeWithWindow(win, () => {
+      closes += 1;
+    });
+    return { win, closes: () => closes };
+  }
+
+  it("keeps the game while another window covers the studio's, another desktop shows or it is minimized", () => {
+    const { win, closes } = studioWindow();
+    // macOS sends `hide` and `show` when the window's occlusion changes: nobody hid it.
+    for (const event of ["blur", "hide", "show", "focus", "minimize", "restore"]) win.emit(event);
+    assert.equal(closes(), 0);
+  });
+
+  it("closes the game when the person closes the window, whether it goes or a run keeps it hidden", () => {
+    const kept = studioWindow();
+    kept.win.emit("close");
+    kept.win.emit("hide");
+    assert.equal(kept.closes(), 1);
+    const gone = studioWindow();
+    gone.win.emit("close");
+    gone.win.emit("closed");
+    assert.ok(gone.closes() >= 1);
+  });
+
+  it("closes the game with a window destroyed without asking to close", () => {
+    const { win, closes } = studioWindow();
+    win.emit("closed");
+    assert.equal(closes(), 1);
   });
 });
 

@@ -15,7 +15,7 @@ import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
-import { setTimeout as delay } from "node:timers/promises";
+import { setImmediate as turn, setTimeout as delay } from "node:timers/promises";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { SandboxProblemCode } from "../../src/shared/boot.ts";
 import { HarnessHost } from "../../src/substrate/harness-host.ts";
@@ -1035,7 +1035,9 @@ describe("the grant session", () => {
       ancestors: fakeAncestors().ancestors,
       launcher: async () => {
         runtime.calls.push("launcher");
-        return () => runtime.calls.push("launcher taken back");
+        return () => {
+          runtime.calls.push("launcher taken back");
+        };
       },
     });
     const owner = {};
@@ -1061,6 +1063,37 @@ describe("the grant session", () => {
       /srt_win_timeout/,
     );
     assert.equal(stuck.runtime.calls.length, 3);
+  });
+
+  it("waits for asynchronous launcher rollback before allowing the next initialization", async () => {
+    const runtime = fakeSessionRuntime();
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const value = new WindowsSandboxSession({
+      runtime: runtime.runtime,
+      profile: PROFILE,
+      ancestors: fakeAncestors().ancestors,
+      launcher: async () => async () => {
+        await gate;
+        runtime.calls.push("launcher taken back");
+      },
+    });
+    runtime.failInitializeIn("acl", "srt_win_timeout");
+    let settled = false;
+    const joining = value.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG }).catch((error) => {
+      settled = true;
+      assert.match(error.message, /srt_win_timeout/);
+    });
+    await turn();
+    assert.equal(settled, false);
+    assert.deepEqual(runtime.calls, ["initialize"]);
+    release();
+    await joining;
+    assert.equal(settled, true);
+    assert.deepEqual(runtime.calls, ["initialize", "launcher taken back"]);
+    await value.dispose();
   });
 
   it("network changes apply live, with every member's domains and no regrant", async () => {

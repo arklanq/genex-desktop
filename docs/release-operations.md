@@ -55,7 +55,10 @@ Windows is signed by the [SignPath Foundation](https://signpath.org) through
 [`.github/actions/windows-signpath`](../.github/actions/windows-signpath/action.yml): the
 packaged app's `genex.exe` and `.node` add-ons, then the `Genex-Setup.exe` made from them (the
 SignPath project `genex-desktop`'s artifact configurations `app` and `installer`). The repository
-secret `SIGNPATH_API_TOKEN` is SignPath's CI user's API token. Publishing runs use the
+secret `SIGNPATH_API_TOKEN` is SignPath's CI user's API token. Publishing runs sign only while the
+repository variable `WINDOWS_SIGNING` is `on`; until SignPath has the production certificate,
+leave it unset so Windows ships unsigned as a preview (SignPath refuses the policy otherwise, and
+the refusal drops Windows from the release). They use the
 `release-signing` policy, which accepts only builds from this repository's GitHub workflows; a
 Package dispatch with `only: win32` and `test_sign` uses `test-signing`, SignPath's self-signed
 test certificate, to check the wiring. The SignPath Foundation program requires the README's
