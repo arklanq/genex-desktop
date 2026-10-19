@@ -1393,7 +1393,7 @@ function settleTurn(graph: GraphDraft, events: EventEnvelope[]): void {
 }
 
 /** The words of the message a chat turn answers, as the queue's record of it names them; "" for none. */
-function queuedAsk(events: EventEnvelope[], queue: QueueView, turn: string): string {
+export function queuedAsk(events: EventEnvelope[], queue: QueueView, turn: string): string {
   const queued = queue.messages.get(turn);
   const said = queued?.eventId ? events.find((event) => event.id === queued.eventId) : undefined;
   const asked = said?.data.type === EventKind.Messages ? said.data.messages.find((m) => m.role === "user") : undefined;

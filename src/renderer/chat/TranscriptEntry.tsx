@@ -2,9 +2,10 @@
  * One entry of the transcript, drawn by its kind (`chat-entries.ts` decides what the entries are).
  */
 import { type JSX, memo, useCallback, useMemo } from "react";
-import { type Entry, EntryAction, EntryKind } from "../chat-entries.ts";
+import { type Entry, EntryAction, EntryKind, type MorningEntry } from "../chat-entries.ts";
 import { ExportReview } from "./ExportReview.tsx";
 import { type ConversationEntry, WORK_KIND } from "./conversation-entries.ts";
+import { type KeepBuildingTap, keepBuilding, keepsBuildingIn } from "../keep-building.ts";
 import { MorningCard } from "../panels/MorningCard.tsx";
 import { FileText } from "../ui/FileText.tsx";
 import { Icon } from "../ui/icons.tsx";
@@ -23,6 +24,7 @@ import { RewindLine } from "./RewindLine.tsx";
 import { JobLine } from "./JobLine.tsx";
 import { WorkerLine } from "./WorkerLine.tsx";
 import { AppAccessLine } from "./AppAccessLine.tsx";
+import { WentAheadLine } from "./WentAheadLine.tsx";
 import { JudgeLine } from "./JudgeLine.tsx";
 import { PermissionOutcome } from "./PermissionRequest.tsx";
 import { PluginSuggestionCard } from "./PluginSuggestionCard.tsx";
@@ -35,6 +37,15 @@ import { WorkLog } from "./WorkLog.tsx";
 /** A paused run while nothing else runs: its own card offers Resume. */
 const resumable = (runId: string | null | undefined, context: TranscriptContext): runId is string =>
   Boolean(runId) && runId === context.pausedRunId && !context.activeRunId;
+
+/**
+ * Keep building on what a run left, in this chat: only from its newest result card, and only while
+ * nothing of the chat runs or waits paused (a Resume belongs to that run).
+ */
+function keepFor(entry: MorningEntry, context: TranscriptContext): KeepBuildingTap | null {
+  const { threadId } = context;
+  return threadId && keepsBuildingIn(entry, context) ? (notDone) => keepBuilding({ threadId, notDone }) : null;
+}
 
 export interface TranscriptContext {
   /** The run this chat is building right now, if any. */
@@ -137,6 +148,8 @@ export const TranscriptEntry = memo(function TranscriptEntry({
           // offers Resume itself, instead of leaving it to a grey line underneath.
           paused={!entry.superseded && resumable(entry.runId, context)}
           handedOff={entry.handedOff}
+          stillToFix={entry.stillToFix ?? null}
+          onKeepBuilding={keepFor(entry, context)}
           project={entry.project ?? context.project}
           commit={entry.commit}
           before={entry.before}
@@ -290,7 +303,7 @@ function ConsentOutcome({ entry }: { entry: Extract<Entry, { kind: typeof EntryK
 
 /**
  * The action entries that are one quiet line: an engine link, a rewind that put files back, a job,
- * a worker, a missing permission, a judge's play.
+ * a worker, a missing permission, an agent that went ahead of the person, a judge's play.
  */
 function quietLine(
   entry: Extract<Entry, { kind: typeof EntryKind.Action }>,
@@ -303,6 +316,7 @@ function quietLine(
   if (entry.action === EntryAction.Job) return <JobLine entry={entry} onNotice={context.onNotice} />;
   if (entry.action === EntryAction.Worker) return <WorkerLine entry={entry} />;
   if (entry.action === EntryAction.AppAccess) return <AppAccessLine entry={entry} onNotice={context.onNotice} />;
+  if (entry.action === EntryAction.WentAhead) return <WentAheadLine entry={entry} />;
   if (entry.action === EntryAction.Judge && entry.judge) return <JudgeLine judge={entry.judge} />;
   return null;
 }

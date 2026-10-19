@@ -4,6 +4,7 @@
  * hostile input: a card is drawn only from an item that names a game, and an image or a git address
  * outside Genex's own hosts is never handed on.
  */
+import { LibraryKind } from "../../src/shared/asset-library.ts";
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
@@ -16,6 +17,7 @@ import {
   TicketStatus,
   toFeedPage,
   toPlayGame,
+  toSearchGame,
   visibleShelves,
 } from "../../src/main/play/gallery.ts";
 import { PlayCategory, PlayShelf } from "../../src/shared/play.ts";
@@ -91,7 +93,56 @@ describe("Play gallery items", () => {
         imageUrl: "https://api.genex.games/api/character-assets/avatars/u1/1.webp",
       },
       remixable: true,
+      assetKind: null,
+      curation: { mobileSupport: null, mobileAuto: null, categories: [], remixOff: false },
     });
+  });
+
+  it("reads an asset's kind, a character as a 3D model, and nothing it does not know", () => {
+    const kind = (assetKind: unknown) => toPlayGame(item({ assetKind }))?.assetKind;
+    assert.equal(kind("3d"), LibraryKind.Model);
+    assert.equal(kind("character"), LibraryKind.Model);
+    assert.equal(kind("sound"), LibraryKind.Sound);
+    assert.equal(kind("hologram"), null);
+    assert.equal(kind(undefined), null);
+  });
+
+  it("carries what the card menu reads: mobile flags, tags and whether its owner turned remixing off", () => {
+    const curation = (overrides: Record<string, unknown>) => toPlayGame(item(overrides))?.curation;
+    assert.deepEqual(
+      curation({
+        mobileSupport: "desktop_only",
+        mobileAutoStatus: "desktop_only",
+        categories: ["tools", "physics"],
+        private: true,
+      }),
+      { mobileSupport: "desktop_only", mobileAuto: "desktop_only", categories: ["tools", "physics"], remixOff: true },
+    );
+    const cases: Array<[Record<string, unknown>, Record<string, unknown>]> = [
+      [{ mobileSupport: "supported" }, { mobileSupport: "supported" }],
+      [{ mobileSupport: "mobile_only" }, { mobileSupport: null }],
+      [{ mobileAutoStatus: "supported" }, { mobileAuto: null }],
+      [{ categories: "arcade" }, { categories: [] }],
+      [{ categories: ["arcade", 7, null, "x".repeat(41), "sports"] }, { categories: ["arcade", "sports"] }],
+      [
+        { categories: Array.from({ length: 40 }, (_, i) => `tag-${i}`) },
+        { categories: Array.from({ length: 16 }, (_, i) => `tag-${i}`) },
+      ],
+      [{ private: "true" }, { remixOff: false }],
+    ];
+    for (const [overrides, expected] of cases) {
+      const shown = curation(overrides);
+      assert.ok(shown, JSON.stringify(overrides));
+      for (const [key, value] of Object.entries(expected))
+        assert.deepEqual(shown[key as keyof typeof shown], value, JSON.stringify(overrides));
+    }
+  });
+
+  it("leaves a search's card without curation: not remixable is not the same as turned off by its owner", () => {
+    const searched = toSearchGame({ ...item(), author: "Simeon M", remixable: false, mobileSupport: "supported" });
+    assert.ok(searched);
+    assert.equal(searched.remixable, false);
+    assert.equal("curation" in searched, false);
   });
 
   it("hands on the maker's picture only when they chose it as their avatar", () => {
@@ -373,6 +424,22 @@ describe("Play gallery calls", () => {
     );
   });
 
+  it("lists the whole catalog with each item's shelf, asset kind and maker's name", async () => {
+    const items = [
+      { ...item({ id: "a1", slug: "crowd-cheer", title: "Crowd Cheer", categories: ["assets"] }), assetKind: "sound" },
+      item({ id: "g1", slug: "ocean-racer", title: "Ocean Racer" }),
+    ].map((entry) => ({ ...entry, author: "Simeon M" }));
+    const { gallery } = rig(() => ok({ items }));
+    const listed = await gallery.mentionItems();
+    assert.deepEqual(
+      listed.map(({ slug, shelf, assetKind, authorName }) => ({ slug, shelf, assetKind, authorName })),
+      [
+        { slug: "crowd-cheer", shelf: PlayShelf.Assets, assetKind: LibraryKind.Sound, authorName: "Simeon M" },
+        { slug: "ocean-racer", shelf: PlayShelf.Games, assetKind: null, authorName: "Simeon M" },
+      ],
+    );
+  });
+
   it("searches the shelf it is asked about, games when it names none it knows", async () => {
     const items = [
       item({ id: "g1", slug: "ocean-racer", title: "Ocean Racer" }),
@@ -387,8 +454,10 @@ describe("Play gallery calls", () => {
     assert.deepEqual(await found("x" as PlayShelf), ["ocean-racer"]);
   });
 
-  it("reads a game's likes, whether it may be remixed and the facts its header shows", async () => {
-    const { gallery, calls } = rig(() => ok({ item: { ...item(), likesCount: 42, likedByMe: true } }));
+  it("reads a game's likes, comments, whether it may be remixed and the facts its bar shows", async () => {
+    const { gallery, calls } = rig(() =>
+      ok({ item: { ...item(), likesCount: 42, likedByMe: true, commentsCount: 7 } }),
+    );
     assert.deepEqual(await gallery.world("lost-cathedral"), {
       id: "cm1",
       slug: "lost-cathedral",
@@ -402,7 +471,14 @@ describe("Play gallery calls", () => {
       authorId: "u1",
       plays: 2682,
       online: null,
+      comments: 7,
     });
+    const uncounted = rig(() => ok({ item: { ...item(), commentsCount: "many" } }));
+    assert.equal(
+      (await uncounted.gallery.world("lost-cathedral")).comments,
+      0,
+      "a count that is not one reads as none",
+    );
     assert.equal(calls[0]?.token, TOKEN);
     await assert.rejects(gallery.world("../../api"), /Not a game address/);
   });

@@ -1,11 +1,18 @@
 import type { JSX } from "react";
 import { type ToastItem, ToastTone } from "../state/toasts.ts";
+import { Icon } from "./icons.tsx";
 
 const TONE_DOT: Record<ToastTone, string> = {
   [ToastTone.Error]: "bg-red",
   [ToastTone.Ok]: "bg-green",
   [ToastTone.Info]: "bg-accent",
 };
+
+/** A toast's mark: a bare check for something done, a dot in the tone's colour otherwise. */
+function ToneMark({ tone }: { tone: ToastTone }): JSX.Element {
+  if (tone === ToastTone.Ok) return <Icon name="check" size={14} className="mt-0.5 text-ink" />;
+  return <span className={`mt-1.5 size-1.5 shrink-0 rounded-full ${TONE_DOT[tone]}`} />;
+}
 
 export function ToastStack({
   toasts,
@@ -24,7 +31,7 @@ export function ToastStack({
           className="pointer-events-auto overflow-hidden rounded-card bg-surface px-3 py-2.5 shadow-overlay"
         >
           <div className="flex items-start gap-2">
-            <span className={`mt-1.5 size-1.5 shrink-0 rounded-full ${TONE_DOT[toast.tone]}`} />
+            <ToneMark tone={toast.tone} />
             <span className="min-w-0 flex-1 font-mono text-xs leading-relaxed text-ink-2">{toast.text}</span>
             <button
               type="button"

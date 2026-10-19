@@ -48,6 +48,8 @@ const run = promisify(execFile);
 
 /** How long one `reg` or `git` call may take. */
 const TOOL_TIMEOUT_MS = 15 * SECOND_MS;
+/** How a `reg` or `git` lookup runs: under its deadline, with no console window of its own. */
+const TOOL_RUN = { timeout: TOOL_TIMEOUT_MS, windowsHide: true } as const;
 /**
  * How often `initialize` is tried when srt-win's egress check times out. That check runs 17-23 s
  * against a 30 s limit on a hosted runner, so a busy machine can miss it once.
@@ -62,6 +64,11 @@ const GIT_REGISTRY_KEY = "HKLM\\SOFTWARE\\GitForWindows";
 const GIT_REGISTRY_VALUE = "InstallPath";
 /** Git Bash inside a Git for Windows install. */
 const GIT_BASH = ["bin", "bash.exe"] as const;
+/**
+ * The folder in a packaged Windows app's resources that holds Genex's own Git for Windows
+ * (`scripts/package-git.cjs` copies it there; `scripts/vendor-git-for-windows.ts` makes it).
+ */
+export const BUNDLED_GIT_DIR = "git";
 /** `git --exec-path` is `<root>/<mingw64|clangarm64>/libexec/git-core`: three levels below the root. */
 const EXEC_PATH_DEPTH = 3;
 /** A path on a drive letter, as Git for Windows reports its own folders. */
@@ -72,6 +79,9 @@ const DRIVE_PATH = /^[A-Za-z]:[\\/]/;
  */
 const GRANT_ATTEMPTS = 3;
 const GRANT_RETRY_MS = 1 * SECOND_MS;
+/** Asks of `srt-win user status` for the sandbox user's SID, once it is set up, before giving up. */
+const SID_ATTEMPTS = 3;
+const SID_RETRY_MS = 1 * SECOND_MS;
 /** A shell variable name the env file may assign. */
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /**
@@ -115,7 +125,10 @@ const MESSAGE = {
   AncestorGrant: (dir: string, error: unknown) =>
     `could not let the sandbox user see the folder ${dir}: ${errorMessage(error)}`,
   NoAnswer: "no answer for this folder",
+  NoSandboxSid: "could not read the sandbox user's id from srt-win, so the folders above its grants stay closed to it",
   NoMembers: "the Windows sandbox session has no members",
+  UserNotSetUp: (user: boolean, cred: boolean) => `Sandbox user is not provisioned (user=${user}, cred=${cred}).`,
+  FiltersNotSetUp: "WFP filters are not installed for the sandbox user.",
 } as const;
 
 /** Folders the sandbox user may write and read, for the whole session. */
@@ -185,6 +198,33 @@ export function ancestorDirs(profile: string, roots: readonly string[]): string[
   }
   const covered = (dir: string) => roots.some((root) => insideWindowsPath(root, dir));
   return [...found.values()].filter((dir) => !covered(dir)).sort((a, b) => a.length - b.length);
+}
+
+/** One folder's `icacls` listing, or why there is none. */
+async function icaclsListing(dir: string): Promise<string> {
+  try {
+    return (await run("icacls", [dir], TOOL_RUN)).stdout;
+  } catch (error) {
+    return `${dir}: ${errorMessage(error)}`;
+  }
+}
+
+/**
+ * Who may open each folder from the profile down to `paths`, as `icacls` lists it: the profile,
+ * every folder between it and each path, and the paths, one line per entry. It goes in the log when
+ * a sandboxed process could not walk to its files, which only a person's own PC has shown.
+ */
+export async function windowsAccessReport(
+  profile: string,
+  paths: readonly string[],
+  listing: (dir: string) => Promise<string> = icaclsListing,
+): Promise<string[]> {
+  const dirs = [profile, ...ancestorDirs(profile, paths), ...paths];
+  const lines: string[] = [];
+  for (const dir of dirs) {
+    lines.push(...(await listing(dir)).split(/\r?\n/).filter((line) => line.trim()));
+  }
+  return lines;
 }
 
 /**
@@ -399,26 +439,49 @@ export function gitRootFromExecPath(execPath: string): string | null {
   return root;
 }
 
-/** How Git Bash is looked up; the defaults ask the registry, then `git`. */
+/**
+ * Genex's own Git for Windows in a packaged app (`<resources>\git`), or null outside one: Electron
+ * sets `process.resourcesPath`, plain Node does not.
+ */
+export function bundledGitRoot(resources: string | undefined = process.resourcesPath): string | null {
+  return resources ? win.join(resources, BUNDLED_GIT_DIR) : null;
+}
+
+/**
+ * Set to "1", Genex uses only its own Git, as on a PC without Git: the Windows package job runs
+ * its chat turn this way, since its runner has Git installed.
+ */
+export const BUNDLED_GIT_ONLY_ENV = "STUDIO_WINDOWS_BUNDLED_GIT_ONLY";
+
+/** How Git Bash is looked up; the defaults ask the registry, then `git`, then Genex's own Git. */
 export interface GitBashLookup {
+  /** Genex's own Git for Windows (default: {@link bundledGitRoot}). */
+  bundled?: string | null;
+  /** Skip an installed Git (default: {@link BUNDLED_GIT_ONLY_ENV}). */
+  bundledOnly?: boolean;
   registry?: () => Promise<string>;
   execPath?: () => Promise<string>;
   exists?: (file: string) => boolean;
 }
 
-/** Git Bash (`<Git>\bin\bash.exe`), from the registry or from `git --exec-path`; null when neither finds it. */
+/**
+ * Git Bash (`<Git>\bin\bash.exe`): an installed Git for Windows from the registry or from
+ * `git --exec-path` first, so a PC with Git keeps its own (with its credential manager, which the
+ * trimmed copy leaves out), then Genex's own copy in a packaged app; null when none has it.
+ */
 export async function findGitBash(lookup: GitBashLookup = {}): Promise<string | null> {
+  const bundled = lookup.bundled === undefined ? bundledGitRoot() : lookup.bundled;
   const registry =
     lookup.registry ??
-    (async () =>
-      (await run("reg", ["query", GIT_REGISTRY_KEY, "/v", GIT_REGISTRY_VALUE], { timeout: TOOL_TIMEOUT_MS })).stdout);
-  const execPath =
-    lookup.execPath ?? (async () => (await run("git", ["--exec-path"], { timeout: TOOL_TIMEOUT_MS })).stdout);
+    (async () => (await run("reg", ["query", GIT_REGISTRY_KEY, "/v", GIT_REGISTRY_VALUE], TOOL_RUN)).stdout);
+  const execPath = lookup.execPath ?? (async () => (await run("git", ["--exec-path"], TOOL_RUN)).stdout);
   const exists = lookup.exists ?? existsSync;
-  const lookups = [
+  const bundledOnly = lookup.bundledOnly ?? process.env[BUNDLED_GIT_ONLY_ENV] === "1";
+  const installed = [
     () => registry().then(gitRootFromRegistry, () => null),
     () => execPath().then(gitRootFromExecPath, () => null),
   ];
+  const lookups = [...(bundledOnly ? [] : installed), async () => bundled];
   for (const lookupRoot of lookups) {
     const root = await lookupRoot();
     const bash = root ? win.join(root, ...GIT_BASH) : null;
@@ -430,6 +493,24 @@ export async function findGitBash(lookup: GitBashLookup = {}): Promise<string | 
 /** The Git install a Git Bash path belongs to. */
 export function gitRootOf(bash: string): string {
   return win.dirname(win.dirname(bash));
+}
+
+/**
+ * Make the host's own `git` (game snapshots, the harness workspace) the one {@link findGitBash}
+ * chose: that Git's `cmd` folder goes first on PATH when it is not there yet, as for Genex's own
+ * Git or after installing Git while Genex was open. False when there is no Git for Windows.
+ */
+export async function ensureHostGit(
+  lookup: GitBashLookup = {},
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<boolean> {
+  const bash = await findGitBash(lookup);
+  if (!bash) return false;
+  const cmd = win.join(gitRootOf(bash), "cmd");
+  const entries = (env.PATH ?? "").split(win.delimiter).filter(Boolean);
+  const onPath = entries.some((dir) => dir.toLowerCase() === cmd.toLowerCase());
+  if (!onPath) env.PATH = [cmd, ...entries].join(win.delimiter);
+  return true;
 }
 
 /**
@@ -513,7 +594,7 @@ function processAlive(pid: number): boolean {
 
 /** How the default ancestor grants reach Windows: the sandbox user's SID and a folder-only editor. */
 export interface AncestorGrantDeps {
-  /** The `srt-sandbox` SID, or null while the sandbox is not provisioned. */
+  /** Whom the grants name (`srtAncestorGrantee`), or null when it cannot be read (a sync only runs once it is set up). */
   sid: () => Promise<string | null>;
   /** Applies a batch of entry changes, each to its folder alone (default {@link editFolderAces}). */
   edit?: FolderAceEditor;
@@ -531,7 +612,7 @@ export interface AncestorGrantDeps {
 
 /**
  * The ancestor grants, set as the real user (who owns their profile's folders) on each folder
- * alone, addressed to the sandbox user by SID.
+ * alone, addressed by SID to the sandbox user's group (or the user, outside it).
  *
  * Every Genex on the machine shares the one sandbox user, and so the one grant on each folder: a
  * dev profile runs beside the app, and CI runs test files side by side. Each process records its
@@ -560,8 +641,10 @@ export function ancestorGrants(holders: string, deps: AncestorGrantDeps): Ancest
   };
   return {
     async sync(dirs) {
+      // A sync follows a successful initialize, so the user exists: without its SID, every
+      // process started now would fail to open the folders above its grants (EPERM on AppData).
       const sid = await deps.sid();
-      if (!sid) return;
+      if (!sid) throw new Error(MESSAGE.NoSandboxSid);
       const previous = readRecord(recordFile) ?? { sid, dirs: [] };
       const had = new Set(previous.dirs.map(pathKey));
       await save({ sid, dirs: [...previous.dirs, ...dirs.filter((dir) => !had.has(pathKey(dir)))] });
@@ -669,6 +752,13 @@ export interface WindowsSessionDeps {
   ancestors: AncestorGrants;
   /** Filters deny paths before they reach srt-win ({@link keepWindowsDenies}). */
   keepDenies?: (paths: readonly string[], scope: DenyScope) => string[];
+  /**
+   * Lets the sandbox user start srt-win, before an initialize ({@link grantLauncherFolders});
+   * answers how to take that back, which a failed initialize does.
+   */
+  launcher?: () => Promise<() => void>;
+  /** Where the session says how long each step of a start took (Genex's log). */
+  log?: (line: string) => void;
 }
 
 /** Whether sandbox-runtime failed because srt-win's egress check (`wfp`) ran out of time. */
@@ -697,6 +787,8 @@ export class WindowsSandboxSession {
   #networkChanged = false;
   #active = 0;
   #regrants = 0;
+  /** An initialize succeeded, so its once-per-process egress check has run srt-win as the sandbox user. */
+  #started = false;
 
   constructor(deps: WindowsSessionDeps) {
     this.#deps = deps;
@@ -789,6 +881,18 @@ export class WindowsSandboxSession {
     };
   }
 
+  /**
+   * Set the read-attributes grants above the applied roots again, for a caller that holds the
+   * session ({@link acquire}) and is about to start a process that must outlive it: anything that
+   * rewrote one of those folders' entries since the apply (another holder's srt-win pass) would
+   * otherwise stop it at its first path walk. A folder that still has its entry is left untouched.
+   */
+  async refreshAncestors(): Promise<void> {
+    const applied = this.#applied;
+    if (!applied) return;
+    await this.#deps.ancestors.sync(ancestorDirs(this.#deps.profile, [...applied.write, ...applied.read]));
+  }
+
   /** Resolves once no regrant is queued or being applied (tests, quit). */
   async settled(): Promise<void> {
     while (this.#applying || (this.#queued && this.#active === 0)) await (this.#applying ?? this.#regrant());
@@ -809,13 +913,31 @@ export class WindowsSandboxSession {
    * folder, which can walk the whole user profile, so a retry repeats that walk.
    */
   async #initialize(config: SandboxRuntimeConfig): Promise<void> {
+    const launcher = this.#started ? undefined : this.#deps.launcher;
+    const release = launcher ? await this.#timed("launcher folders", launcher) : undefined;
     for (let attempt = 1; ; attempt++) {
       try {
-        await this.#deps.runtime.initialize(config);
+        await this.#timed("initialize", () => this.#deps.runtime.initialize(config));
+        this.#started = true;
         return;
       } catch (error) {
-        if (!egressCheckTimedOut(error) || attempt >= INITIALIZE_ATTEMPTS) throw error;
+        if (egressCheckTimedOut(error) && attempt < INITIALIZE_ATTEMPTS) continue;
+        // srt's reset takes back only what an initialize recorded; the launcher's grant is ours.
+        release?.();
+        throw error;
       }
+    }
+  }
+
+  /** Run `step`, logging how long it took whether it ends or throws. */
+  async #timed<T>(step: string, run: () => Promise<T>): Promise<T> {
+    const log = this.#deps.log;
+    if (!log) return run();
+    const started = performance.now();
+    try {
+      return await run();
+    } finally {
+      log(`${step}: ${Math.round(performance.now() - started)} ms`);
     }
   }
 
@@ -875,7 +997,8 @@ export class WindowsSandboxSession {
    */
   async #grantAncestors(grants: WindowsGrants): Promise<void> {
     try {
-      await this.#deps.ancestors.sync(ancestorDirs(this.#deps.profile, [...grants.write, ...grants.read]));
+      const dirs = ancestorDirs(this.#deps.profile, [...grants.write, ...grants.read]);
+      await this.#timed("folders above the grants", () => this.#deps.ancestors.sync(dirs));
     } catch (error) {
       await this.#deps.runtime.reset().catch(() => {});
       throw error;
@@ -932,7 +1055,124 @@ export async function srtSandboxSid(srtWin: string): Promise<string | null> {
   }
 }
 
+/**
+ * Whom the ancestor grants name: the sandbox users' group when `srt-sandbox` is in it, else the
+ * user. Every srt host on the machine (Claude Code 2.1 runs one for its own shell) stamps, grants
+ * and cleans up entries for the user's SID, and its cleanup took Genex's entry on `AppData` with
+ * its own, so the harness's boot failed with EPERM there. srt-win leaves the group's entries alone,
+ * and Windows checks them for every process that runs as the user.
+ */
+export async function srtAncestorGrantee(srtWin: string): Promise<string | null> {
+  try {
+    const srt = await import(SRT_PACKAGE);
+    const status = await srt.getWindowsSandboxUserStatusAsync({ srtWin: srt.resolveSrtWin({ path: srtWin }) });
+    return granteeOf(status);
+  } catch {
+    return null;
+  }
+}
+
+/** The group's SID when the sandbox user is in it, else the user's own; null before it exists. */
+export function granteeOf(status: { sid?: string; groupSid?: string; inSandboxGroup?: boolean }): string | null {
+  if (status.inSandboxGroup && status.groupSid) return status.groupSid;
+  return status.sid ?? null;
+}
+
+/**
+ * The sandbox user's SID by `lookup`, asked up to {@link SID_ATTEMPTS} times (a status probe can
+ * time out while Windows scans a freshly installed srt-win) and kept once found: the user keeps its
+ * SID until it is removed, which no running Genex does.
+ */
+export function sandboxSidOnce(
+  lookup: () => Promise<string | null>,
+  retryMs: number = SID_RETRY_MS,
+): () => Promise<string | null> {
+  let found: string | null = null;
+  return async () => {
+    for (let attempt = 1; !found && attempt <= SID_ATTEMPTS; attempt++) {
+      if (attempt > 1) await sleep(retryMs);
+      found = await lookup();
+    }
+    return found;
+  };
+}
+
+/**
+ * Let the sandbox user open the folders srt-win starts from: initialize's egress check runs
+ * srt-win as that user before it applies any grant, and a per-user install (Squirrel's, under
+ * `%LOCALAPPDATA%`) sits in the profile, where that user may open nothing, so Windows refused it
+ * ("CreateProcessWithLogonW(srt-sandbox): Access is denied"). The grant is srt's own, held for
+ * this process like the session's, so a reset after a successful initialize takes it back with
+ * them; the answer takes it back after a failed one. Before the sandbox is set up there is no user
+ * to grant to, and initialize says so. A grant that fails is taken back at once and leaves
+ * initialize to report what that costs (an install outside the profile needs none).
+ */
+export async function grantLauncherFolders(srtWin: string, dirs: readonly string[]): Promise<() => void> {
+  const sid = await srtSandboxSid(srtWin);
+  if (!sid) return () => {};
+  const srt = await import(SRT_PACKAGE);
+  const acl = { sandboxUserSid: sid, srtWin: srt.resolveSrtWin({ path: srtWin }) };
+  const release = () => {
+    try {
+      srt.revokeWindowsAcl(acl);
+    } catch {
+      // A read grant on the app's own files; the next start's grant replaces it.
+    }
+  };
+  try {
+    // The async grant (patched into sandbox-runtime): a sync one holds the start window's thread.
+    await srt.grantWindowsAclAsync({ ...acl, read: [...dirs], write: [] });
+  } catch {
+    release();
+  }
+  return release;
+}
+
+/** srt-win's `wfp status` answer for filters that were never installed (or were removed). */
+const WFP_ABSENT = "absent";
+
+/** What srt-win's `user status` and `wfp status` say, as far as setup goes. */
+export interface WindowsSetupStatus {
+  user: { provisioned: boolean; credPresent: boolean };
+  wfp: { state: string };
+}
+
+/**
+ * What is not set up yet, by srt-win's status answers: the sandbox user, its credential, or the
+ * WFP filters (once the user exists). Empty when everything is in place, even if a start failed.
+ */
+export function setupGaps({ user, wfp }: WindowsSetupStatus): string[] {
+  if (!user.provisioned || !user.credPresent) {
+    return [MESSAGE.UserNotSetUp(user.provisioned, user.credPresent)];
+  }
+  return wfp.state === WFP_ABSENT ? [MESSAGE.FiltersNotSetUp] : [];
+}
+
+/**
+ * The parts of the Windows sandbox not set up yet, the ones `initialize` checks first.
+ * `initialize` reports that refusal as a plain Error with no code, so a failed start asks again
+ * here to tell "not set up yet" from a fault. It asks srt-win's two status probes directly, not
+ * srt's dependency check: that one also lists a probe that failed (a slow first scan, a missing
+ * srt-win), which would turn a set-up PC's fault into a second approval prompt. A probe that
+ * fails throws, and the start's own error stands.
+ */
+export async function windowsDependencyErrors(srtWin: string = srtWinPath()): Promise<string[]> {
+  const srt = await import(SRT_PACKAGE);
+  const opts = { srtWin: srt.resolveSrtWin({ path: srtWin }) };
+  const [user, wfp] = await Promise.all([
+    srt.getWindowsSandboxUserStatusAsync(opts),
+    srt.getWindowsWfpStatusAsync(opts),
+  ]);
+  return setupGaps({ user, wfp });
+}
+
 const sessions = new WeakMap<object, WindowsSandboxSession>();
+
+/** Hand srt-win's own step times (the network check, the folder grants) to `log`: Genex's patch adds them. */
+async function logSrtSteps(log: (line: string) => void): Promise<void> {
+  const srt = await import(SRT_PACKAGE).catch(() => null);
+  srt?.setStudioStepLog?.((step: string, ms: number) => log(`srt-win ${step}: ${ms} ms`));
+}
 
 /**
  * The process's one session for `runtime` (sandbox-runtime's singleton), created by the first
@@ -941,13 +1181,26 @@ const sessions = new WeakMap<object, WindowsSandboxSession>();
  */
 export function windowsSessionFor(
   runtime: SessionRuntime,
-  options: { profile: string; srtWin: string },
+  options: { profile: string; srtWin: string; installDir: string; log?: (line: string) => void },
 ): WindowsSandboxSession {
   const existing = sessions.get(runtime);
   if (existing) return existing;
   const holders = windowsGrantHolders(options.profile);
-  const ancestors = ancestorGrants(holders, { sid: () => srtSandboxSid(options.srtWin) });
-  const session = new WindowsSandboxSession({ runtime, profile: options.profile, ancestors });
+  const ancestors = ancestorGrants(holders, { sid: sandboxSidOnce(() => srtAncestorGrantee(options.srtWin)) });
+  const srtWinDir = win.dirname(options.srtWin);
+  const launchDirs = insideWindowsPath(options.installDir, srtWinDir)
+    ? [options.installDir]
+    : [options.installDir, srtWinDir];
+  const launcher = () => grantLauncherFolders(options.srtWin, launchDirs);
+  const log = options.log;
+  if (log) void logSrtSteps(log);
+  const session = new WindowsSandboxSession({
+    runtime,
+    profile: options.profile,
+    ancestors,
+    launcher,
+    ...(log ? { log } : {}),
+  });
   process.once("exit", () => ancestors.revokeAllSync());
   sessions.set(runtime, session);
   return session;

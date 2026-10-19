@@ -789,8 +789,10 @@ function systemInstallDeps(env: GodotEnv): GodotInstallDeps {
   return {
     fetch: globalThis.fetch,
     applications: env.applications,
-    run: async (command, args, timeoutMs) => {
-      const done = await execFileAsync(command, args, { timeout: timeoutMs, maxBuffer: RUN_OUTPUT_MAX_BYTES });
+    trash: path.join(env.home, ".Trash"),
+    run: async (command, args, timeoutMs, signal) => {
+      const options = { timeout: timeoutMs, maxBuffer: RUN_OUTPUT_MAX_BYTES, signal };
+      const done = await execFileAsync(command, args, options);
       return { out: done.stdout, err: done.stderr };
     },
   };

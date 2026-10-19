@@ -59,6 +59,7 @@ import {
   rememberProject,
   type UnityProject,
 } from "./project-folder.ts";
+import { agentsSetting, setAgentsSetting } from "../../substrate/engine-agents.ts";
 import { newestUnity6, readinessOf } from "./readiness.ts";
 import { pipelineVersionOf, SetupError, SetupRefusal, setUpProject, undoSetup } from "./setup.ts";
 import { readFacts, SetupAction, setupCard, skippedCard } from "./setup-steps.ts";
@@ -98,6 +99,9 @@ export const UnityAction = {
   UndoSetup: "undo-setup",
   RestartEditor: "restart-editor",
   GetUnity: "get-unity",
+  Agents: "agents",
+  AgentsGoAhead: "agents-go-ahead",
+  AgentsWait: "agents-wait",
   Steps: SetupAction.Steps,
   Stop: SetupAction.Stop,
   Skip: SetupAction.Skip,
@@ -507,6 +511,9 @@ export function createUnityBackend(deps: UnityBackendDeps): PluginActivation {
     [UnityAction.UndoSetup]: (context) => undoSetUp(deps, context, PANEL_MESSAGE),
     [UnityAction.RestartEditor]: (context) => endAndOpen(deps, context, PANEL_MESSAGE),
     [UnityAction.GetUnity]: () => getUnity(deps),
+    [UnityAction.Agents]: async (context) => agentsSetting(await storageOf(context)),
+    [UnityAction.AgentsGoAhead]: async (context) => setAgentsSetting(await storageOf(context), true),
+    [UnityAction.AgentsWait]: async (context) => setAgentsSetting(await storageOf(context), false),
     ...setupActions(deps, installerOf),
   };
   return {

@@ -71,6 +71,7 @@ const card = (slug: string, plays: number, online: number | null = null): PlayGa
   online,
   author: { id: "me", name: "Rab", imageUrl: null },
   remixable: true,
+  assetKind: null,
 });
 
 const entry = (stats: PlayStats | null, fields: Partial<StatsEntry> = {}): StatsEntry => ({

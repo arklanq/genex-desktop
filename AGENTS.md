@@ -152,8 +152,9 @@ review and evidence requirements.
 ## Setup and authorization
 
 Authorization already given in the conversation persists. Restoring locked dependencies with
-`npm ci` is included when needed to build, run or test the requested work; do not repeat it
-without a missing or mismatched dependency. Dependency upgrades and global installations are
+`npm run deps` is included when needed to build, run or test the requested work; do not repeat it
+without a missing or mismatched dependency. In a worktree it clones one shared install per
+lockfile instead of `npm ci` writing 1.4 GB more. Dependency upgrades and global installations are
 separate scope decisions. Use the installed Node 24; do not change machine-wide runtimes as an
 incidental verification step.
 

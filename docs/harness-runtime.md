@@ -498,7 +498,9 @@ held, records the round's `checking` step, runs the reviewer as `engine.delegate
 harness may settle a held answer as no answer (a yes that lapsed, a turn that ended), never as a
 yes; the host counts the no's in a row from its own records (`rejectionsInRow`, since the run was
 last opened: a reopened run starts over, a resumed one goes on), writes the outcome and answers
-`stopped` at the cap. A run's start, pause or close drops its held round: a review or settle still
+`stopped` at the cap, unless the settle names more than `FINISH_TIME_LEFT_MS` (20 min) of a timed
+Loop's working time left (`timeLeftMs`, from `time-cap.ts` `timeLeftOf`; an ∞ Loop names none): then
+the no records `timeLeft` and the Loop goes on whatever the row. A run's start, pause or close drops its held round: a review or settle still
 waiting then records nothing more and starts no reviewer. `finish_check` is a
 host-only record: a harness batch carrying one is refused whole. The
 host seats the reviewer in a fresh home of its own (a folder no box writes), reading the lead's folder and the run's captures, with
@@ -520,9 +522,24 @@ a thing looks only from a close front or side picture.
 In a Loop in place, a claim that names what remains while more than `GAPS_FIRST_MIN_MS` (20 min) of
 working time is left reaches no reviewer: the lead is told to work on what remains first
 (`open/finish.ts` `gapsFirst`), and nothing is recorded.
-It answers `{"verdict":"yes"|"no","reasons":[…],"notDone":[…]}`: yes ends the Loop, no goes back to
-the lead with its reasons, and `MAX_FINISH_REJECTIONS` (3) no's in a row stop it; an answer that
-says neither, a failed session or a Stop neither counts nor breaks the row. Every step is a
+It answers `{"verdict":"yes"|"no","reasons":[…],"done":[…],"notDone":[…]}`: `reasons` say what it
+checked and found, met or not, `done` and `notDone` are short checklist items of what the proof shows
+and what it doesn't show yet; they stay apart in the record and the answer, and only `notDone` is
+what is still to fix on the "Almost there" card, in Builds' "Final look" and in the report
+(`notDoneOf`; a record that names none falls back to its reasons). The chat says nothing per round.
+Every Loop's close that is neither a yes nor a pause writes `run_finished.stillToFix` (`stillToFixOf`):
+the last no's `done` and `notDone`, why it stopped (`StopWhy`: its time, the no's, another end) and
+its hours (`loopHoursOf`); a time-out with no no lists nothing and still has the card. The chat's card
+reads only that, so a page that lost the run's start still shows it. A Stop pauses every Loop (a web
+finish then closing too), and a pause keeps its own reason and Resume. Keep building is offered on the
+chat's newest card until the person writes again, and on Builds' newest ended build, while nothing runs
+or waits paused. It sends through the composer's Loop (`loopOn`) marked `keepBuilding`, and goes once
+it went out. That mark reopens the finished build, or starts the next Loop on the last goal and what is
+left, with no turn deciding (chat-dispatch.ts `keepBuildingNow`). Yes ends the Loop, no
+goes back to the lead with both, and `MAX_FINISH_REJECTIONS` (3) no's in a row stop it, a timed Loop
+only once little time is left; after a row it went on past, a claim whose proof names no file made
+since the last no is turned back before any review (`freshProofIn`), and nothing is recorded. An answer
+that says neither, a failed session or a Stop neither counts nor breaks the row. Every step is a
 `finish_check` record the host writes (`checking`, then `accepted`, `rejected` or `unanswered`, with
 the round, the reasons, the count and the reviewer); a claim no engine here can review, or one whose
 model can't hold the brief, asks nothing and records nothing. The whole check fits inside the lead's one call (`LEAD_CALL_MS`,

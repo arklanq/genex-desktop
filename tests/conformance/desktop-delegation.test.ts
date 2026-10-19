@@ -295,6 +295,55 @@ it("an existing install starts with computer control off; turning it on is remem
   }
 });
 
+it("a harness that ends stops its desktop.computer sessions: the driver closes and the computer is let go", async () => {
+  const calls: string[] = [];
+  const desktop = desktopControl({
+    findDriver: async () => "/fake/cua-driver",
+    connect: async () => fakeDriver(calls),
+    ownApp: () => false,
+  });
+  let answer: (consentId: string) => void = () => {};
+  const asked: string[] = [];
+  const lite = await coreLite({
+    desktop,
+    onUiEvent: (event: UiEventData) => {
+      if (event.type !== UiEvent.PluginConsent) return;
+      const payload = event.payload as { consentId: string; state: string };
+      if (payload.state !== "pending") return;
+      asked.push(payload.consentId);
+      answer(payload.consentId);
+    },
+  });
+  lite.core.host.restart = (async () => {}) as never;
+  lite.core.host.healthcheck = (async () => true) as never;
+  try {
+    const { core } = lite;
+    answer = (consentId) => void Promise.resolve().then(() => core.resolveConsent(consentId, true));
+    await core.updateSettings({ computerControl: true });
+    const project = "desk-harness-end";
+    await core.games.scaffold(project);
+    const threadId = await core.createGameThread(project);
+    const api = core.api() as unknown as Record<string, (input: unknown) => Promise<Record<string, unknown>>>;
+    const call = api[HostMethod.DesktopComputer]!;
+    for (const end of ["a crash", "a restart"] as const) {
+      await call({ project, threadId, describe: true });
+      await call({ project, threadId, args: { action: "screenshot" } });
+      assert.equal(desktop.active(), 1, `${end}: the session holds the computer`);
+      const before = calls.length;
+      if (end === "a crash")
+        await core.host.options.onUnexpectedExit!({ at: Date.now(), code: 1, signal: null, harnessVersion: null });
+      else await core.recover("test wedge");
+      assert.equal(desktop.active(), 0, `${end}: the ended harness's session let the computer go`);
+      assert.deepEqual(calls.slice(before), ["close"], `${end}: its driver was closed`);
+    }
+    const cards = asked.length;
+    await call({ project, threadId, args: { action: "screenshot" } });
+    assert.ok(asked.length > cards, "the next harness's call asks the person again");
+  } finally {
+    await lite.close();
+  }
+});
+
 it("turned off during a session, the next desktop call is refused in words and the running driver stops", async () => {
   const calls: string[] = [];
   const active: number[] = [];

@@ -419,6 +419,7 @@ export class ChatFileResolver {
     const partial = path.join(folder, `.${process.pid}-${Date.now()}.partial`);
     // Read stored bytes; opening a chat link never runs smudge filters or downloads LFS content.
     const child = spawn("git", ["-C", scope.game.dir, "cat-file", "blob", blob], {
+      windowsHide: true,
       stdio: ["ignore", "pipe", "ignore"],
       env: await this.#userGitEnv(),
     });

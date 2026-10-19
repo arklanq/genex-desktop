@@ -5,9 +5,12 @@
  * and the backend's New game, Set up and its review over it.
  */
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
 import { lstat, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { promisify } from "node:util";
 import { GodotTool } from "../../src/plugins/godot/backend.ts";
 import {
   ADDON_FOLDER,
@@ -22,6 +25,10 @@ import {
 } from "../../src/plugins/godot/genex-addon.ts";
 import { ADDON, godotBackendFixture } from "../helpers/godot-fake-engine.ts";
 import { tmpDir } from "../helpers/tmp.ts";
+
+const execFileAsync = promisify(execFile);
+/** A shell string literal, as a test writes its own stand-in script. */
+const shellQuote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
 
 const SETTINGS = 'config_version=5\n\n[application]\n\nconfig/name="Moon"\n';
 const AUTOLOAD = 'GenexPlay="*res://addons/genex/play_protocol.gd"';
@@ -84,10 +91,42 @@ describe("the Genex addon in a Godot project", () => {
     const text = launcherText("godot", "/Apps/It's Godot.app/Contents/MacOS/Godot");
     assert.ok(text.startsWith("#!/bin/sh\n"));
     assert.ok(text.includes(`"$GENEX_GODOT" '/Apps/It'\\''s Godot.app/Contents/MacOS/Godot'`), "a found path, quoted");
-    assert.ok(text.includes('--path "$root/godot" --no-header --fixed-fps 60 --max-fps 60'));
+    assert.ok(text.includes(`--path "$root"/'godot' --no-header --fixed-fps 60 --max-fps 60`));
     assert.ok(text.includes('-- --play-protocol "$@"'));
     assert.ok(text.includes('{"event":"fatal"'), "no Godot is a fatal line the studio reads");
     assert.ok(launcherText(".", null).includes('--path "$root" '), "a project at the game's root");
+  });
+
+  it("hands Godot the project's folder whatever its name holds, running none of it", async () => {
+    const base = await realpath(await tmpDir("godot-launcher-"));
+    const fakeGodot = path.join(base, "godot");
+    // The stand-in Godot writes the folder it was given into a file beside it.
+    await writeFile(
+      fakeGodot,
+      `#!/bin/sh\nwhile [ "$1" != "--path" ]; do shift; done\nprintf '%s' "$2" > ${shellQuote(path.join(base, "given"))}\n`,
+      { mode: 0o755 },
+    );
+    const hostile = [
+      'quote"d',
+      "dollar$HOME",
+      "sub$(touch pwned)",
+      "tick`touch pwned`",
+      "it's",
+      "two  spaces",
+      "back\\slash",
+      "nested/dir",
+    ];
+    for (const name of hostile) {
+      const game = path.join(base, `game-${hostile.indexOf(name)}`);
+      await mkdir(path.join(game, "bin"), { recursive: true });
+      await mkdir(path.join(game, name), { recursive: true });
+      const launcher = path.join(game, "bin", "play");
+      await writeFile(launcher, launcherText(name, null), { mode: 0o755 });
+      await execFileAsync("/bin/sh", [launcher], { cwd: base, env: { ...process.env, GENEX_GODOT: fakeGodot } });
+      assert.equal(await readFile(path.join(base, "given"), "utf8"), path.join(game, name), name);
+      assert.equal(existsSync(path.join(base, "pwned")), false, `${name}: nothing in the name ran`);
+      assert.equal(existsSync(path.join(game, "pwned")), false, `${name}: nothing in the name ran`);
+    }
   });
 
   it("sets a game up: the addon, its autoload, an executable launcher and the bridge, every other key kept", async () => {

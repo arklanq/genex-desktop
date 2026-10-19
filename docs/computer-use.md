@@ -103,7 +103,9 @@ or a build under this game's run folder: the run id is a plain name, its folder 
 path, and the host's own records must say the run is this game's. One session per leased window and
 round (run, part, iteration, role, goal, entry, setup); a `describe` or `fresh` starts a new one, so
 the next player on a window never inherits a spent budget; calls on one window build one session at
-a time, and a replaced or released session stops what it started.
+a time, and a replaced or released session stops what it started. A harness that ends (a crash or a
+restart) never sends its `preview.release`, so the host forgets the sessions on the windows it gives
+back for it (`releaseHarnessLeases`): a Play Protocol game's process stops and an editor's play is let go.
 
 Codex's own computer use and browsers (`computer_use`, `in_app_browser`, `browser_use`,
 `browser_use_external`) are disabled on every launch: they would drive the person's real screen past
@@ -185,7 +187,10 @@ output lines. No pause holds a client's clock, so `play-pause` answers `unsuppor
 always asks the server once whether the live saved data can be reached (`liveData`; the link's ids
 can't say, as the person's first publish in Studio doesn't update them, and a server that doesn't
 answer counts as reachable) and keeps the answer for the Set up panel. A play the session starts is
-marked as the agent's (`agent-marks.ts`) from just before it starts until `play-close` ends it.
+marked as the agent's (`agent-marks.ts`) from just before it starts until `play-close` ends it, or
+until a play tool finds it stopped (the person ended it); a test the session joins counts as the
+agent's only when the mark claimed it already, and its close leaves it running. Before starting a
+play, the game's script changes still on their way to Studio are sent.
 
 Unity provides the same six play tools through its Pipeline package
 ([`plugins/unity/computer-play.ts`](../src/plugins/unity/computer-play.ts)). Its project stays inside
@@ -237,7 +242,8 @@ folder, and talks MCP to it through `cua-driver mcp --embedded --socket <path>`.
 spawns stays in the app's macOS responsibility chain, so Accessibility and Screen Recording are
 **Genex's own** grants: one entry in System Settings, no second app, no driver prompt. The daemon
 runs with `DO_NOT_TRACK=1` and `CUA_DRIVER_RS_UPDATE_CHECK=0` (no product telemetry, no update
-check) and starts on first use; ⌃⌥⌘Esc and quitting stop it. Its grants are checked without a
+check) and starts on first use. It stops 30 s after the last desktop session lets go (a quick next
+session reuses it); ⌃⌥⌘Esc and quitting stop it at once. Its grants are checked without a
 prompt; a daemon without them is restarted once (macOS keeps a process's old answer), and still
 without them Genex asks macOS itself: the Accessibility prompt, then System Settings at Screen
 Recording (`desktop-control-host.ts`). A VM's driver is reached as
@@ -274,7 +280,11 @@ environment, outside the ProcessSandbox, which would deny it the screen.
 - **Never driven.** The studio itself (so an agent cannot answer its own card), password managers,
   System Settings, Keychain Access and the system's password prompts; nothing is typed into a
   password field (macOS's secure input on this Mac, or a field labelled as a password in the front
-window's tree). A refusal ends the plan and its reason is the answer.
+  window's tree). A click is checked against the app whose window is under the point, and a point no
+  window covers is refused, never put down to the app in front; a drag is checked at both ends, so
+  dropping onto a refused or unasked app moves nothing. A refusal ends the plan and its reason is the
+  answer. `app_look`, which only looks and so needs no setting ([tool permissions](tool-permissions.md#looking-at-apps)),
+  never looks at these apps or Genex's own windows either.
 - **Never building or play-testing.** The apps an enabled engine plugin declares
   (`engine.apps.mac`, its editor) are refused in plain words ("use the engine's own tools", and a
   setup click or a publish goes through its plugin's tool) before
@@ -303,8 +313,12 @@ window's tree). A refusal ends the plan and its reason is the answer.
   clicks File › Publish to Roblox in their Studio itself, keeping Studio's privacy and settings and stopping at any age, ID,
   two-step, terms or payment question (elsewhere the answer gives that click path). Genex then
   links the game to the published place by itself.
-- **Stopping.** The chat's Stop, the session's end, ⌃⌥⌘Esc (registered only while a driver is
-  connected) and quitting all stop the driver (`desktop-control.ts`).
+- **Stopping.** The chat's Stop, the session's end, ⌃⌥⌘Esc (registered from the moment a driver
+  starts until the last session lets go) and quitting all stop the driver (`desktop-control.ts`). A
+  stop while the session's card waits or the driver starts cancels that call: a later yes connects
+  nothing, a driver that arrives after it is closed unused, and nothing moves. A harness that ends
+  (a crash or a restart) stops its `desktop.computer` sessions, and the next harness's first call asks
+  again.
 - **What it cannot do.** No clock, seed or replay; `state` is the accessibility tree of the app in
   front. A judge's "studio-verified" is never claimed on it.
 - **Web pages** (`dom` capability, [`desktop-web.ts`](../src/main/core/desktop-web.ts),

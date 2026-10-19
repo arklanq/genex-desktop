@@ -22,12 +22,13 @@
 import { InteractionObjective, InteractionSource } from "../shared/run-summary.ts";
 import type { GameEngine } from "../shared/game-engine.ts";
 import { WorkerStopCode } from "../shared/workers.ts";
-import { type PackageManager, type SandboxProblemCode, StudioPlatform } from "../shared/boot.ts";
+import { type PackageManager, type SandboxProblemCode, type StartStep, StudioPlatform } from "../shared/boot.ts";
 import { ChatFileOpen } from "../shared/chat-files.ts";
 import { sizeWords } from "../shared/byte-size.ts";
 import { freeableBytes, StorageKind, type StorageFreed, type StorageSpace } from "../shared/storage-space.ts";
 import { SkippedBy, type SkippedFile } from "../shared/chat-rewind.ts";
 import { LiveBehindReason } from "../shared/live-behind.ts";
+import { PlayCardAction, PlayCoverRefusal, PlayMobileSupport } from "../shared/play-manage.ts";
 import { AutoResumeCause, type CustomEvent, type CustomPayload } from "../shared/custom-events.ts";
 import { EngineFailureKind } from "../shared/engine-requests.ts";
 import { LocalServerProblem } from "../shared/local-server.ts";
@@ -38,6 +39,7 @@ import { CreditKind } from "../shared/play-credits.ts";
 import { AvatarBody, AvatarEyes, AvatarGear, BlockState } from "../shared/avatar-recipe.ts";
 import { HANDLE_LENGTH, HandleState } from "../shared/handle.ts";
 import { MakingKind } from "../shared/asset-making.ts";
+import { ShareMiss } from "../shared/asset-library.ts";
 import { RoundOutcome, roundOutcome, stoppedSource } from "../shared/run-state.ts";
 import type { OutcomeView, RunEvidence } from "../shared/run-summary.ts";
 import { CoreFact, LoopProfile } from "../shared/project-facts.ts";
@@ -60,7 +62,6 @@ import type { LeadFace } from "./run-tree.ts";
 import type { CommandState } from "./state/command-runs.ts";
 import type { JobState } from "./panels/plugins/genex/genex-view.ts";
 import { plural } from "../shared/skill-words.ts";
-import { MAX_FINISH_REJECTIONS } from "../shared/finish-check.ts";
 import { JUDGE_PLAY_TOOL_NAME } from "../shared/chat-judge.ts";
 import {
   APP_LOOK_TOOL_NAME,
@@ -74,6 +75,8 @@ import { type ScreenAct, ScreenDeed } from "../shared/agent-screen.ts";
 import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { type ConnectorStep, StepAction } from "./chat/connector-steps.ts";
 import { MentionMiss } from "../shared/prompt-mention.ts";
+import { AssetScope, LibraryKind } from "../shared/asset-library.ts";
+import { KindChoice } from "./play/asset-tiles.ts";
 
 export type ToolIcon = "think" | "write" | "run" | "read" | "see" | "game";
 
@@ -165,7 +168,7 @@ const PHRASES: Array<[RegExp, (match: RegExpMatchArray) => StatusWords]> = [
   [/^director$/i, () => ({ line: "The lead is watching the workers", short: "The lead" })],
   // A Loop led in place: its lead builds in the project itself, often with no workers at all.
   [/^lead in place$/i, () => ({ line: "The lead is building in your project", short: "The lead" })],
-  [/^lead in place finishing$/i, () => ({ line: "A reviewer is checking the lead's finish", short: "Checking" })],
+  [/^lead in place finishing$/i, () => ({ line: "A second AI is looking at your game", short: "Final look" })],
   [/^iteration (\d+) — building$/i, (m) => ({ line: `Round ${m[1]} · building`, short: `Round ${m[1]}` })],
   [/^iteration (\d+) — judging blind$/i, (m) => ({ line: `Round ${m[1]} · reviewing`, short: `Round ${m[1]}` })],
   [
@@ -1450,7 +1453,7 @@ export const COMPUTER_CONTROL_SETTING_WORDS = {
   section: "Computer control",
   label: "Let agents control your computer",
   detail:
-    "An agent can ask to see your screen, then click and type in the apps you allow. Each chat session asks you first, and ⌃⌥⌘Esc stops it. macOS only.",
+    "With this on, an agent can click and type in the apps you allow. Each chat session asks you first, and ⌃⌥⌘Esc stops it. Agents can look at an app’s window without it, never at password managers, System Settings, password prompts or Genex. macOS only.",
 } as const;
 
 export function resumedWords(parts: number): string {
@@ -1598,14 +1601,19 @@ const SCREEN_NOW_MS = 2 * SECOND_MS;
 
 /** A minute, in the seconds a running clock shows. */
 const SECONDS_PER_MINUTE = MINUTE_MS / SECOND_MS;
+/**
+ * Between a clock's two parts: a no-break space. The status clock's figures are tabular, and the
+ * house font's tabular set widens a plain space to a figure's width; this one keeps a word space's.
+ */
+const CLOCK_SPACE = "\u00a0";
 
 /** "42s", "3m 5s", "2h 10m": a running clock, as short as the time allows, and nothing under a second. */
 export function clockWords(ms: number): string {
   const seconds = Math.floor(ms / SECOND_MS);
   if (ms < SECOND_MS) return "";
   if (ms < MINUTE_MS) return `${seconds}s`;
-  if (ms < HOUR_MS) return `${Math.floor(ms / MINUTE_MS)}m ${seconds % SECONDS_PER_MINUTE}s`;
-  return `${Math.floor(ms / HOUR_MS)}h ${Math.floor((ms % HOUR_MS) / MINUTE_MS)}m`;
+  if (ms < HOUR_MS) return `${Math.floor(ms / MINUTE_MS)}m${CLOCK_SPACE}${seconds % SECONDS_PER_MINUTE}s`;
+  return `${Math.floor(ms / HOUR_MS)}h${CLOCK_SPACE}${Math.floor((ms % HOUR_MS) / MINUTE_MS)}m`;
 }
 
 /** How long ago a screen's frame came: "now", "3s", "2m" on a node, "3s ago" where there is room. */
@@ -1617,6 +1625,40 @@ export function screenAgo(at: number, now: number, { ago = false }: { ago?: bool
 }
 
 // ── words several surfaces say ────────────────────────────────────────────────────────────
+
+/** A Loop's hours as the person picked them: whole hours, else minutes. */
+const loopSpan = (hours: number): string =>
+  Number.isInteger(hours) ? plural(hours, "hour") : plural(Math.round(hours * 60), "minute");
+
+/** A Loop that ended with something still to fix: its card in the chat and in Builds. */
+export const STILL_TO_FIX_WORDS = {
+  title: "Almost there",
+  done: "Done",
+  left: "Still to fix",
+  keepBuilding: "Keep building",
+  /** Why the Loop stopped, in one line under the title. */
+  why: {
+    time: (hours: number | null) =>
+      hours === null
+        ? "Its time ran out before this was fixed."
+        : `Your ${loopSpan(hours)} ran out before this was fixed.`,
+    /** Its time ran out before the game had a final look, so nothing is listed. */
+    timeUnlooked: (hours: number | null) =>
+      hours === null
+        ? "Its time ran out before a final look at your game."
+        : `Your ${loopSpan(hours)} ran out before a final look at your game.`,
+    stuck: "It kept getting this wrong, so it stopped to save your credits.",
+    person: "You stopped it before this was fixed.",
+    ended: "It stopped before this was fixed.",
+  },
+  /** The message Keep building sends for the person: what is left, else to go on where it stopped. */
+  ask: (notDone: readonly string[]) =>
+    notDone.length
+      ? ["Keep building: fix what’s left.", ...notDone.map((item) => `- ${item}`)].join("\n")
+      : "Keep building where you left off.",
+  /** Keep building in a game whose Loop can't run here: nothing was sent. */
+  noLoop: "Loop can’t run in this game yet, so Keep building can’t start it.",
+} as const;
 
 /**
  * The plan's two replies. The steering card and the composer both offer them, and a waiting plan
@@ -1681,12 +1723,28 @@ export const TRANSCRIPT_WORDS = {
   /** A game's engine link (`engine_linked`): one line with Undo, then what Undo did. */
   engineLinked: (game: string | undefined, engine: string, project: string) =>
     `${game ?? "This game"} now builds in ${engine} · ${project}`,
-  engineUndone: (game: string | undefined, restored: string | undefined) =>
-    restored
-      ? `Undone. ${game ?? "This game"} builds in ${restored} again.`
-      : `Undone. ${game ?? "This game"} is a web game again.`,
+  /** A link whose plugin also set the project up for Genex: the same one line, the set-up first. */
+  engineSetUpAndLinked: (game: string | undefined, engine: string, project: string) =>
+    `Set up ${project} for Genex · ${game ?? "This game"} now builds in ${engine}`,
+  /** What Undo did: where the game builds now, and the project whose set-up it also took back. */
+  engineUndone: (
+    game: string | undefined,
+    restored: string | undefined,
+    setUp: { undone?: string; kept?: string } = {},
+  ) => {
+    const now = restored
+      ? `Undone. ${game ?? "This game"} builds in ${restored} again`
+      : `Undone. ${game ?? "This game"} is a web game again`;
+    if (setUp.undone) return `${now}, and ${setUp.undone} is no longer set up for Genex.`;
+    if (setUp.kept) return `${now}. ${setUp.kept} stays set up for Genex: another game uses it.`;
+    return `${now}.`;
+  },
   engineUndo: "Undo",
   engineUndoTitle: "Take this back: the game builds where it did before",
+  /** An agent went ahead of the person in an app a plugin's lock guards (`agent_went_ahead`): said once. */
+  wentAhead: (app: string) => `An agent used ${app} while you were playing.`,
+  wentAheadSettings: (app: string) => `${app} settings`,
+  wentAheadSettingsTitle: (app: string) => `Choose whether agents may use ${app} while you play`,
   rewound: (files: number) => `The chat went back, and ${files} game ${files === 1 ? "file" : "files"} with it.`,
   rewindUndo: "Bring back newer version",
   rewindUndoTitle: "Put the game files back as they were before this rewind; the chat stays rewound",
@@ -1844,7 +1902,7 @@ export const WORKER_LINE_WORDS = {
 export const BUILD_CHECKLIST_WORDS = {
   added: "Added",
   working: "Working",
-  workingFor: (minutes: number) => `Working · about ${minutes} min`,
+  workingFor: (minutes: number) => `Working · ~${minutes} min`,
   workingRound: (round: number) => `Working · round ${round}`,
   waiting: "Waiting to start",
   notAdded: "Not added",
@@ -1899,67 +1957,41 @@ export const JOBS_WORDS = {
   byLead: "Started by the lead",
 } as const;
 
-/** Small counts spelled out, for sentences that read better with a word than a digit. */
-const SPELLED_COUNTS = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"] as const;
-/** A small count as a word ("two"), a larger or odd one as its digits. */
-const spelledCount = (count: number): string => SPELLED_COUNTS[count] ?? String(count);
-
-/** The finish check's node, card and chat lines; every count of no's comes from the shared cap. */
+/** The finish check's node and card in Builds, named for the person as the Loop's final look at their game. */
 export const FINISH_CHECK_WORDS = {
-  name: "Finish check",
+  name: "Final look",
   state: {
-    not_yet: "Not yet",
-    checking: "Checking",
+    not_yet: "Not finished yet",
+    checking: "Looking",
     done: "Done",
-    stopped: "Stopped",
+    stopped: "Not finished",
   } satisfies Record<FinishCheckState, string>,
   placeholder: "Runs at the end",
-  about: "When the lead says the Loop is done, a reviewer that did none of the work checks the proof first.",
-  /** The node's line while the reviewer looks. */
-  checking: "Checking the proof",
-  /** The node's line after a no: how many reasons, and which no in a row it was (the card numbers each claim instead). */
-  roundWord: (reasons: number, rejections: number) =>
-    `${plural(reasons, "reason")} · round ${rejections} of ${MAX_FINISH_REJECTIONS}`,
-  doneWord: "Reviewer said yes",
-  stoppedWord: `${MAX_FINISH_REJECTIONS} no's in a row`,
-  unanswered: "The reviewer couldn't answer",
-  /** The card's section headings, as the design names them. */
-  heading: {
-    reviewer: "The reviewer",
-    whyNotYet: "Why not yet",
-    whyYes: "Why yes",
-    notDone: "What isn't done",
-  },
-  /** A heading with the lead's claim it answers, when the card lists more than one (the node's "round" counts no's in a row). */
-  roundHeading: (heading: string, claim: number) => `${heading} · claim ${claim}`,
-  reviewerIs: "A second agent that did none of the work.",
-  yourRequest: "Your request",
-  claimLabel: "The lead said",
-  saidYes: "The reviewer said yes.",
-  /** After a no, while the Loop goes on: how many more no's in a row stop it (fewer than the cap stand). */
-  moreNos: (rejections: number) => {
-    const left = MAX_FINISH_REJECTIONS - rejections;
-    const nos = left === 1 ? "no" : "no's";
-    return `${capitalise(spelledCount(left))} more ${nos} in a row and the Loop stops with a report.`;
-  },
+  about: "Before the Loop calls it done, a second AI looks at your game.",
+  /** The node's line and the card while the second AI looks. */
+  checking: "Looking at your game",
+  checkingCard: "Looking at your game.",
+  /** The node's line after a no: how many things are left. */
+  leftWord: (left: number) => `${plural(left, "thing")} left`,
+  doneWord: "All done",
+  doneCard: "All done.",
+  unanswered: "Couldn't look this time",
+  unansweredCard: "Couldn't look this time.",
+  /** After a no, while the Loop works on. */
+  keepsWorking: "The Loop keeps working on it.",
   /** After a no, once the Loop has ended some other way. */
-  endedAfterNo: "The Loop ended before another check.",
-  reportInChat: "The report is in the chat.",
-  /** One chat line per round, rewritten by its verdict. */
-  chat: {
-    checking: "A reviewer is checking whether the goal is reached.",
-    accepted: "The reviewer agreed the goal is reached.",
-    rejected: (rejections: number, reason: string) =>
-      reason
-        ? `The reviewer sent the work back (${rejections} of ${MAX_FINISH_REJECTIONS}): ${reason}`
-        : `The reviewer sent the work back (${rejections} of ${MAX_FINISH_REJECTIONS}).`,
-    stopped: (notDone: string) =>
-      `The reviewer said no ${spelledCount(MAX_FINISH_REJECTIONS)} times in a row, so the Loop stopped.${notDone ? ` Not done: ${notDone}` : ""}`,
-    unanswered: (why: string) => (why ? `The reviewer couldn't answer: ${why}` : "The reviewer couldn't answer."),
-  },
+  endedAfterNo: "The Loop ended before another look.",
 } as const;
 
 /** A build in the stage's history, by what it was and the day it started; never a number or a count. */
+/** The Builds bar's tabs, one for each of the chat's builds. */
+export const BUILD_TABS_WORDS = {
+  /** The track's name for a screen reader. */
+  tabs: "Builds",
+  /** The picker's name for a screen reader: the open build, and how many there are to pick from. */
+  picker: (name: string, count: number) => `${name}, one of ${count} builds`,
+} as const;
+
 export const BUILD_HISTORY_WORDS = {
   thisTurn: "This chat turn",
   thisLoop: "This Loop",
@@ -2422,6 +2454,7 @@ export const ABOUT_WORDS = {
   ready: (version: string | null) => `Genex ${version ?? "update"} is ready to install.`,
   available: (version: string | null) => `Genex ${version ?? "update"} is available.`,
   off: "This build doesn't check for updates.",
+  system: "Genex updates with your system: Software Updater, apt or dnf.",
   failed: "Couldn't check for updates. Check your connection and try again.",
   restart: "Relaunch to update",
   download: "Download",
@@ -3027,10 +3060,8 @@ export const CHAT_WORDS = {
   stopping: "Stopping",
   /** A message on its way, until its row arrives. */
   sending: "Sending",
-  /** A message on its way (its row not saved yet), or handed to the running turn and not read yet. */
+  /** A follow-up on its way, or waiting below the work until that work reads it. */
   sendingMessage: "Sending…",
-  /** A message waiting for a turn of its own; Remove withdraws it. */
-  queued: "Queued",
   waitingForAnswer: "Waiting for your answer",
   describeChanges: "Describe the changes you’d like to make",
   /** A build's generic busy label reads as its next step instead. */
@@ -3040,6 +3071,28 @@ export const CHAT_WORDS = {
   planSettled: "This plan is no longer waiting for approval.",
   /** Below the one waiting card on show: how many more wait behind it. */
   moreWaiting: (count: number) => `${count} more waiting`,
+} as const;
+
+/** "1 picture", "2 pictures", or with `files` "1 file", "2 files". */
+const counted = (count: number, files: boolean): string =>
+  `${count} ${files ? "file" : "picture"}${count === 1 ? "" : "s"}`;
+
+/**
+ * The prompt bar's line while files are dragged over the chat, and the note a drop leaves. `files`
+ * says whether what is counted includes files that are not pictures.
+ */
+export const COMPOSER_DROP_WORDS = {
+  dropToAdd: (count: number, files: boolean) => `Drop to add ${counted(count, files)}`,
+  full: (max: number, files: boolean) => `${max} ${files ? "files" : "pictures"} at most`,
+  someStayOut: (room: number, out: number, files: boolean) => `Room for ${counted(room, files)}, ${out} will stay out`,
+  overLimit: (count: number, max: number, files: boolean) => `${counted(count, files)} left out, ${max} at most`,
+  couldNotAdd: (name: string) => `${name} couldn’t be added`,
+  couldNotAddMany: (count: number) => `${count} files couldn’t be added`,
+  filesLeftOut: (count: number) => `${count} files didn’t go in`,
+  chooseFiles: "Choose files",
+  dismiss: "Dismiss",
+  /** A file on the board: its chip's remove button. */
+  remove: (name: string) => `Remove ${name}`,
 } as const;
 
 // ── the system file manager ───────────────────────────────────────────────────────────────
@@ -3093,6 +3146,69 @@ export const ASSET_WORDS = {
   animations: "Animations",
   speed: "Speed",
   playFailed: "This sound could not be played",
+} as const;
+
+/** Save, Share, select several and search on the Assets tab and in its viewer (`panels/assets/`). */
+export const ASSET_LIBRARY_WORDS = {
+  /** The tags on a card. */
+  saved: "Saved",
+  shared: "Shared",
+  save: "Save",
+  saveTip: "Save to your library",
+  unsaveTip: "Remove from Saved",
+  share: "Share",
+  shareTip: "Share with the community",
+  sharing: "Sharing…",
+  /** The menu of an asset on Play: its page, and taking it off. */
+  sharedMenu: "Shared on Play",
+  openOnPlay: "Open on Play",
+  stopSharing: "Stop sharing",
+  /** A share's step line under its card, and how it ended. */
+  steps: { send: "Send", check: "Check", live: "Live" },
+  stepsLabel: "Sharing",
+  checking: "Checking",
+  onPlay: "On Play",
+  missed: {
+    [ShareMiss.Refused]: "Couldn't share",
+    [ShareMiss.Checking]: "Checking",
+    [ShareMiss.NotShareable]: "Only Genex assets share",
+    [ShareMiss.KindNotShareable]: "Music can't be shared",
+    [ShareMiss.TooMany]: "Too many at once",
+    [ShareMiss.Failed]: "Couldn't share",
+  } satisfies Record<ShareMiss, string>,
+  tryAgain: "Try again",
+  sendReport: "Send a report",
+  sendReportLabel: "Send this refusal and the app's logs to the Genex team",
+  reportSent: "Report sent",
+  /** What Send a report posts: the asset, its game and genex.games' own words. */
+  reportText: (name: string, project: string, detail: string) =>
+    `genex.games refused to share "${name}" (${project}).${detail ? `\n\n${detail}` : ""}`,
+  /** The share window. */
+  shareOne: (name: string) => `Share ${name}`,
+  shareMany: (count: number) => `Share ${count} assets`,
+  shareButton: (count: number) => (count === 1 ? "Share" : `Share ${count} assets`),
+  nameLabel: "Name",
+  nameOf: (name: string) => `Name for ${name}`,
+  everyoneOne: "Everyone on Genex can find and use it.",
+  everyoneMany: "Everyone on Genex can find and use them.",
+  cancel: "Cancel",
+  /** Select several. */
+  selected: (count: number) => `${count} selected`,
+  select: (name: string) => `Select ${name}`,
+  deselect: (name: string) => `Deselect ${name}`,
+  clear: "Clear",
+  clearSelection: "Clear the selection",
+  /** Search on the canvas. */
+  search: "Search assets",
+  searchLabel: "Search this game, your library and the community",
+  clearSearch: "Clear the search",
+  thisGame: "This game",
+  myLibrary: "My library",
+  community: "Community",
+  noMatches: "no matches",
+  add: "Add",
+  addLabel: (title: string) => `Add ${title} to this game`,
+  added: (game: string) => `Added to ${game}`,
 } as const;
 
 /** The Builds graph's assets tile and card: jobs still open when the run ended. */
@@ -3233,11 +3349,46 @@ export const SANDBOX_SETUP_WORDS = {
   copyCommand: (system: string) => `Copy the ${system} command`,
   retry: "Retry",
   retrying: "Checking…",
-  /** Windows: install it now, behind one administrator prompt. */
-  setUp: "Set up",
-  settingUp: "Waiting for approval…",
-  setUpHint: "Windows will ask an administrator to approve the setup once.",
-  setupCancelled: "Setup was cancelled, so nothing changed. Choose Set up again when you’re ready to approve it.",
+  /** Windows' first start, which sets the workspace up by itself behind one approval prompt. */
+  windows: {
+    settingUp: {
+      title: "Setting up Genex",
+      line: "Windows will ask you to allow this once. Agents work in their own protected space, away from your files.",
+      step: "Waiting for your OK",
+    },
+    needsOk: {
+      title: "Genex needs your OK to set up",
+      line: "Agents only run in a protected space that Windows has to allow once. On a work PC, an admin may need to approve it.",
+      setUp: "Set up",
+    },
+    failed: {
+      title: "Setup didn’t finish",
+      line: "Windows wouldn’t start Genex’s protected space.",
+      tryAgain: "Try again",
+      report: "Send a report",
+      sending: "Sending…",
+      /** The bare ✓'s label, once the report went. */
+      sent: "Report sent",
+      reportFailed: "The report didn’t send. Try again in a moment.",
+    },
+  },
+  /** A Windows window opened before the core: what the start is doing, by `StartStep`. */
+  starting: {
+    title: "Starting Genex",
+    line: "Getting your games and the protected workspace ready.",
+    step: {
+      games: "Reading your games",
+      workspace: "Starting the protected workspace",
+      studio: "Opening the studio",
+    } satisfies Record<StartStep, string>,
+  },
+  /** The studio's harness would not start: its error, Try again, a report and Quit. */
+  startFailed: {
+    title: "Genex couldn’t start",
+    line: "The part of Genex that runs your agents didn’t start.",
+    tryAgain: "Try again",
+    quit: "Quit",
+  },
   stillFailing: "Studio still couldn’t start:",
   details: "Details",
 } as const;
@@ -3253,6 +3404,13 @@ export const PLUGINS_WORDS = {
     server: "Add MCP server…",
     create: "Create a plugin",
     local: "Load local plugin…",
+  },
+  /** A plugin's row in the composer's Add menu: its name opens its page, Settings shows under the pointer. */
+  menuRow: {
+    settings: "Settings",
+    settingsLabel: (name: string) => `${name} settings`,
+    /** The name's own label: it opens the same page as Settings. */
+    openLabel: (name: string) => `Open ${name} settings`,
   },
   /** The catalog's plugins Genex makes, that you don't have. */
   ours: {
@@ -3520,14 +3678,18 @@ export const GENEX_WORDS = {
     dismiss: "Close",
   },
   account: {
-    signedOutTitle: "Connect your Genex account",
-    signedOutText: "Sign in once in your browser. One credit balance covers all your games.",
+    /** The Connect band, for assistive tech: the account, or the plugin while it is off. */
+    label: "Genex account",
+    offLabel: "Connect Genex",
+    /** The Connect band's offer, with the plugin off or its account not yet connected. */
+    offerTitle: "The best game dev tools, in one click",
+    offerText: "Extend your agent with up-to-date tools for 3D, textures, sound and video. Always optional.",
     retryTitle: "Reconnect your Genex account",
     retryText: "Your saved sign-in couldn’t be opened on this Mac. Sign in again in your browser.",
-    connect: "Connect Genex",
+    /** Connect turns the plugin on and signs in to Genex: the saved sign-in, or the browser. */
+    connect: "Connect",
     retry: "Reconnect",
     signingInTitle: "Finish signing in in your browser",
-    signingInText: "Check that your browser shows this code:",
     /** The code beside it in the Publish dialog. */
     browserShows: "Your browser should show",
     reopen: "Open sign-in again",
@@ -3544,12 +3706,9 @@ export const GENEX_WORDS = {
     tryAgain: "Try again",
     connected: "Connected",
     disconnect: "Disconnect",
-    credits: "Credits",
     unlimited: "Unlimited",
-    shared: "One balance for all your games. Failed generations are refunded.",
     outOfCredits: "Games still build with procedural assets and Local Blender.",
     paused: (kinds: string) => `Paused on Genex right now: ${kinds}.`,
-    off: "Off. Your agent can't use Genex tools. Your profile, friends and Publish stay.",
   },
   /** Genex as the Plugins page shows it: the router, its line, and the tools it routes. */
   router: {
@@ -3563,8 +3722,6 @@ export const GENEX_WORDS = {
     rowOff: { lead: "Off. Your agent can't use Genex tools.", tail: "Your profile, friends and Publish stay." },
     /** The line under the plugin page's title while an account is connected. */
     connectedAs: (name: string) => `Game dev tools router · connected as ${name}`,
-    intro:
-      "The Genex plugin connects your agents to every game dev tool. Pay on demand, with one balance for every tool.",
     toolsTitle: "Tools it routes",
     toolsIntro:
       "Ask in any game chat. Genex picks the tool, runs it on your balance and saves the file in your game. No accounts or keys of your own.",
@@ -3843,6 +4000,11 @@ export const PRIVACY_WORDS = {
   deletePartial: (count: number) =>
     `Deleted ${plural(count, "row")}, but Genex couldn’t finish. Try again later to remove the rest.`,
   deleteNotSent: "Nothing was ever sent from this launch.",
+  /** The quiet line of links under the rows; each opens in the browser. */
+  links: {
+    policy: "Privacy Policy",
+    terms: "Terms of Service",
+  },
 } as const;
 
 /** What a finished Delete what I shared says; a stop after earlier ids' rows were removed says how many. */
@@ -4160,6 +4322,40 @@ export const PLAY_WORDS = {
     guest: "Save your progress with a Genex account",
     install: "Sign in",
     dismissGuest: "Close",
+    /** The Comments button's name while it shows no count (the icon alone). */
+    comments: "Comments",
+    commentsCount: (count: string) => `Comments, ${count}`,
+  },
+  /** The viewer's Comments, over the dimmed game. */
+  comments: {
+    title: (count: number): string => {
+      if (count === 0) return "Comments";
+      return count === 1 ? "1 Comment" : `${count} Comments`;
+    },
+    close: "Close",
+    none: (title: string) => `No comments on ${title} yet`,
+    failed: "Couldn’t load the comments",
+    retry: "Try again",
+    signIn: (title: string) => `Sign in to comment on ${title}`,
+    signInAction: "Sign in",
+    field: "Add a comment",
+    post: "Post",
+    postFailed: "Couldn’t post your comment",
+    delete: "Delete",
+    deleteLabel: "Delete your comment",
+    deleteFailed: "Couldn’t delete your comment",
+    /** How long ago a comment was written, its units spelled out. */
+    ago: (minutes: number): string => {
+      if (minutes < 1) return "just now";
+      const unit = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"} ago`;
+      if (minutes < 60) return unit(minutes, "minute");
+      const hours = Math.floor(minutes / 60);
+      if (hours < 24) return unit(hours, "hour");
+      const days = Math.floor(hours / 24);
+      if (days < 30) return unit(days, "day");
+      if (days < 365) return unit(Math.floor(days / 30), "month");
+      return unit(Math.floor(days / 365), "year");
+    },
   },
   promo: {
     label: "Genex account",
@@ -4174,6 +4370,106 @@ export const PLAY_WORDS = {
     signIn: "Sign in",
     signInLabel: "Sign in to Genex in your browser",
     dismiss: "Close",
+  },
+} as const;
+
+/** A Play card's ⋯ menu and its dialogs: genex.games' card menu, in the app (`play/card-menu/`). */
+export const PLAY_CARD_MENU_WORDS = {
+  trigger: "Game options",
+  adminLabel: "Admin",
+  item: {
+    [PlayCardAction.CopyLink]: "Copy link",
+    [PlayCardAction.Remixing]: "Turn off remixing",
+    [PlayCardAction.Cover]: "Change cover",
+    [PlayCardAction.Mobile]: "Mobile support",
+    [PlayCardAction.Tags]: "Edit tags",
+    [PlayCardAction.Unpublish]: "Unpublish",
+    [PlayCardAction.Delete]: "Delete game",
+  } satisfies Record<PlayCardAction, string>,
+  allowRemixing: "Allow remixing",
+  mobileState: {
+    [PlayMobileSupport.DesktopOnly]: "Desktop only",
+    [PlayMobileSupport.Supported]: "Works on phones",
+  } satisfies Record<PlayMobileSupport, string>,
+  mobileAutoFlagged: "Auto · desktop only",
+  linkCopied: "Link copied",
+  copyFailed: "Couldn’t copy the link.",
+  cancel: "Cancel",
+  save: "Save",
+  saving: "Saving…",
+  tryAgain: "Try again",
+  mobile: {
+    title: (title: string) => `Mobile support for ${title}`,
+    sub: "What phone players get. Your choice wins over the automatic check.",
+    label: "Mobile support",
+    auto: "Auto",
+    autoHint: "Genex decides from crash reports",
+    hint: {
+      [PlayMobileSupport.DesktopOnly]: "Phone players see a Desktop tag first",
+      [PlayMobileSupport.Supported]: "Never marked desktop only",
+    } satisfies Record<PlayMobileSupport, string>,
+    autoFlagged: "Auto would choose Desktop only: crash reports flagged it.",
+    autoClear: "Auto would let phones play: no crash reports flagged it.",
+    done: "Mobile support saved",
+    failed: "Couldn’t save mobile support.",
+  },
+  tags: {
+    title: (title: string) => `Tags for ${title}`,
+    shelfLabel: "Shelf",
+    tagsLabel: "Tags",
+    shelf: {
+      [PlayShelf.Games]: "Games",
+      [PlayShelf.Tools]: "Tools",
+      [PlayShelf.Assets]: "Assets",
+    } satisfies Record<PlayShelf, string>,
+    noTags: "This shelf has no tags.",
+    shows: (shelf: string, tags: readonly string[]) =>
+      tags.length > 0 ? `Shows on Play under ${shelf} · ${tags.join(", ")}.` : `Shows on Play under ${shelf}.`,
+    limit: (max: number) => `Up to ${max} tags.`,
+    save: "Save tags",
+    done: "Tags saved",
+    failed: "Couldn’t save the tags.",
+  },
+  unpublish: {
+    title: (title: string) => `Unpublish ${title}?`,
+    body: "It leaves Play and genex.games and goes back to drafts. The direct link still works, and plays and likes stay if it’s published again.",
+    confirm: "Unpublish",
+    working: "Unpublishing…",
+    done: (title: string) => `${title} is unpublished`,
+    failed: "Couldn’t unpublish the game.",
+  },
+  remove: {
+    title: (title: string) => `Delete ${title}?`,
+    body: "Removes the game, its page and its source for good. This can’t be undone.",
+    confirm: "Delete game",
+    working: "Deleting…",
+    done: (title: string) => `${title} is deleted`,
+    failed: "Couldn’t delete the game.",
+  },
+  remixing: {
+    on: (title: string) => `Anyone can remix ${title} now`,
+    off: (title: string) => `Only you can remix ${title} now`,
+    ownRepo: "Its source is your own repository: run genex make-remixable in the game’s folder to allow remixing.",
+    failed: "Couldn’t change remixing.",
+  },
+  cover: {
+    title: (title: string) => `Cover for ${title}`,
+    sub: "Pick a picture. It’s cropped to 16:9, like every cover.",
+    choose: "Choose a picture",
+    another: "Choose another",
+    current: "Current cover",
+    picked: "New cover",
+    save: "Use this cover",
+    done: "Cover changed",
+    unreadable: "That file isn’t a picture the app can read.",
+    tooLarge: "Pick a picture under 40 MB.",
+    refusal: {
+      [PlayCoverRefusal.Outranked]: "Genex kept the current cover: it outranks an uploaded one.",
+      [PlayCoverRefusal.TooDark]: "That picture is too dark for a cover. Try a brighter one.",
+      [PlayCoverRefusal.Flat]: "That picture is nearly one colour. Try one with more in it.",
+      [PlayCoverRefusal.Invalid]: "Genex couldn’t read that picture. Try another.",
+    } satisfies Record<PlayCoverRefusal, string>,
+    failed: "Couldn’t change the cover.",
   },
 } as const;
 
@@ -4341,6 +4637,10 @@ export const ACCOUNT_WORDS = {
   browserShows: "Your browser should show",
   cancel: "Cancel",
   offline: "Changes wait until you’re back online.",
+  /** A Pro's nameplate: the moving art behind their name in the sidebar. */
+  nameplate: "Nameplate",
+  newPlate: "New one",
+  nameplateNote: "Lights up behind your name in the sidebar when you hover it.",
 } as const;
 
 /**
@@ -4381,6 +4681,8 @@ export const AVATAR_WORDS = {
   welcomeNote: "You can change it in Settings",
   /** Under Continue when the welcome asks for the nickname too. */
   welcomeNoteBoth: "You can change both in Settings",
+  /** After a refused Regenerate in the welcome, beside the reason. */
+  tryAgain: "Try again",
   bodies: {
     [AvatarBody.Vapor]: "Vaporwave sun",
     [AvatarBody.Crt]: "CRT dither",
@@ -4428,6 +4730,56 @@ export const AVATAR_WORDS = {
   } satisfies Record<AvatarGear, string | null>,
 } as const;
 
+/** Play's Assets shelf as square tiles (`play/PlayAssets.tsx`). */
+export const PLAY_ASSET_WORDS = {
+  kindsLabel: "Kinds of asset",
+  kinds: {
+    [KindChoice.All]: "All",
+    [KindChoice.Model]: "3D",
+    [KindChoice.Image]: "Images",
+    [KindChoice.Sound]: "Sounds",
+    [KindChoice.Video]: "Videos",
+  } satisfies Record<KindChoice, string>,
+  /** What a kind's grid holds, as its messages name it. */
+  nouns: {
+    [KindChoice.All]: "assets",
+    [KindChoice.Model]: "3D assets",
+    [KindChoice.Image]: "images",
+    [KindChoice.Sound]: "sounds",
+    [KindChoice.Video]: "videos",
+  } satisfies Record<KindChoice, string>,
+  scopesLabel: "Whose assets",
+  scopes: { [AssetScope.Everyone]: "Everyone", [AssetScope.Mine]: "Mine" } satisfies Record<AssetScope, string>,
+  open: (title: string) => `Open ${title}`,
+  play: (title: string) => `Play ${title}`,
+  pause: (title: string) => `Pause ${title}`,
+  playFailed: "Couldn’t play this sound.",
+  use: "Use",
+  addLabel: (title: string) => `Use ${title} in one of your games`,
+  adding: "Adding…",
+  addTo: "Add to",
+  added: (game: string) => `Added to ${game}`,
+  addFailed: (game: string) => `Couldn’t add it to ${game}. Try again in a moment.`,
+  signedOut: "Sign in to Genex to see your assets",
+  signIn: "Sign in",
+  mineEmpty: "Assets you make with Genex show up here.",
+} as const;
+
+/** Publish's one line that shares the game's assets on Play when it goes live (`PublishShare.tsx`). */
+export const PUBLISH_SHARE_WORDS = {
+  offer: (count: number) => `Share its ${plural(count, "asset")} on Play`,
+  switchLabel: (count: number) => `Share its ${plural(count, "asset")} on Play when it goes live`,
+  sharing: (count: number) => `Sharing ${plural(count, "asset")} on Play…`,
+  shared: (count: number) => `${plural(count, "asset")} on Play`,
+  checking: (count: number) => `${plural(count, "asset")} on Play once checked`,
+  missed: (count: number) => `${count} couldn’t be shared`,
+  tryAgain: "Try again",
+  tryAgainLabel: "Share the assets that couldn’t be shared again",
+  notShared: (count: number) => `${plural(count, "asset")} not on Play yet`,
+  shareNow: "Share now",
+  shareNowLabel: (count: number) => `Share its ${plural(count, "asset")} on Play now`,
+} as const;
+
 /** The @ picker in the prompt bar (`ui/MentionPanel.tsx`). */
 export const MENTION_WORDS = {
   listLabel: "Tag a game, tool or asset",
@@ -4463,4 +4815,23 @@ export const MENTION_WORDS = {
   tryAgain: "Try again",
   removeTag: "Remove tag",
   trying: "Trying…",
+  search: "Search games, assets and tools",
+  yourAssets: "Your assets",
+  clear: "Clear",
+  clearLabel: "Clear the search",
+  whatLabel: "What to show",
+  all: "All",
+  games: "Games",
+  whoseLabel: "Whose",
+  everyone: "Everyone",
+  mine: "Mine",
+  /** An asset card's chip when genex.games says what kind of asset it is. */
+  assetKind: {
+    [LibraryKind.Model]: "3D",
+    [LibraryKind.Image]: "Image",
+    [LibraryKind.Sound]: "Sound",
+    [LibraryKind.Video]: "Video",
+  } satisfies Record<LibraryKind, string>,
+  saved: "Saved",
+  shared: "Shared",
 } as const;

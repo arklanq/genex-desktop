@@ -77,6 +77,8 @@ export const storageKeyFor = {
   avatarWelcomed: (accountId: string): string => `studio.genex.avatarWelcomed.${accountId}`,
   /** The welcome asked this account for its nickname on this Mac (saved or closed): it never asks again here. */
   nicknameWelcomed: (accountId: string): string => `studio.genex.nicknameWelcomed.${accountId}`,
+  /** The nameplate variant a Pro account rolled on this Mac (`nameplate/plate-variant.ts` owns the format). */
+  plateVariant: (accountId: string): string => `studio.genex.plateVariant.${accountId}`,
 } as const;
 
 /** The IndexedDB database of cover sphere stills (`ui/cover-stills.ts` owns the format). */

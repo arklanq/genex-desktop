@@ -10,7 +10,7 @@ deliveries and outside changes refresh it. Cards hide metadata; [jobs being made
 An opened file has only Reveal in Finder and Close: images (click: full size), audio/video, 3D
 models with clips, textures, bounded text; unsupported formats and decoder failures say why.
 
-Chat shows game-folder files with Open in Assets; Builds, a Loop's workspace assets until landing. Job completion or “seen in game” never proves integration or passing checks.
+Chat shows game-folder files with Open in Assets; Builds, a Loop's workspace assets until landing. Job completion or “seen in game” never proves integration or passing checks. [Save, Share, search](../play.md#asset-library-and-sharing).
 
 ## Tools and setup
 
@@ -19,11 +19,11 @@ Enabled, connected, signed in and permitted differ.
 
 The Plugins page (Plugins/Skills, search, details) lists installed plugins, your servers, the
 Community plugins and the plugin guide, with
-[icons](../plugins.md#icons). Install from GitHub pins a pasted link's latest release
+[icons](../plugins.md#icons). Install from GitHub pins a link's latest release
 (else newest commit). Games build, preview and export without plugins. The host draws Genex's
 app-wide page (balance, routed tools, candidate pictures) and Local Blender's runtime card. Connect,
-unapproved, reuses a saved account or opens browser sign-in; setup survives restart and reinstall.
-Game spend is in the usage panel, prices in Genex's Credits tab. Enabled Genex suggests assets in planning.
+unapproved, turns Genex on and reuses a saved account or opens browser sign-in; setup survives restart and reinstall.
+Game spend: the usage panel; prices: Genex's Credits tab. Enabled Genex suggests assets in planning.
 Generations wait for unaccepted terms (Review: sidebar, chat).
 
 Genex bundles its MCP (game/animation search, owned games, generation status) on the same account;

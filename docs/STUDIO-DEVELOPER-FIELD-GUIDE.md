@@ -2,7 +2,9 @@
 
 Run commands from the repository root with Node 24 (`nvm use` reads `.nvmrc`). First-time setup
 is in [CONTRIBUTING](../CONTRIBUTING.md#set-up). `package.json` and the lockfile own current
-dependencies; install them with `npm ci` once, not before every restart or check.
+dependencies; install them with `npm run deps` once, not before every restart or check. On macOS
+it gives each worktree a copy-on-write clone of one install per lockfile, kept in the main
+checkout's `.studio-dev/deps` (the newest two); elsewhere it runs `npm ci`.
 
 ## Run an owned development profile
 
@@ -63,6 +65,8 @@ for account-connected checks. Preserve active user work; inspect ownership/statu
 
 The controller builds immutable output under `.studio-dev/builds/<id>` and returns actual
 readiness and profile/build/source/runtime identity. Rebuilding does not update a running app.
+Each start removes the builds no profile's `launch.json` or `attempt.json` names, once they are an
+hour old.
 Use the controller to stop owned sessions; a PID alone is not authority to signal a process.
 `clean --profile <name>` removes only stopped recognized disposable state. Retained live
 profiles, evidence and normal games are not disposable fixture cleanup.
@@ -349,9 +353,10 @@ finish-check (four Loops written after the start, one per finish check look: Don
 the Builds history, Not yet after one no, and the newest Checking),
 paused-build (a Loop a usage limit paused and resumed, written after the start: one worker's try
 Paused, one Added after the resume, one Left out by the lead's stop),
-building-card (a Loop still going, written after the start, for the chat's Building card and its
-parts: two added, one working with its time left, one restarted on one row, one waiting;
-`[data-build-toggle]` opens `[data-build-checklist]`),
+building-card (a 4h Loop still going after five finished ones, written after the start, for the chat's
+Building card and its parts: two added, one working with its time left, one restarted on one row,
+one waiting; `[data-build-checklist]` open, `[data-build-toggle]` closes it; Builds holds its six
+builds in the picker `[data-build-picker]`),
 stills-game (Pine valley, a Blender scene with no web page, whose finished Loop kept the lead's two
 renders as proof: Live's run pictures, `[data-live-view="stills"]` `[data-live-still]`; and
 Mountain pass, a Blender game with no run, whose Live says where pictures come from),
@@ -407,8 +412,10 @@ Send with `npm run studio:dev -- ui --profile ag-933 --request /tmp/request.json
 and `runs --profile P` are shortcuts. The [verify-ui-via-dev-control skill](../.agents/skills/verify-ui-via-dev-control/SKILL.md)
 walks the full loop.
 The request union/runtime validator is src/main/dev/protocol.ts. Operations are status,
-snapshot (desktop, scope/limit), click (selector/scope), type (plus text/replace), key
-(surface/key/code/modifiers), select (selector/scope/value), scroll (surface/deltas/target),
+snapshot (desktop or `play-bar`, scope/limit; its `play` part counts Play's cards, the covers on
+screen still blank and the clips playing), click (selector/scope, desktop or `play-bar`), type
+(plus text/replace, the same surfaces), key (surface/key/code/modifiers), move (surface/x/y: the pointer over a
+surface, as a mouse would), select (selector/scope/value), scroll (surface/deltas/target),
 game.input (existing bounded action union), game.state, window.resize, capture, logs, runs, cpu.start/stop,
 main.cpu.start/stop (a profile of the main process), heap,
 trace.start/stop and stop. `graph.drag` takes bounded duration/distance/steps and returns
@@ -416,7 +423,8 @@ commit counters through release; `window.resize` takes bounded width/height delt
 duration, resizes the studio window step by step with a game in Live, and returns how far the
 game view trailed its slot right after each change and before the next ([performance](performance.md));
 `fixture.graph` takes `other-project-frames` or `append-round`
-only in `large-build-graph`. Traces accept `toplevel` for renderer task durations.
+only in `large-build-graph`. `file.drag` (target, `stage` over/drop/leave, `file` picture/text)
+drags the control's own sample file onto it; it takes no path. Traces accept `toplevel` for renderer task durations.
 No arbitrary eval, PID, webContents ID or output path is accepted.
 Scoped DOM inspection resolves one visible enabled non-occluded target. A modal dialog or menu
 that has just opened takes pointer input one render later, so an input sent at once can be
@@ -436,7 +444,9 @@ providers, credential isolation and native-action restrictions remain unchanged.
 opt-in unset for automated acceptance.
 
 `capture --profile ag-933 --surface desktop --name after` writes an owned surface-labelled PNG;
-repeat for game. Renderer captures do not include the native game child. The capture records
+repeat for game. Renderer captures do not include the native game child. While Play's viewer has a
+game open, `play-bar` is its bar's layer (the bar and Comments) and `play-game` the game's own view;
+the bar comes back for a `move` near the top edge of `play-game`. The capture records
 image dimensions, image-pixel/CSS-pixel scale, renderer zoom, visibility, focus and time. For diagnostics use a JSON request
 with `diagnostics --profile ag-933 --request FILE`. Start/stop a matching CPU profile ID; heap
 needs surface/name. Trace needs traceId, durationMs (100–30000) and supported categories from
@@ -536,8 +546,14 @@ and reduced motion. Evidence lives in `.studio-dev/evidence/results-ui/`. Pair w
 `run-chat-ui.mjs` and `run-chat-feedback-ui.mjs` for real host reads, history/streaming and Studio
 navigation; component fixtures do not prove account access or native game layering.
 
-Genex account regressions: `run-genex-account-ui.mjs` renders the Genex page's own account card
-and checks that a failed connect keeps its reason after the status is read again. It does not
+`node tests/e2e/run-builds-bar-ui.mjs` renders the production Builds bar with synthetic builds:
+tabs up to three, the picker past them or in a narrow bar (never flipped by Play's label), focus
+following the swap, the list's order, open row, rows, Escape, ten rows without scrolling, the fade
+and shadow past ten, and the open row shown on opening (focused when opened by keyboard). Evidence
+lives in `.studio-dev/evidence/builds-bar-ui/`.
+
+Genex account regressions: `run-genex-account-ui.mjs` renders the Genex page's account in its
+Connect band and checks that a failed connect keeps its reason after the status is read again. It does not
 establish real browser/Keychain authorization.
 `run-publish-cover-ui.mjs` renders the production Publish dialog beside the production
 ChatPanel of the same game with a fake `window.studio`: with no shot the dialog asks the plugin to

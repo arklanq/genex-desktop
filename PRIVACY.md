@@ -1,6 +1,6 @@
 # Desktop data and privacy
 
-Updated October 14, 2026. Contact: **team@genex.games**. This describes the desktop
+Updated October 18, 2026. Contact: **team@genex.games**. This describes the desktop
 application. Connected providers, plugins and the hosted Genex service have separate policies.
 
 ## Local storage
@@ -31,7 +31,11 @@ Installed macOS and Windows release builds ask update.electronjs.org (run by the
 project) hourly whether a newer release exists, sending the app version, platform and
 architecture, and download it from GitHub Releases. Installed Linux release builds ask the GitHub
 API for the latest published release every six hours (and when you choose Check for Updates),
-which sends nothing beyond the request itself; the download is yours to start. Development
+which sends nothing beyond the request itself; the download is yours to start. The `.deb` and
+`.rpm` add the Genex package repository (packages.genex.games, served by Cloudflare), so your
+system's package manager asks it for updates on its own schedule, as it does every repository;
+those copies then ask GitHub nothing. Removing Genex removes the repository; to keep it out, put
+`repo=off` in `/etc/default/genex` before installing. Development
 builds and builds you package yourself under another name do not check.
 
 The catalog downloads listings and pinned plugin packages anonymously from its configured
@@ -51,7 +55,10 @@ undo a remote action or recall data already sent.
 | Blender assets | Blender on this Mac, or one click downloads a pinned release from download.blender.org |
 | Plugin catalog | Anonymous downloads from `plugins.genex.games` and GitHub |
 | Genex asset generation, credits and hosted publishing | A Genex account (paid credits); publishing also needs `git-lfs` |
-| Play | Nothing to browse and play; likes, signed-in play, invite links, profiles and friends need a Genex account; Remix needs `git`; voice chat needs microphone access (macOS asks once) |
+| Play | Nothing to browse and play; likes, comments, signed-in play, invite links, profiles and friends need a Genex account; Remix needs `git`; voice chat needs microphone access (macOS asks once) |
+| OpenRouter models | An OpenRouter account; prompts and context go to openrouter.ai and the model maker it routes to |
+| OpenCode models | [OpenCode](https://opencode.ai), installed separately; prompts go to whatever provider OpenCode is set up with |
+| Local server models | A model server you run (TabbyAPI, LM Studio, llama.cpp, vLLM); prompts go to the address you enter, which may be another computer on your network |
 
 Studio finds Claude Code and Codex through a manual override, your login-shell `PATH`, then
 standard locations, and never installs or updates them unless you choose that in Settings.
@@ -60,9 +67,41 @@ Subscription limits apply; there is no fallback to API-key billing, and an ambie
 bundled Genex CLI runs with its crash reporting off unless you set `GENEX_TELEMETRY`;
 `DO_NOT_TRACK` and `GENEX_DISABLE_SENTRY` are passed on to it.
 
+**Let agents control your computer** (Settings → Permissions, macOS) is off by default. With it
+on, an agent can click and type in the apps you allow, through the cua-driver bundled with Genex,
+which uses Genex's own Screen Recording and Accessibility access; each chat session asks you
+first, each app is asked for once, and ⌃⌥⌘Esc stops it; the driver stops 30 s after the last
+session ends. Without the setting, agents can still look at an app's window (`app_look`: its
+picture and the text of its controls), never at System Settings, the login and password prompts,
+password managers or Genex itself. Those screenshots and window texts go to the selected model
+provider like any other tool result.
+
 Opening a folder does not authorize its Claude settings or hooks. The Open Game trust checkbox
 is an explicit choice because hooks can run commands with the user's access. Interactive
 permission modes and native plugins have broader reach than unattended sandboxed workers.
+
+## Engine plugins
+
+The Unity, Godot, Roblox and Unreal plugins work in the engine's own app on this computer. Each
+engine's own terms apply to its app, its account and what you publish with it; Genex never signs
+in for you.
+
+- **Unity.** Setup adds Unity's Pipeline package (`com.unity.pipeline`) to your game's Unity
+  project, and Genex talks to your open editor through it on 127.0.0.1. Scene data, console
+  output and Game view captures go to the model. Getting Unity downloads Unity Hub from
+  `public-cdn.cloud.unity3d.com`; Hub then installs the editor. To find open editors Genex reads
+  the list of running processes.
+- **Godot.** Getting Godot downloads it from Godot's GitHub releases. Setup writes Genex's add-on
+  (`addons/genex`) into the project.
+- **Roblox.** Getting Roblox Studio downloads it from `setup.rbxcdn.com`. Genex puts its helper
+  plugin into Studio and uses Studio's built-in MCP server. Publishing, uploads and Creator Store
+  inserts run on your own Roblox account, each after you approve it. The Luau checks download
+  from GitHub, and selene fetches Roblox's API list on its first run.
+- **Unreal.** Setup copies Genex's editor helper into the project, and Genex talks to Epic's
+  editor MCP server on 127.0.0.1.
+
+Installing Unity Hub or Godot first moves an older app of the same name to the Trash. Captures
+and text an engine returns reach the model like any other tool result.
 
 ## Play
 
@@ -77,7 +116,7 @@ Playing a game loads it from its own `https://<name>.genex.technology/` address,
 counts the play. The game runs in Play's own storage, apart from your games and the rest of the
 app, where it keeps its saves; it may use only pointer lock, full screen and clipboard writes, and
 links that leave Genex games open in your browser. A game in voice chat gets a microphone the app
-controls: your microphone feeds it only while you turn on the mic in the game's header (off for
+controls: your microphone feeds it only while you turn on the mic in the game's bar (off for
 every game until you do), and a game never gets a camera. What the game does with that audio is
 the game's: a Genex game in voice chat sends it to the other players in its room, directly or
 through Genex's relay. Which games you left the mic on for, and the microphone you chose, stay in
@@ -86,6 +125,11 @@ the account's token to the Genex API to get a single-use sign-in ticket for that
 one, the game plays as a guest), to read a game's likes including yours, to save or remove a like,
 and to read your referral code, which Invite a friend adds to the link it copies. Share and Invite
 only copy a genex.games link to the clipboard.
+
+A game's comments are read from the Genex API without a sign-in, a page at a time while you scroll
+them, with each writer's name and picture. Signed in, the app also sends the account's token to
+post a comment you write (its text, at most 500 characters, becomes public on the game's page) or
+delete one of yours, and reads who the account is to know which comments are yours.
 
 Signed in, the app also reads, with that token, who the account is (its name, nickname, whether
 you chose it, picture, Pro and join date; the email the API returns never leaves the app's main
@@ -129,6 +173,10 @@ Export uses declared public paths, excludes private directories and credential f
 refuses symlinks and stops if a scanned file contains a credential Studio knows. This is not a
 universal detector for every secret. Host-created game snapshots exclude `.env` and `.env.*`;
 secrets already present in repository history still require independent cleanup.
+
+After a turn on a game, and as Publish opens, Genex takes a cover picture and, for a game that
+stages its own clip, records a five-second cover clip of it playing. Both stay in the app
+profile; the clip is uploaded to Genex only with a publish.
 
 A plugin's staged upload requires a second review showing every included and excluded file.
 Approve only after checking that list and the contents. An unlisted draft is still uploaded to

@@ -59,6 +59,7 @@ import type { NoteKind } from "./wake-schedule.ts";
 import type * as artDirectionFunctions from "./art-direction.ts";
 import type { LastShip } from "./art-direction.ts";
 import type { FinishTally } from "../finish-check.ts";
+import type { StopWhy } from "../finish-contract.ts";
 import { noteKeptWork } from "./kept-work.ts";
 import type * as integrateFunctions from "./integrate.ts";
 import type * as loopRunFunctions from "./loop-run.ts";
@@ -271,6 +272,8 @@ export interface LoopRunState {
    * goes on counting the reviewer's no's. Absent until the lead claims the goal.
    */
   finishTally?: FinishTally;
+  /** Why the run stopped short of its goal, as the close that ends it said (`CloseOptions.ended`); its result card reads it. */
+  endedWhy?: StopWhy;
   /** The art director's last word on the integration branch (art-direction.ts); absent until it looks. */
   lastShip?: LastShip | null;
   /** A goal build's finish was turned back once for the art director's defects: never again. */

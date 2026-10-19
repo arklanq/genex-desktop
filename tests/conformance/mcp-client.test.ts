@@ -1185,12 +1185,41 @@ test("a URL server that asks for an account turns browser sign-in on when the pe
     assert.equal(saved?.connector.authentication, "oauth");
     assert.equal(opened.length, 1);
     assert.match(opened[0] ?? "", /^https:\/\/identity\.example\/authorize\?/);
-    await registry.connect("keyed", null, async (url) => void opened.push(url));
-    const keyed = (await registry.list()).find((view) => view.connector.id === "keyed");
-    assert.equal(keyed?.connector.authentication, undefined, "a key header is its own sign-in");
-    assert.equal(opened.length, 1);
+    await registry.save(draft({ id: "api-key", name: "API key", ...remote, headers: ["X-API-Key"] }));
+    for (const id of ["keyed", "api-key"]) {
+      await registry.connect(id, null, async (url) => void opened.push(url));
+      const keyed = (await registry.list()).find((view) => view.connector.id === id);
+      assert.equal(keyed?.connector.authentication, undefined, `${id}: any key header is its own sign-in`);
+      assert.equal(opened.length, 1, `${id}: no browser opens`);
+    }
   } finally {
     await registry.cancelAuthorization("docs");
+    await registry.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a sign-in switch that cannot be saved answers the failed connect instead of throwing", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "studio-mcp-"));
+  const server = accountServer();
+  const registry = new McpRegistry({
+    file: path.join(root, "mcp", "connectors.json"),
+    secrets: memorySecretPort(new Map()),
+    fetchImpl: server.fetchImpl,
+  });
+  await registry.init();
+  const opened: string[] = [];
+  try {
+    const remote = { transport: "http", url: "https://docs.example/mcp", command: undefined, args: undefined } as const;
+    await registry.save(draft({ id: "docs", name: "Docs", ...remote }));
+    // The connectors file can no longer be written: its folder is now a plain file.
+    await rm(path.join(root, "mcp"), { recursive: true, force: true });
+    await writeFile(path.join(root, "mcp"), "");
+    const result = await registry.connect("docs", null, async (url) => void opened.push(url));
+    assert.equal(result.ok, false);
+    assert.equal(typeof result.error, "string");
+    assert.deepEqual(opened, [], "no browser opens for a switch that was not kept");
+  } finally {
     await registry.close();
     await rm(root, { recursive: true, force: true });
   }

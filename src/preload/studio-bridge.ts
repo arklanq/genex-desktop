@@ -27,11 +27,22 @@ export interface BridgeIpc {
   ): unknown;
 }
 
+/** The part of Electron's `webUtils` the bridge uses: where a dropped or pasted file is on disk. */
+export interface BridgeFiles {
+  getPathForFile(file: File): string;
+}
+
+/** A bridge built without `webUtils` (a test of its IPC) knows no file's place. */
+const NO_FILES: BridgeFiles = { getPathForFile: () => "" };
+
+/** Calls the preload answers itself, asking main nothing. */
+export const PRELOAD_LOCAL_CALLS = ["pathOfFile"] as const;
+
 /** A channel whose payload is `undefined` is called with no payload argument. */
 type PayloadArgs<C extends StudioInvokeChannel> =
   StudioInvokePayload<C> extends undefined ? [] : [payload: StudioInvokePayload<C>];
 
-export function createStudioBridge(ipc: BridgeIpc): StudioApi {
+export function createStudioBridge(ipc: BridgeIpc, files: BridgeFiles = NO_FILES): StudioApi {
   async function invoke<C extends StudioInvokeChannel>(
     channel: C,
     ...args: PayloadArgs<C>
@@ -52,10 +63,19 @@ export function createStudioBridge(ipc: BridgeIpc): StudioApi {
   const bridge: BridgeCalls = { ipc, invoke, subscribe };
   return {
     performanceMark: (mark) => invoke("studio:performance.mark", mark),
+    // A file that is only data has no place: Electron throws for some, "" for others.
+    pathOfFile: (file) => {
+      try {
+        return files.getPathForFile(file);
+      } catch {
+        return "";
+      }
+    },
     ...threadCalls(bridge),
     ...gameCalls(bridge),
     ...runCalls(bridge),
     ...studioCalls(bridge),
+    ...playCalls(bridge),
     ...pluginCalls(bridge),
     ...accountCalls(bridge),
     ...terminalCalls(bridge),
@@ -139,6 +159,13 @@ function gameCalls(bridge: BridgeCalls) {
     presentProjectAssets: (p) => invoke("studio:game.asset.present", p),
     projectModelRigs: (p) => invoke("studio:game.asset.rigs", p),
     projectAssets: (project) => invoke("studio:game.assets", { project }),
+    assetLibrary: (query) => invoke("studio:assets.library", query),
+    assetLibraryStates: (project) => invoke("studio:assets.states", { project }),
+    assetSave: (project, files, saved) => invoke("studio:assets.save", { project, files, saved }),
+    assetShare: (project, items) => invoke("studio:assets.share", { project, items }),
+    assetUnshare: (project, file) => invoke("studio:assets.unshare", { project, file }),
+    assetAdd: (project, source) => invoke("studio:assets.add", { project, source }),
+    assetLibraryFile: (url) => invoke("studio:assets.file", { url }),
     readProjectAsset: (p) => invoke("studio:game.asset.still", p),
     installPackages: (project, options) =>
       invoke("studio:packages.install", { project, scripts: options?.scripts === true }),
@@ -176,6 +203,44 @@ function runCalls(bridge: BridgeCalls) {
   } satisfies Partial<StudioApi>;
 }
 
+/** Play: genex.games' catalog, the viewer and its bar, comments and people. */
+function playCalls(bridge: BridgeCalls) {
+  const { invoke } = bridge;
+  return {
+    playFeed: (request) => invoke("studio:play.feed", request),
+    playShelves: () => invoke("studio:play.shelves"),
+    playSearch: (query, shelf) => invoke("studio:play.search", { query, shelf }),
+    playCatalog: () => invoke("studio:play.catalog"),
+    playRemix: (slug) => invoke("studio:play.remix", { slug }),
+    playOnline: (slugs) => invoke("studio:play.online", { slugs }),
+    playOpen: (slug, title) => invoke("studio:play.open", { slug, title }),
+    playClose: () => invoke("studio:play.close"),
+    playControl: (control, at) => invoke("studio:play.control", { control, at }),
+    playBar: (hold) => invoke("studio:play.bar", hold),
+    playComments: (cursor) => invoke("studio:play.comments", { cursor }),
+    playComment: (body) => invoke("studio:play.comment", { body }),
+    playUncomment: (commentId) => invoke("studio:play.uncomment", { commentId }),
+    playMe: () => invoke("studio:play.me"),
+    playRename: (name) => invoke("studio:play.rename", { name }),
+    playAvatar: (webp) => invoke("studio:play.avatar", { webp }),
+    playProfile: (userId) => invoke("studio:play.profile", { userId }),
+    playFriends: () => invoke("studio:play.friends"),
+    playFriend: (request) => invoke("studio:play.friend", request),
+    playPeople: (query) => invoke("studio:play.people", { query }),
+    playVisibility: (visibility) => invoke("studio:play.visibility", { visibility }),
+    playAvatarStyle: (style) => invoke("studio:play.avatarStyle", { style }),
+    playAvatarVariant: (variant) => invoke("studio:play.avatarVariant", { variant }),
+    playStats: (days) => invoke("studio:play.stats", { days }),
+    playCreators: () => invoke("studio:play.creators"),
+    playCredits: () => invoke("studio:play.credits"),
+    playHandleCheck: (handle) => invoke("studio:play.handle-check", { handle }),
+    playSetHandle: (handle) => invoke("studio:play.handle", { handle }),
+    playShare: (url, at) => invoke("studio:play.share", { url, at }),
+    playManage: (gameId, change) => invoke("studio:play.manage", { gameId, change }),
+    playCover: (gameId, image, contentType) => invoke("studio:play.cover", { gameId, image, contentType }),
+  } satisfies Partial<StudioApi>;
+}
+
 /** Settings, models, skills, learning and notifications. */
 function studioCalls(bridge: BridgeCalls) {
   const { invoke } = bridge;
@@ -183,7 +248,9 @@ function studioCalls(bridge: BridgeCalls) {
     bootState: () => invoke("studio:boot"),
     retrySandboxSetup: () => invoke("studio:boot.retry"),
     setUpSandbox: () => invoke("studio:boot.setup"),
-    setWindowControls: (colors) => invoke("studio:window.controls", colors),
+    reportSandboxSetup: (error) => invoke("studio:boot.report", { error }),
+    quitFromBoot: () => invoke("studio:boot.quit"),
+    setWindowControls: (controls) => invoke("studio:window.controls", controls),
     readyUpdate: () => invoke("studio:update"),
     restartToUpdate: () => invoke("studio:update.restart"),
     checkForUpdates: () => invoke("studio:update.check"),
@@ -222,31 +289,6 @@ function studioCalls(bridge: BridgeCalls) {
     lookupModel: (model) => invoke("studio:models.lookup", { model }),
     removeModel: (model) => invoke("studio:models.remove", { model }),
     openUrl: (url) => invoke("studio:open-url", { url }),
-    playFeed: (request) => invoke("studio:play.feed", request),
-    playShelves: () => invoke("studio:play.shelves"),
-    playSearch: (query, shelf) => invoke("studio:play.search", { query, shelf }),
-    playCatalog: () => invoke("studio:play.catalog"),
-    playRemix: (slug) => invoke("studio:play.remix", { slug }),
-    playOnline: (slugs) => invoke("studio:play.online", { slugs }),
-    playOpen: (slug) => invoke("studio:play.open", { slug }),
-    playClose: () => invoke("studio:play.close"),
-    playControl: (control, at) => invoke("studio:play.control", { control, at }),
-    playMe: () => invoke("studio:play.me"),
-    playRename: (name) => invoke("studio:play.rename", { name }),
-    playAvatar: (webp) => invoke("studio:play.avatar", { webp }),
-    playProfile: (userId) => invoke("studio:play.profile", { userId }),
-    playFriends: () => invoke("studio:play.friends"),
-    playFriend: (request) => invoke("studio:play.friend", request),
-    playPeople: (query) => invoke("studio:play.people", { query }),
-    playVisibility: (visibility) => invoke("studio:play.visibility", { visibility }),
-    playAvatarStyle: (style) => invoke("studio:play.avatarStyle", { style }),
-    playAvatarVariant: (variant) => invoke("studio:play.avatarVariant", { variant }),
-    playStats: (days) => invoke("studio:play.stats", { days }),
-    playCreators: () => invoke("studio:play.creators"),
-    playCredits: () => invoke("studio:play.credits"),
-    playHandleCheck: (handle) => invoke("studio:play.handle-check", { handle }),
-    playSetHandle: (handle) => invoke("studio:play.handle", { handle }),
-    playShare: (url, at) => invoke("studio:play.share", { url, at }),
     genexAccount: () => invoke("studio:genex-account.read"),
     genexSignIn: () => invoke("studio:genex-account.sign-in"),
     genexCancelSignIn: () => invoke("studio:genex-account.cancel"),

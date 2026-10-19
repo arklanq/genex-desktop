@@ -94,12 +94,13 @@ const WORDS = {
   InstallingHub: "Installing Unity Hub",
   Megabytes: (done: number, total: number) => `${Math.round(done / MEGABYTE)} of ${Math.round(total / MEGABYTE)} MB`,
   SignIn: "Sign in to Unity",
-  SignInDetail: "In Unity Hub, sign in and add the free Personal license. Only you type your password.",
+  SignInDetail:
+    "In Unity Hub, sign in and add a Unity license (Personal is free if Unity's terms allow it for you). Unity's own terms cover its apps and your account. Only you type your password.",
   SignedIn: "Signed in to Unity",
   OpenHub: "Open Unity Hub",
   YourTurn: "Sign in to Unity Hub",
   YourTurnDetail:
-    "Type your email and password in the Unity Hub window and add the free Personal license. Genex goes on by itself once you're in.",
+    "Type your email and password in the Unity Hub window and add a Unity license (Personal is free if Unity's terms allow it for you). Genex goes on by itself once you're in.",
   ShowHub: "Show Unity Hub",
   InstallUnity: "Install Unity 6",
   InstallDetail: `About ${UNITY_SIZE_GB} GB. Genex installs it through Unity Hub.`,

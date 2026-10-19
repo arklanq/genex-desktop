@@ -16,7 +16,7 @@
  * its name in Studio, which the backend keeps beside the link in its own record
  * (`places/<game>.json`), never in the game folder agents write.
  */
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { ENGINE_LINKS_FOLDER } from "../../shared/plugins.ts";
@@ -180,6 +180,16 @@ export async function writePlaceRecord(storage: string, game: string, record: Pl
   await atomicWriteJson(placeRecordFile(storage, game), record);
 }
 
+/** Puts back the record `game` had before (`undefined`: none), when a link it was written for is refused. */
+export async function restorePlaceRecord(
+  storage: string,
+  game: string,
+  before: PlaceRecord | undefined,
+): Promise<void> {
+  if (before) await writePlaceRecord(storage, game, before);
+  else if (GAME_ID.test(game)) await rm(placeRecordFile(storage, game), { force: true });
+}
+
 /**
  * The place the host linked `game` to, or undefined when it has none or the record isn't one. The
  * host writes the link's own fields at the record's top (`kind`, `project`, `linkedAt`, `remote?`),
@@ -195,11 +205,12 @@ export async function readPlaceLink(storage: string, game: string | undefined): 
   if (typeof record.project !== "string" || !path.isAbsolute(record.project)) return undefined;
   const placeId = isJsonObject(record.remote) ? record.remote.placeId : undefined;
   if (typeof placeId === "string" && PLACE_ID.test(placeId)) return { project: record.project, placeId };
-  // A place never saved is found by its name, recorded for exactly this project.
+  // A place never saved is found by its name, recorded for exactly this project. A record with
+  // published ids the link doesn't have (an automatic link undone, or refused) names the published
+  // place, not this link's: the link is found by its project again.
   const own = await readPlaceRecord(storage, game);
-  return own?.name && own.project === record.project
-    ? { project: record.project, name: own.name }
-    : { project: record.project };
+  const byName = own?.name !== undefined && own.project === record.project && own.placeId === undefined;
+  return byName ? { project: record.project, name: own.name as string } : { project: record.project };
 }
 
 /** A game the host linked to a Roblox place, and that place. */

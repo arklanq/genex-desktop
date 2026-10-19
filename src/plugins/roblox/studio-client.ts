@@ -22,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { windowsHomeEnv } from "../../substrate/child-env.ts";
 import { commandLaunch } from "../../substrate/command-launch.ts";
 import { killProcessTree } from "../../substrate/process-tree.ts";
 import { envValue } from "../../substrate/toolchain.ts";
@@ -454,13 +455,26 @@ const systemSleep = (ms: number, signal?: AbortSignal) =>
   delay(ms, undefined, { signal, ref: false }).catch(() => undefined);
 
 /**
+ * `env` with the person's own profile folders on Windows. The host points a plugin server's profile
+ * folders at the connection's own home, as it does HOME (`windowsHomeEnv`), but `mcp.bat` and
+ * StudioMCP's token are in the real ones. They are rebuilt under `home`, the system's user record,
+ * at Windows' default layout, the one `windowsHomeEnv` assumes too; a relocated AppData isn't found.
+ */
+export function personEnv(env: NodeJS.ProcessEnv, platform: NodeJS.Platform, home: string): NodeJS.ProcessEnv {
+  return platform === "win32" ? { ...env, ...windowsHomeEnv(home, platform) } : env;
+}
+
+/**
  * This computer: StudioMCP from `mcp` (the locator's answer), with the person's real home from the
  * system's user record, never from HOME, which the host points at the connection's own folder.
  */
-export function systemStudioClientDeps(mcp: () => Promise<string | undefined>): StudioClientDeps {
+export function systemStudioClientDeps(
+  mcp: () => Promise<string | undefined>,
+  env: NodeJS.ProcessEnv = process.env,
+): StudioClientDeps {
   return {
     platform: process.platform,
-    env: process.env,
+    env,
     home: os.userInfo().homedir,
     mcp,
     fs: systemLocateFs,

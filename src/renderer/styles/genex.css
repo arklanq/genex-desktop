@@ -58,46 +58,6 @@
   background: var(--green);
   box-shadow: 0 0 0 3px var(--green-tint);
 }
-.genex-code {
-  display: inline-block;
-  margin-inline-start: 4px;
-  padding: 1px 8px;
-  border-radius: var(--radius-chip);
-  background: var(--soft);
-  color: var(--ink);
-  font: 13px / 20px var(--font-family-mono);
-  letter-spacing: 0.08em;
-}
-.genex-stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 16px 48px;
-  margin-block-start: 20px;
-  padding-block-start: 16px;
-  border-block-start: 1px solid var(--line);
-}
-.genex-stat {
-  display: flex;
-  flex-direction: column-reverse;
-  gap: 2px;
-}
-.genex-stat dd {
-  font-size: 24px;
-  font-weight: 500;
-  line-height: 30px;
-  letter-spacing: -0.02em;
-}
-.genex-stat[data-warn] dd {
-  color: var(--orange);
-}
-.genex-stat dt {
-  color: var(--ink-3);
-  font-size: 13px;
-  line-height: 18px;
-}
-.genex-note[data-quiet] {
-  color: var(--ink-3);
-}
 .genex-note {
   margin-block-start: 12px;
   color: var(--orange);
@@ -111,6 +71,192 @@
   font-size: 13px;
   line-height: 18px;
   overflow-wrap: anywhere;
+}
+/* The Connect band: the Credits tab's blue band (people.css's credits card), the routed tools'
+   logos floating on its left and the lines the canvas draws from each into the action on its right
+   (ConnectArt.tsx). Stacked under the logos when the page is narrow. */
+.genex-connect {
+  position: relative;
+  margin-block-start: 20px;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: linear-gradient(180deg, var(--credits-card), transparent 85%);
+  box-shadow: inset 0 0 0 1px var(--credits-card-edge);
+  container-type: inline-size;
+}
+.genex-connect-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 300px);
+  align-items: center;
+  min-height: 196px;
+}
+/* The lines' colour (`color`) and their light's (`outline-color`), read back by the canvas. */
+.genex-connect-lines {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  color: var(--ink);
+  outline-color: var(--stats-line);
+  pointer-events: none;
+  --connect-light-boost: 1;
+}
+:root[data-theme="light"] .genex-connect-lines {
+  outline-color: var(--accent-primary);
+  --connect-light-boost: 2.4;
+}
+.genex-connect-field {
+  position: relative;
+  align-self: stretch;
+  min-height: 196px;
+  margin-inline-start: 16px;
+}
+.genex-connect-field > img {
+  position: absolute;
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  translate: -50% -50%;
+  user-select: none;
+  filter: drop-shadow(0 1px 1.5px var(--credits-mark-shadow));
+  transition: opacity var(--duration-medium) var(--ease-smooth-out);
+}
+:root[data-theme="light"] .genex-connect-field > img[data-light-mark] {
+  filter: invert(0.9) drop-shadow(0 1px 1.5px var(--credits-mark-shadow));
+}
+/* Waiting for Connect, the logos rest a step back; signing in and connected, they are all there. */
+.genex-connect[data-art="waiting"] .genex-connect-field > img {
+  opacity: 0.6;
+}
+.genex-connect-side {
+  position: relative;
+  outline: none;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  padding: 22px 22px 22px 0;
+}
+.genex-connect-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+.genex-connect-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 17px;
+  font-weight: 500;
+  line-height: 23px;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+.genex-connect-check {
+  color: var(--ink);
+}
+.genex-connect-text {
+  margin: 0;
+  color: var(--ink-3);
+  font: 12px / 17px var(--font-family-mono);
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+}
+.genex-connect-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-block-start: 4px;
+}
+.genex-connect-credits {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.genex-connect-balance {
+  color: var(--ink);
+  font: 500 15px / 1 var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+.genex-connect-credits[data-warn] .genex-connect-balance {
+  color: var(--orange);
+}
+.genex-connect-credits > button {
+  margin-inline-start: 4px;
+}
+/* A background-less action is underlined text. */
+.genex-connect-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--ink-2);
+  font: 13px / 18px var(--font-family-mono);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.genex-connect-link:enabled:hover {
+  text-decoration-color: currentColor;
+}
+.genex-connect-link:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.genex-connect-link:focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Connect's label, with a light sweeping across it now and then (genex.games' plan button). */
+.genex-connect-shine {
+  background: linear-gradient(100deg, #ffffff 0%, #ffffff 40%, #b9c4ff 50%, #ffffff 60%, #ffffff 100%);
+  background-size: 250% 100%;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: genex-connect-shine 3.2s ease-in-out infinite;
+}
+.genex-connect[data-offscreen] .genex-connect-shine {
+  animation-play-state: paused;
+}
+@keyframes genex-connect-shine {
+  0% {
+    background-position: 140% 0;
+  }
+  70%,
+  100% {
+    background-position: -40% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .genex-connect-shine {
+    animation: none;
+    background: none;
+    -webkit-text-fill-color: currentColor;
+  }
+}
+.genex-connect .genex-note,
+.genex-connect .genex-error {
+  margin-block-start: 0;
+  font: 12px / 17px var(--font-family-mono);
+}
+@container (max-width: 440px) {
+  .genex-connect-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .genex-connect-field {
+    min-height: 150px;
+  }
+  .genex-connect-side {
+    padding: 4px 20px 20px;
+  }
 }
 .genex-checking {
   font-size: 14px;
@@ -171,36 +317,28 @@
   line-height: 18px;
   text-wrap: pretty;
 }
-/* The tools Genex routes: each one's mark on a dark tile, like the marks on genex.games, in either theme. */
+/* The tools Genex routes: a dashed grid with no fill, each tool's own logo bare with a small shadow,
+   as the Credits tab shows them. */
 .genex-tools {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(min(240px, 100%), 1fr));
-  gap: 10px;
+  gap: 12px;
 }
 .genex-tool {
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--line);
+  padding: 12px 14px;
+  border: 1px dashed var(--line-soft);
   border-radius: 12px;
 }
 .genex-tool-mark {
-  display: inline-flex;
   flex-shrink: 0;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  background: #1d1e21;
-  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 0.08);
-}
-.genex-tool-mark img {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
+  filter: drop-shadow(0 1px 1.5px var(--credits-mark-shadow));
 }
 .genex-tool-copy {
   display: flex;
@@ -254,14 +392,15 @@
   background: #ececef;
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.08);
 }
-:root[data-theme="light"] .router-tile,
-:root[data-theme="light"] .genex-tool-mark {
+:root[data-theme="light"] .router-tile {
   background: #ffffff;
   box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.08);
 }
-:root[data-theme="light"] .router-tile img[data-light-mark],
-:root[data-theme="light"] .genex-tool-mark img[data-light-mark] {
+:root[data-theme="light"] .router-tile img[data-light-mark] {
   filter: invert(0.9);
+}
+:root[data-theme="light"] .genex-tool-mark[data-light-mark] {
+  filter: invert(0.9) drop-shadow(0 1px 1.5px var(--credits-mark-shadow));
 }
 .genex-jobs {
   display: flex;

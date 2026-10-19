@@ -52,6 +52,19 @@ async function chatSession(
   return tools;
 }
 
+/**
+ * Stop every `desktop.computer` session: the harness that asked for them has ended, so their
+ * drivers close, the computer is let go, and the next harness's first call asks the person again.
+ */
+export async function releaseHarnessDesktops(x: CoreInternals): Promise<void> {
+  const sessions = SESSIONS.get(x);
+  if (!sessions) return;
+  const all = [...sessions.values()];
+  sessions.clear();
+  await Promise.all(all.map(async (made) => (await made.catch(() => null))?.release().catch(() => {})));
+}
+
+/** The `desktop.computer` host method: the chat's desktop session for the harness's own tool loop. */
 export function desktopRpc(core: StudioCore, x: CoreInternals) {
   return {
     [HostMethod.DesktopComputer]: async (p) => {

@@ -34,6 +34,7 @@ export class EngineRegistry {
   #preferredOrder: string[] = [];
   #active = new Map<string, number>();
   #updating = new Set<string>();
+  #described: ((list: EngineDescriptor[]) => void) | null = null;
 
   constructor({ statusProbeMs = STATUS_PROBE_MS }: { statusProbeMs?: number } = {}) {
     this.#statusProbeMs = statusProbeMs;
@@ -116,8 +117,19 @@ export class EngineRegistry {
     return [...this.#engines.values()];
   }
 
+  /** Hear every list `describe` answers with, such as to keep the last one for the next launch. */
+  onDescribed(listener: (list: EngineDescriptor[]) => void): void {
+    this.#described = listener;
+  }
+
   /** Full picture for the UI: what exists, whether it is usable, and what it can run. */
   async describe(): Promise<EngineDescriptor[]> {
+    const list = await this.#describeAll();
+    this.#described?.(list);
+    return list;
+  }
+
+  async #describeAll(): Promise<EngineDescriptor[]> {
     return Promise.all(
       [...this.#engines.values()].map(async (engine): Promise<EngineDescriptor> => {
         const status = await engine.status().catch((err: Error) => ({

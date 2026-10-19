@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { desktopControl } from "../../src/main/core/desktop-control.ts";
 import { DesktopQuestion, desktopTools } from "../../src/main/core/desktop-tools.ts";
 import type { DesktopApp, DesktopDriver } from "../../src/substrate/desktop-driver.ts";
 import type { LiveToolResult } from "../../src/substrate/engines/types.ts";
@@ -185,5 +186,140 @@ describe("the desktop tool", () => {
     assert.deepEqual(fake.calls, ["close"]);
     await tools.onLiveTool("desktop", { action: "screenshot" });
     assert.deepEqual(asked, ["session", "session"], "a stop ends the session's yes");
+  });
+});
+
+/** A connect the test settles by hand, counting its starts. */
+function heldConnect(driver: DesktopDriver) {
+  let settle: () => void = () => {};
+  let started = 0;
+  let begun: () => void = () => {};
+  const firstStart = new Promise<void>((resolve) => {
+    begun = resolve;
+  });
+  const connect = () => {
+    started += 1;
+    begun();
+    return new Promise<DesktopDriver>((resolve) => {
+      settle = () => resolve(driver);
+    });
+  };
+  return { connect, firstStart, settle: () => settle(), started: () => started };
+}
+
+describe("a stop while the driver starts", () => {
+  it("closes the driver once it arrives, and the waiting call delivers nothing", async () => {
+    const fake = driverWith(NOTES);
+    const held = heldConnect(fake.driver);
+    const tools = desktopTools({
+      connect: held.connect,
+      ask: async () => true,
+      ownApp: () => false,
+      frameDir: await tmpDir("desktop-tools-"),
+    });
+    const waiting = tools.onLiveTool("desktop", { action: "left_click", coordinate: "10,10" });
+    await held.firstStart;
+    await tools.release();
+    held.settle();
+    assert.match(text(await waiting), /the person stopped computer control/);
+    assert.deepEqual(fake.calls, ["close"], "the click never reached the driver, and the driver was closed");
+  });
+
+  it("a stop while the session's card waits connects nothing, and the next call asks again", async () => {
+    const fake = driverWith(NOTES);
+    let answer: (yes: boolean) => void = () => {};
+    const asked: string[] = [];
+    let connects = 0;
+    const tools = desktopTools({
+      connect: async () => {
+        connects += 1;
+        return fake.driver;
+      },
+      ask: (question) => {
+        asked.push(question);
+        return question === DesktopQuestion.Session
+          ? new Promise<boolean>((resolve) => {
+              answer = resolve;
+            })
+          : Promise.resolve(true);
+      },
+      ownApp: () => false,
+      frameDir: await tmpDir("desktop-tools-"),
+    });
+    const waiting = tools.onLiveTool("desktop", { action: "left_click", coordinate: "10,10" });
+    await new Promise((resolve) => setImmediate(resolve));
+    await tools.release();
+    answer(true);
+    assert.match(text(await waiting), /the person stopped computer control/);
+    assert.equal(connects, 0, "the yes that came after the stop started nothing");
+    const next = tools.onLiveTool("desktop", { action: "screenshot" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(asked, ["session", "session"], "the stop ended that yes: the next call asks again");
+    answer(false);
+    await next;
+  });
+});
+
+describe("the computer-control registry", () => {
+  /** A registry over a connect the test settles, its holders counted and its daemon's stops recorded. */
+  async function registry() {
+    const fake = driverWith(NOTES);
+    const held = heldConnect(fake.driver);
+    const active: number[] = [];
+    const shutdowns: string[] = [];
+    const timers: Array<{ ms: number; fire: () => void; cancelled: boolean }> = [];
+    const desktop = desktopControl({
+      findDriver: async () => "/fake/cua-driver",
+      connect: held.connect,
+      ownApp: () => false,
+      onActive: (count) => active.push(count),
+      shutdown: async () => {
+        shutdowns.push("stop");
+      },
+      later: (ms, fire) => {
+        const timer = { ms, fire, cancelled: false };
+        timers.push(timer);
+        return () => {
+          timer.cancelled = true;
+        };
+      },
+    });
+    const tools = desktop.toolsFor({ ask: async () => true, frameDir: await tmpDir("desktop-control-") });
+    return { desktop, tools, fake, held, active, shutdowns, timers };
+  }
+
+  it("holds the stop shortcut from the moment the driver starts, and a stop then cancels the start", async () => {
+    for (const stop of ["the stop shortcut", "the session's own Stop"] as const) {
+      const { desktop, tools, fake, held, active } = await registry();
+      const waiting = tools.onLiveTool("desktop", { action: "left_click", coordinate: "10,10" });
+      await held.firstStart;
+      assert.equal(desktop.active(), 1, `${stop}: the shortcut is live while the driver starts`);
+      await (stop === "the stop shortcut" ? desktop.stopAll() : tools.release());
+      held.settle();
+      assert.match(text(await waiting), /the person stopped computer control/, stop);
+      assert.deepEqual(fake.calls, ["close"], `${stop}: nothing moved and the late driver was closed`);
+      assert.equal(desktop.active(), 0, `${stop}: the session holds nothing`);
+      assert.equal(active.at(-1), 0, `${stop}: the shortcut was let go`);
+    }
+  });
+
+  it("stops the driver's daemon a while after the last session lets go, unless another starts first", async () => {
+    const { desktop, tools, held, shutdowns, timers } = await registry();
+    const first = tools.onLiveTool("desktop", { action: "screenshot" });
+    await held.firstStart;
+    held.settle();
+    await first;
+    await tools.release();
+    assert.equal(timers.length, 1, "the daemon's stop waits a short while");
+    assert.deepEqual(shutdowns, [], "not at once: a quick next session reuses it");
+    const again = desktop.toolsFor({ ask: async () => true, frameDir: await tmpDir("desktop-control-") });
+    const second = again.onLiveTool("desktop", { action: "screenshot" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(timers[0]?.cancelled, true, "a session that starts in the meantime keeps the daemon");
+    held.settle();
+    await second;
+    await again.release();
+    timers.at(-1)?.fire();
+    assert.deepEqual(shutdowns, ["stop"], "once the last session is gone, the daemon stops");
   });
 });

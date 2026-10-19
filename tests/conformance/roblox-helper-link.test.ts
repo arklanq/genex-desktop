@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -74,7 +74,7 @@ async function world(places: Record<string, string> = { "game-1": "Place1.rbxl" 
     const binding: PluginBinding = { project: game, directory: dir };
     await links.link("roblox", binding, { project: path.join(dir, file) });
   }
-  return { root, storage, games };
+  return { root, storage, games, links };
 }
 
 let sessions = 0;
@@ -352,6 +352,39 @@ test("a Studio whose place two games link binds neither game", async () => {
   await link.idle();
   assert.equal((await readBound(storage, "game-1", clock.now())).state, BindingState.None);
   assert.equal((await readBound(storage, "game-2", clock.now())).state, BindingState.None);
+  link.close();
+});
+
+test("a link left by a removed game doesn't stop the live game on a place file of the same name binding", async () => {
+  const { storage, games } = await world({ "game-1": "Place1.rbxl", "game-2": "Place1.rbxl" });
+  await rm(path.join(games, "game-2"), { recursive: true, force: true });
+  const studio = fakeStudio([PLACE1]);
+  const { link, clock } = linkOver(storage, studio);
+  memoryHelper(link, { studio, studioId: PLACE1.id }).hello();
+  await link.idle();
+  assert.equal(link.bound("game-1"), PLACE1.id);
+  assert.equal((await readBound(storage, "game-2", clock.now())).state, BindingState.None);
+  link.close();
+});
+
+test("a bound Studio's place is named as StudioMCP lists it now, so a publish that renames it keeps the game bound", async () => {
+  const { storage, games, links } = await world();
+  const studio = fakeStudio([PLACE1]);
+  const { link, clock } = linkOver(storage, studio);
+  memoryHelper(link, { studio, studioId: PLACE1.id }).hello();
+  await link.idle();
+  assert.equal(link.bound("game-1"), PLACE1.id);
+  // Published: Studio shows the place's new name with its id, and the game's link takes the ids.
+  studio.list([{ id: PLACE1.id, name: "Sky Race (placeId: 129143288655360)" }]);
+  const dir = path.join(games, "game-1");
+  const remote = { placeId: "129143288655360", universeId: "5512" };
+  await links.link("roblox", { project: "game-1", directory: dir }, { project: path.join(dir, "Place1.rbxl"), remote });
+  for (let refresh = 0; refresh < 3; refresh++) {
+    clock.advance(BINDING_REFRESH_MS);
+    await link.idle();
+  }
+  assert.equal(link.bound("game-1"), PLACE1.id);
+  assert.equal((await readBound(storage, "game-1", clock.now())).state, BindingState.Bound);
   link.close();
 });
 

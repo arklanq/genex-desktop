@@ -464,16 +464,25 @@ export class JobService {
     record.exitCode = end.exitCode;
     record.signal = end.signal;
     record.endedAt = new Date(this.#clock.now()).toISOString();
-    await this.#saveEnd(record);
-    this.#live.delete(record.id);
-    this.#finishing.set(record.id, live);
-    const ended = copy(record);
     try {
-      await this.#tellEnded(ended);
+      await this.#saveEnd(record);
     } finally {
-      this.#finishing.delete(record.id);
+      // An end that could not be written still ends the job: it leaves the running count, and its end is told.
+      await this.#settle(live);
     }
-    return ended;
+    return copy(record);
+  }
+
+  /** The job no longer runs: it leaves `#live`, and `onEnded` hears its end while it is `#finishing`. */
+  async #settle(live: LiveJob): Promise<void> {
+    const { id } = live.record;
+    this.#live.delete(id);
+    this.#finishing.set(id, live);
+    try {
+      await this.#tellEnded(copy(live.record));
+    } finally {
+      this.#finishing.delete(id);
+    }
   }
 
   /** Number the end, write the record and drop the game's oldest ended jobs beyond the kept count. */

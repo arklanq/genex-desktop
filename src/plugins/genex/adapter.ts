@@ -189,6 +189,10 @@ const PUBLISH_WAIT_MS = 150_000;
 const MIN_PUBLISH_WAIT_MS = SECOND_MS;
 /** How long a verified sign-in is trusted before status asks Genex again. */
 const SESSION_CACHE_MS = 2 * MINUTE_MS;
+/** Kept back from the host's ceiling for one call, to record a generation's answer once its CLI stops. */
+const ASSET_SETTLE_MS = 10 * SECOND_MS;
+/** A generation is not submitted with less than this left of its call: its CLI could not finish. */
+const MIN_ASSET_SUBMIT_MS = 30 * SECOND_MS;
 /** How long a generation waits for the person to accept Genex's updated terms: as long as the CLI waits. */
 const TERMS_WAIT_MS = 100 * SECOND_MS;
 /** How often a generation waiting on the terms asks Genex again. */
@@ -223,9 +227,22 @@ const MESSAGE = {
   ApprovalNotPending: "Approval is no longer pending",
   ChooseCandidate: "Choose candidate 1, 2, or 3",
   CredentialsUninitialized: "Genex credentials are not initialized",
+  NoTimeToSubmit:
+    "Waiting for Genex's terms used up this call, so nothing was submitted or charged. Make this request again now that they are accepted.",
   TermsPending:
     "Genex's terms changed and the user has not accepted them yet, so nothing was submitted or charged. Studio shows them Review in the chat and in the sidebar: ask them to accept the terms, then make this request again.",
 } as const;
+
+/**
+ * How long a generation's CLI may run once `elapsedMs` of its call has gone (the terms wait among
+ * it): its own timeout, cut so it stops, and its answer is recorded, before the host's ceiling for
+ * the call ends the backend's work midway. Zero when too little is left to submit at all.
+ */
+export function assetCliTimeoutMs(elapsedMs: number): number {
+  const left = INVOCATION_BUDGET_MS - ASSET_SETTLE_MS - elapsedMs;
+  if (left < MIN_ASSET_SUBMIT_MS) return 0;
+  return Math.min(ASSET_TIMEOUT_MS, left);
+}
 
 /** What a generation tells the app while it runs: the account's terms began or stopped waiting for the person. */
 export interface GenexExecuteHooks {
@@ -1365,16 +1382,20 @@ export class GenexTools {
       return [COVER_MESSAGE.ShotNotKept];
     }
   }
-  /** Start a cover send for a game: after publish `jobId`, or (none) for genex__cover-set. */
+  /**
+   * Start a cover send for a game: after publish `jobId`, or (none) for genex__cover-set. Only a
+   * publish's step sends the kept clip; genex__cover-set's approval covers the picture alone.
+   */
   #startCoverStep(project: string, jobId?: string): CoverStep {
     const controller = new AbortController();
     this.#controllers.set(controller, { project });
     const step: CoverStep = { ...(jobId ? { jobId } : {}), controller, done: Promise.resolve(null) };
+    const withClip = jobId !== undefined;
     step.done = this.#sendCover(project, controller.signal, jobId)
       .catch(() => null)
       .then(async (record) => {
         // The clip rides behind the cover, never instead of it: a clip that fails changes nothing else.
-        await this.#sendClip(project, controller.signal, jobId).catch(() => {});
+        if (withClip) await this.#sendClip(project, controller.signal, jobId).catch(() => {});
         return record;
       })
       .finally(() => {
@@ -1520,10 +1541,10 @@ export class GenexTools {
       return { kind: GenexCoverOutcome.Failed, message: timedOut ? COVER_MESSAGE.SendTimedOut : errorMessage(error) };
     }
   }
-  /** Asset commands: structured output, the asset timeout, the workspace's contained HOME. */
-  async #cli(cwd: string, args: string[], signal?: AbortSignal): Promise<any> {
+  /** Asset commands: structured output, the asset timeout (or less), the workspace's contained HOME. */
+  async #cli(cwd: string, args: string[], signal?: AbortSignal, timeoutMs = ASSET_TIMEOUT_MS): Promise<any> {
     return this.#spawnCli(cwd, args, signal, {
-      timeoutMs: ASSET_TIMEOUT_MS,
+      timeoutMs,
       parse: true,
       home: path.join(cwd, "home"),
     });
@@ -1693,9 +1714,10 @@ export class GenexTools {
     cwd: string,
     request: GenexRequest,
     signal: AbortSignal,
+    timeoutMs: number,
   ): Promise<NonNullable<GenexJob["approval"]>> {
     if (!request.id) throw new Error(MESSAGE.ApprovalNeedsSource);
-    const response = (await this.#cli(cwd, ["wait", request.id, "--no-download"], signal)) as ReviewAnswer;
+    const response = (await this.#cli(cwd, ["wait", request.id, "--no-download"], signal, timeoutMs)) as ReviewAnswer;
     const labels = approvalLabels(request.operation);
     const urls = labels.map((label) => approvalImageUrl(request.operation, response, label));
     if (urls.some((url) => typeof url !== "string")) throw new Error(MESSAGE.ApprovalViewsMissing);
@@ -1788,6 +1810,7 @@ export class GenexTools {
     hooks: GenexExecuteHooks,
   ): Promise<unknown> {
     if (signal?.aborted) throw new Error(MESSAGE.StoppedBeforeSubmission);
+    const startedAt = this.#now();
     if (request.operation === GenexOperation.Status) return this.#statusForAgent(project, signal);
     if (USE_OPERATIONS.has(request.operation)) return this.#recordUse(project, root, request, signal);
     validateGenexRequest(request);
@@ -1810,8 +1833,10 @@ export class GenexTools {
     await save();
     try {
       if (!READ_OPERATIONS.has(request.operation)) await this.#waitForTerms(signal, hooks);
+      const cliMs = assetCliTimeoutMs(this.#now() - startedAt);
+      if (cliMs === 0) throw new Error(MESSAGE.NoTimeToSubmit);
       if (APPROVAL_OPERATIONS.has(request.operation) && !approved) {
-        job.approval = await this.#approvalReview(cwd, request, signal);
+        job.approval = await this.#approvalReview(cwd, request, signal, cliMs);
         job.status = GenexJobStatus.ApprovalRequired;
         await save();
         return { ...job, approval: approvalSummary(job.approval) };
@@ -1819,7 +1844,7 @@ export class GenexTools {
       const { args, output } = await cliArgsFor(request, root, dir, approved);
       job.status = GenexJobStatus.Submitting;
       await save();
-      const response = await this.#cli(cwd, args, signal);
+      const response = await this.#cli(cwd, args, signal, cliMs);
       await this.#recordAnswer(cwd, dir, root, job, response, output, signal);
       await save();
       return { ...job, result: response };

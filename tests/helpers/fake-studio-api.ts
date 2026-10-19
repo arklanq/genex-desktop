@@ -62,6 +62,8 @@ const METHODS = [
   "bootState",
   "retrySandboxSetup",
   "setUpSandbox",
+  "reportSandboxSetup",
+  "quitFromBoot",
   "setWindowControls",
   "readyUpdate",
   "restartToUpdate",
@@ -158,6 +160,10 @@ const METHODS = [
   "playOpen",
   "playClose",
   "playControl",
+  "playBar",
+  "playComments",
+  "playComment",
+  "playUncomment",
   "playMe",
   "playRename",
   "playAvatar",
@@ -174,6 +180,8 @@ const METHODS = [
   "playHandleCheck",
   "playSetHandle",
   "playShare",
+  "playManage",
+  "playCover",
   "genexAccount",
   "genexSignIn",
   "genexCancelSignIn",
@@ -191,6 +199,13 @@ const METHODS = [
   "presentProjectAssets",
   "projectModelRigs",
   "projectAssets",
+  "assetLibrary",
+  "assetLibraryStates",
+  "assetSave",
+  "assetShare",
+  "assetUnshare",
+  "assetAdd",
+  "assetLibraryFile",
   "readProjectAsset",
   "runFeedback",
   "playSnapshot",
@@ -231,6 +246,7 @@ const METHODS = [
   "resolveChatFiles",
   "openChatFile",
   "messageImages",
+  "pathOfFile",
   "rewindPreview",
   "rewindChat",
   "undoRewind",
@@ -344,6 +360,7 @@ function defaults(): Partial<Record<StudioMethod, () => unknown>> {
     pluginChooseFile: () => null,
     nameGame: () => ({ title: "Untitled game" }),
     playFeed: () => ({ games: [], nextCursor: null }),
+    playComments: () => ({ items: [], nextCursor: null }),
     playShelves: () => ({
       counts: { games: null, tools: null, assets: null },
       categories: ["featured", "tools", "assets"],
@@ -387,6 +404,8 @@ export function fakeStudioApi(overrides: Partial<StudioApi> = {}, options: FakeS
     onCodexLogin: ((listener: (state: CodexLogin) => void) => subscribe(sets.onCodexLogin, listener)) as never,
     onRunSummary: ((project: string, runId: string, listener: (summary: RunSummary) => void) =>
       subscribe(sets.onRunSummary, { project, runId, listener })) as never,
+    // Answered by the preload, not main: synchronous, and no file of a test has a place on disk.
+    pathOfFile: (() => "") as never,
   };
   const api = {} as Record<StudioMethod, (...args: unknown[]) => unknown>;
   for (const method of METHODS) {

@@ -449,8 +449,9 @@ The app runs it host-side, never inside an agent's box: Core Graphics' window li
 (through System Events) by `osascript` JavaScript for Automation scripts that are constants, the
 window's pid, title and place passed only as arguments; the picture by `screencapture -l`, shrunk by
 `sips` in a fresh folder of Genex's scratch, read and removed. It never looks at a password
-manager's window (Keychain Access, Passwords, 1Password, Bitwarden, LastPass, Dashlane), and leaves
-them out of the list.
+manager's window (Keychain Access, Passwords, 1Password, Bitwarden, LastPass, Dashlane), at an app
+computer control never drives (System Settings, the system's password prompts and the rest of
+`NEVER_DRIVEN_BUNDLES`) or at Genex's own windows (`lookRefused`), and leaves them out of the list.
 
 macOS asks the person for Screen Recording and Accessibility. Genex asks once, at the first look that
 finds either missing (`<engine homes>/app-look-access.json` remembers it asked); the first tree read

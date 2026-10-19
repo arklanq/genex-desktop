@@ -128,7 +128,8 @@ const shellString = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
  * screen (a headless Godot draws nothing to show).
  */
 export function launcherText(projectFromGame: string, godot: string | null): string {
-  const where = projectFromGame === "." ? '"$root"' : `"$root/${projectFromGame}"`;
+  // The folder's own name is quoted whole, so nothing in it (a quote, `$`, a backtick) is read as shell.
+  const where = projectFromGame === "." ? '"$root"' : `"$root"/${shellString(projectFromGame)}`;
   // A linked project outside the game is named by its own path.
   const project = path.isAbsolute(projectFromGame) ? shellString(projectFromGame) : where;
   return [

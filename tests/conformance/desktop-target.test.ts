@@ -204,11 +204,84 @@ describe("desktop target", () => {
     assert.equal(focused, 1);
   });
 
+  it("refuses a click over a point no window covers, never the app in front in its place", async () => {
+    const fake = fakeDriver({ focus: { app: EDITOR, secure: false }, under: null });
+    const { target, asked } = await targetOver(fake);
+    const done = await target.input([{ type: "click", x: 10, y: 10, px: true }]);
+    assert.equal(done.applied, 0);
+    assert.deepEqual(fake.calls, []);
+    assert.deepEqual(asked, [], "the front app is never put to the person for a point outside it");
+    assert.match(target.refusals?.()[0]?.message ?? "", /no app's window is under that point/);
+  });
+
   it("never reads the accessibility tree of an app the studio never drives", async () => {
     const fake = fakeDriver({ focus: { app: STUDIO, secure: false } });
     const { target } = await targetOver(fake);
     const state = (await target.state?.()) as Record<string, unknown>;
     assert.equal("tree" in state, false);
+  });
+});
+
+/**
+ * A drag lands in two apps: the one it starts in and the one it is dropped on. Both ends pass the
+ * same checks a click does, and a refused end moves nothing at all.
+ */
+describe("a drag's drop point", () => {
+  const MAIL: DesktopApp = { name: "Mail", bundleId: "com.apple.mail", pid: 5 };
+  const SETTINGS: DesktopApp = { name: "System Settings", bundleId: "com.apple.systempreferences", pid: 4 };
+  const MANAGER: DesktopApp = { name: "1Password", bundleId: "com.1password.1password", pid: 3 };
+  const TOY_EDITOR: DesktopApp = { name: "Toy Editor", bundleId: "com.example.toy", pid: 31 };
+
+  /** A screen whose left half (in points) is TextEdit and right half is `right`. */
+  async function split(right: DesktopApp | null) {
+    const fake = fakeDriver();
+    const driver: DesktopDriver = { ...fake.driver, appAt: async (x) => (x < 720 ? EDITOR : right) };
+    const asked: string[] = [];
+    const target = desktopTarget({
+      driver,
+      allowApp: async (app) => {
+        asked.push(app.name);
+        return app.bundleId === EDITOR.bundleId;
+      },
+      ownApp: (app) => app.bundleId === STUDIO.bundleId,
+      engineApps: (app) => engineAppRefusal(app, { declared: new Set(["com.example.toy"]), granted: null }),
+    });
+    await target.screenshot({ quality: 80, surface: "auto" as never });
+    return { target, calls: fake.calls, asked };
+  }
+
+  const drop: PreviewInputAction = { type: "drag", fromX: 100, fromY: 100, x: 2000, y: 100, px: true };
+  const rows: Array<[string, DesktopApp | null, RegExp]> = [
+    ["an app the person did not allow", MAIL, /did not allow Mail/],
+    ["System Settings", SETTINGS, /never driven/],
+    ["a password manager", MANAGER, /never driven/],
+    ["the studio itself", STUDIO, /never driven/],
+    ["an engine's editor outside its assist", TOY_EDITOR, /game engine's editor/],
+    ["a point no window covers", null, /no app's window is under that point/],
+  ];
+  for (const [label, right, why] of rows) {
+    it(`refuses a drag from an allowed app onto ${label}, and nothing moves`, async () => {
+      const { target, calls } = await split(right);
+      const done = await target.input([drop]);
+      assert.equal(done.applied, 0);
+      assert.deepEqual(calls, [], "neither the press nor the drop reached the driver");
+      assert.match(target.refusals?.()[0]?.message ?? "", why);
+    });
+  }
+
+  it("refuses a drag that starts in a refused app, whatever it is dropped on", async () => {
+    const { target, calls } = await split(SETTINGS);
+    const done = await target.input([{ type: "drag", fromX: 2000, fromY: 100, x: 100, y: 100, px: true }]);
+    assert.equal(done.applied, 0);
+    assert.deepEqual(calls, []);
+  });
+
+  it("carries out a drag whose both ends are in an allowed app, asking about each end", async () => {
+    const { target, calls, asked } = await split(EDITOR);
+    const done = await target.input([drop]);
+    assert.equal(done.applied, 1);
+    assert.deepEqual(calls, ["drag 50,50→1000,50"]);
+    assert.deepEqual(asked, ["TextEdit", "TextEdit"]);
   });
 });
 

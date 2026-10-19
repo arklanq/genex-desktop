@@ -12,6 +12,7 @@ import {
   draftFromImport,
   draftProblem,
   secretsToSave,
+  withTransport,
 } from "../../src/renderer/panels/connectors/draft.ts";
 
 const filled = (change: Partial<Draft>): Draft => ({ ...blankDraft(), ...change });
@@ -161,4 +162,31 @@ test("the form says what is missing before it can connect", () => {
     [filled({ connector: named, commandLine: "run" }), null],
   ];
   for (const [draft, problem] of cases) assert.equal(draftProblem(draft), problem);
+});
+
+test("moving a server between this Mac and a URL never carries a secret to the other side", () => {
+  const local = filled({
+    connector: { ...blankDraft().connector, name: "Notes" },
+    commandLine: "node server.js",
+    secretRows: [{ name: "NOTES_TOKEN", value: "t0ken" }],
+  });
+  const moved = withTransport(local, "http");
+  const remote = { ...moved, connector: { ...moved.connector, url: "https://elsewhere.example/mcp" } };
+  assert.deepEqual(remote.secretRows, [], "the variable's row stays behind");
+  assert.deepEqual(secretsToSave(remote), {}, "no value goes to the URL");
+  const saved = connectorToSave(remote, new Set());
+  assert.equal(saved.headers, undefined, "no header is named after the variable");
+  assert.equal(JSON.stringify(saved).includes("t0ken"), false);
+
+  const keyed = filled({
+    connector: { ...blankDraft().connector, name: "Docs", transport: "http", url: "https://docs.example/mcp" },
+    secretRows: [{ name: "X-API-Key", value: "k3y" }],
+  });
+  const back = withTransport(keyed, "stdio");
+  assert.deepEqual(back.secretRows, [], "a header's row stays behind too");
+  assert.deepEqual(secretsToSave(back), {});
+
+  const sse = withTransport(keyed, "sse");
+  assert.deepEqual(sse.secretRows, keyed.secretRows, "HTTP to SSE is the same place: the headers stay");
+  assert.equal(sse.connector.transport, "sse");
 });

@@ -90,6 +90,13 @@ describe("subscription accounts", () => {
     assert.equal(accounts.idFor("/somewhere/else"), null);
   });
 
+  it("a sign-in that reports no email keeps none of the account's earlier one", async () => {
+    const { accounts } = await store({ studio: true });
+    await accounts.remember(AccountId.Studio, { email: "before@example.com" });
+    await accounts.remember(AccountId.Studio, { email: null });
+    assert.equal((await accounts.list()).find((entry) => entry.id === AccountId.Studio)?.email, null);
+  });
+
   it("forgets an account: it leaves the list, and a choice of it is dropped", async () => {
     const { accounts } = await store({ terminal: true });
     const added = await accounts.newAccount();

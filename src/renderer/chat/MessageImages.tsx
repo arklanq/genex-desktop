@@ -87,17 +87,20 @@ export function MessageImages({
   messageId,
   count = 0,
   frames,
+  placed = false,
 }: {
   threadId?: string;
   messageId?: string;
   count?: number;
   frames?: ReferenceFrame[];
+  /** The caller already sets the row's width and side (a message of pictures alone). */
+  placed?: boolean;
 }): JSX.Element | null {
   const images = useMessageImages(threadId, messageId);
   const shown = frames ?? images ?? Array.from({ length: Math.min(count, 12) }, () => null);
   if (!shown.length) return null;
   return (
-    <div data-message-images className="ms-auto flex max-w-[88%] flex-wrap justify-end gap-1.5">
+    <div data-message-images className={`flex flex-wrap justify-end gap-1.5 ${placed ? "" : "ms-auto max-w-[88%]"}`}>
       {shown.map((image, index) =>
         image ? (
           <button

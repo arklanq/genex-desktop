@@ -1354,6 +1354,33 @@ it("a local Loop chat that keeps reading is told to finish or launch, not to imp
   }
 });
 
+it("a local Auto chat that keeps reading is never nudged to start the Loop it may start only when asked", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "bonsai-auto-idle-"));
+  const cwd = path.join(root, "game");
+  await mkdir(cwd);
+  await writeFile(path.join(cwd, "main.js"), "// existing");
+  let turns = 0;
+  const seen: string[] = [];
+  const sessions = new LocalSessions({
+    root: path.join(root, "sessions"),
+    protectedPaths: [],
+    contextWindow: 16384,
+    complete: async (r) => {
+      seen.push(r.messages.map((m) => m.content).join("\n"));
+      return reply("", [{ id: `r${turns++}`, name: "read_file", arguments: { path: "main.js" } }]);
+    },
+  });
+  try {
+    const autoLaunch = { ...launchTool, onlyWhenAsked: true };
+    await sessions.run({ cwd, prompt: "Make the sky darker", interviewTools: [autoLaunch] }, model);
+    const nudge = seen.find((s) => s.includes("Progress check: 6")) ?? "";
+    assert.match(nudge, /Implement the next concrete change/);
+    assert.doesNotMatch(nudge, /start_autopilot/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 it("a malformed tool call is a tool error the model can correct, not the end of the session", async () => {
   const server = createServer(async (req, res) => {
     let input = "";

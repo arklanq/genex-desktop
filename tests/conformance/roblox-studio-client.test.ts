@@ -9,6 +9,7 @@ import {
   createStudioClient,
   parseStudios,
   type SpawnStudioMcp,
+  personEnv,
   StudioClientError,
   StudioClientFailure,
   type StudioClientDeps,
@@ -161,7 +162,7 @@ test("a crash mid-call rejects every pending call, and the next call starts Stud
 });
 
 test("StudioMCP gets the person's real home even when the bridge runs with another HOME", async (t) => {
-  if (process.platform === "win32") return t.skip("HOME is the Mac's home; Windows passes LOCALAPPDATA through");
+  if (process.platform === "win32") return t.skip("HOME is the Mac's home; Windows has its own test below");
   const dir = await tmpDir("roblox-home-");
   const log = path.join(dir, "calls.jsonl");
   const fake = standIn(["--log", log]);
@@ -189,7 +190,12 @@ const LOCAL = "C:\\Users\\Ann\\AppData\\Local";
 const winMcp = (local: string) => `${local}\\Roblox\\mcp.bat`;
 const WIN_ENV = { LOCALAPPDATA: LOCAL, SystemRoot: "C:\\Windows", PATH: process.env.PATH };
 
-function windowsDeps(run: SpawnStudioMcp, mcp: string, fs: StudioClientDeps["fs"], env = WIN_ENV): StudioClientDeps {
+function windowsDeps(
+  run: SpawnStudioMcp,
+  mcp: string,
+  fs: StudioClientDeps["fs"],
+  env: NodeJS.ProcessEnv = WIN_ENV,
+): StudioClientDeps {
   return { ...macDeps(run), platform: "win32", env, mcp: async () => mcp, fs };
 }
 
@@ -209,6 +215,45 @@ test("on Windows, mcp.bat starts through cmd.exe from its real path, as commandL
   assert.deepEqual(launch?.args, ["/d", "/v:off", "/s", "/c", `""${mcp}""`]);
   assert.equal(launch?.verbatim, true);
   assert.equal(launch?.env.LOCALAPPDATA, LOCAL, "Studio's own folder stays the person's");
+});
+
+test("on Windows, StudioMCP gets the person's own profile even when the host gave the bridge one of its own", async () => {
+  // The host points a plugin server's profile folders at the connection's own home, as it does HOME.
+  const own = "C:\\Users\\Ann\\AppData\\Roaming\\Genex\\plugins\\roblox\\mcp\\demo\\home";
+  const hosted = {
+    ...WIN_ENV,
+    USERPROFILE: own,
+    APPDATA: `${own}\\AppData\\Roaming`,
+    LOCALAPPDATA: `${own}\\AppData\\Local`,
+  };
+  const mcp = winMcp(LOCAL);
+  const fs = disk({ [mcp]: PLAIN_FILE, [`${LOCAL}\\Roblox`]: PLAIN_FOLDER });
+  const refused = standIn();
+  const hostedClient = createStudioClient(windowsDeps(refused.run, mcp, fs, hosted));
+  try {
+    await assert.rejects(hostedClient.studios(), failure(StudioClientFailure.Refused));
+  } finally {
+    await hostedClient.close();
+  }
+  assert.equal(refused.spawned.length, 0, "the host's profile has no Roblox folder, so nothing starts");
+
+  const fake = standIn();
+  const client = createStudioClient(windowsDeps(fake.run, mcp, fs, personEnv(hosted, "win32", "C:\\Users\\Ann")));
+  try {
+    await client.studios();
+  } finally {
+    await client.close();
+  }
+  const [launch] = fake.spawned;
+  assert.deepEqual(launch?.args, ["/d", "/v:off", "/s", "/c", `""${mcp}""`]);
+  assert.equal(launch?.env.LOCALAPPDATA, LOCAL);
+  assert.equal(launch?.env.USERPROFILE, "C:\\Users\\Ann");
+});
+
+test("the client built for this computer takes the environment it is given, and this process's by default", () => {
+  const env = personEnv({ LOCALAPPDATA: "C:\\elsewhere\\AppData\\Local" }, "win32", "C:\\Users\\Ann");
+  assert.equal(systemStudioClientDeps(async () => undefined, env).env, env, "the bridge's, with the person's profile");
+  assert.equal(systemStudioClientDeps(async () => undefined).env, process.env, "the backend's, unchanged");
 });
 
 test("hostile StudioMCP launch paths are refused and nothing is started", async () => {

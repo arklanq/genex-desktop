@@ -72,8 +72,11 @@ Retain the candidate's checksums, inventory, notices and signed-asset verificati
 regression, terminal and gallery checks. Build-only dispatches use the `candidate` environment
 and receive no signing secrets. Draft upload requires verified macOS signing plus the macOS and
 Linux packaged smokes. Windows is built and tested every release, cannot hold the draft back, and
-joins it only once it is signed and its job passed (`distributionPlatforms` in `scripts/release-policy.mjs`); unsigned candidates, including
-unsigned Windows packages, remain Actions artifacts. Each packaged platform
+joins it once its job passed (`windowsShips` in `scripts/release-policy.mjs`): signed when
+SignPath signs it, otherwise unsigned as a preview while `WINDOWS_SHIPS_UNSIGNED` is on. Release
+notes that ship an unsigned Windows build say so and how to open it (SmartScreen: More info, then
+Run anyway); set the flag off once Windows is signed. Unsigned build-only candidates remain
+Actions artifacts. Each packaged platform
 also exercises its terminal; Windows checks
 the installer/uninstaller and a scripted packaged chat turn. Apps and DMGs both
 need notarization/stapling. Platform provenance records the source and lock digest alongside
@@ -114,7 +117,23 @@ repository `forge.config.cjs` publishes to and `package.json` names (`auto-updat
 holds the three together). `AUTO_UPDATE_ENABLED` is on and [PRIVACY](../PRIVACY.md) discloses
 the check. Linux copies ask GitHub's `releases/latest` every six hours instead
 ([release-check](../src/main/release-check.ts)) and offer the release page; nothing installs in
-place there. Settings → About and the app menu's Check for Updates ask on demand. Squirrel.Mac
+place there. The exception is a `.deb` or `.rpm` installed since the Genex package repository:
+its maintainer scripts (`build/linux/postinst`, `rpm-post`) add packages.genex.games with the
+key the package carries (`build/linux/genex-archive-keyring.asc`), and the system's updates bring
+the next version, so the app asks nothing (`UpdateMode.System`).
+
+### Linux package repository
+
+packages.genex.games is the R2 bucket `genex-packages` behind that custom domain: a signed apt
+repository (`dists/stable`, `pool/`) and a signed dnf repository (`rpm/`), each naming only the
+newest release. `linux-repo.yml` fills it when a release is published, and on a pull request
+builds it from the latest release with a throwaway key and installs Genex from it on Ubuntu 24.04
+and Fedora. Its `packages` environment (dev and `v*` tags) holds `LINUX_REPO_SIGNING_KEY` and the
+R2 credentials (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`); the workflow refuses
+a key whose fingerprint differs from the shipped public key. To republish a release, run it on
+dev with its tag. A publishing `release.yml` refuses to build Linux packages while the repository
+is down, because every new install points apt or dnf at it. Never lose or replace the key without a
+release that ships the new public key first: installs trust only the key their package wrote. Settings → About and the app menu's Check for Updates ask on demand. Squirrel.Mac
 runs one check at a time, the download inside it, so a check asked meanwhile answers from the
 running one (downloading), and the hourly checks stop once a version is downloaded: asked again,
 the release CDN answers 304 and Electron forgets the update. Copies built before the switch

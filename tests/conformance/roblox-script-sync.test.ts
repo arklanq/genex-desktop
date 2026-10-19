@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { lstat, mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { setImmediate as tick } from "node:timers/promises";
 import type { HelperAsk } from "../../src/plugins/roblox/helper-link.ts";
@@ -494,6 +494,133 @@ test("a source longer than Studio takes is left on disk with a note, not pushed"
   assert.equal(world.helper.writes().length, 0);
   assert.ok(world.log.some((line) => line.includes("Main.server.luau")));
 });
+
+test("a change Studio refuses while a play test runs is sent again once the test ends", async () => {
+  const { folder } = await gameFolder({ [MAIN_FILE]: "print(1)\n", [SHARED_FILE]: "return {}\n" });
+  const helper = fakeHelper([
+    { ref: MAIN, source: "print(1)\n" },
+    { ref: SHARED, source: "return {}\n" },
+  ]);
+  const clock = manualClock();
+  const watcher = handWatch();
+  const studio = { playing: false };
+  const busy = () =>
+    new HelperLinkError(HelperLinkFailure.Answered, "Studio is running the game", HelperErrorCode.Busy);
+  const ask = (async (type, body, options) => {
+    const changes = type === HelperMessage.ScriptsWrite || type === HelperMessage.ScriptsRemove;
+    if (studio.playing && changes) throw busy();
+    return helper.ask(type, body, options);
+  }) as HelperAsk;
+  const sync = createScriptSync({ folder, ask, clock, watch: watcher.watch });
+  assert.equal(await sync.start(), ScriptSyncMode.On);
+  studio.playing = true;
+  await writeFile(path.join(folder, MAIN_FILE), "print(2)\n");
+  await rm(path.join(folder, SHARED_FILE));
+  watcher.fire();
+  clock.advance(SYNC_DEBOUNCE_MS);
+  await sync.idle();
+  assert.equal(helper.source(MAIN), "print(1)\n", "refused while the test runs");
+  clock.advance(60_000);
+  await sync.idle();
+  assert.equal(helper.source(MAIN), "print(1)\n", "still refused while it runs on");
+  studio.playing = false;
+  clock.advance(60_000);
+  await sync.idle();
+  assert.equal(helper.source(MAIN), "print(2)\n", "sent once the test ended, with no file change to wake it");
+  assert.equal(helper.source(SHARED), undefined, "and the deletion carried too");
+  const writes = helper.writes().length;
+  clock.advance(60_000);
+  await sync.idle();
+  assert.equal(helper.writes().length, writes, "nothing more to send: no further tries");
+  assert.equal(clock.pending(), 0);
+  sync.stop();
+});
+
+test("a watch that errors is armed again, so later file changes still reach Studio", async () => {
+  const { folder } = await gameFolder({ [MAIN_FILE]: "print(1)\n" });
+  const helper = fakeHelper([{ ref: MAIN, source: "print(1)\n" }]);
+  const clock = manualClock();
+  const watches: Array<{ onChange(): void; onError(error: unknown): void; closed: boolean }> = [];
+  const watch: WatchFolder = (_folder, onChange, onError) => {
+    const entry = { onChange, onError: onError ?? (() => {}), closed: false };
+    watches.push(entry);
+    return {
+      close: () => {
+        entry.closed = true;
+      },
+    };
+  };
+  const sync = createScriptSync({ folder, ask: helper.ask, clock, watch });
+  assert.equal(await sync.start(), ScriptSyncMode.On);
+  watches[0]?.onError(new Error("EMFILE: too many open files"));
+  clock.advance(60_000);
+  await sync.idle();
+  const live = watches.filter((entry) => !entry.closed);
+  assert.equal(watches.length, 2, "armed again");
+  assert.equal(live.length, 1, "one watch at a time");
+  await writeFile(path.join(folder, MAIN_FILE), "print(2)\n");
+  live[0]?.onChange();
+  clock.advance(SYNC_DEBOUNCE_MS);
+  await sync.idle();
+  assert.equal(helper.source(MAIN), "print(2)\n");
+  sync.stop();
+  assert.equal(clock.pending(), 0, "a stopped sync arms nothing");
+});
+
+/** Ways a script file the scan finds can't be taken; each leaves the file where it was. */
+const UNTAKEN_FILES: Array<{ why: string; links?: boolean; make(folder: string, file: string): Promise<void> }> = [
+  {
+    why: "is longer than Studio takes",
+    make: (folder, file) => writeFile(path.join(folder, file), `-- ${"x".repeat(200_001)}\n`),
+  },
+  {
+    why: "isn't UTF-8 text",
+    make: (folder, file) => writeFile(path.join(folder, file), Buffer.from([0x2d, 0x2d, 0xff, 0xfe, 0x0a])),
+  },
+  {
+    why: "became a link",
+    links: true,
+    make: async (folder, file) => {
+      const outside = path.join(path.dirname(folder), "outside.luau");
+      await writeFile(outside, "outside\n");
+      await rm(path.join(folder, file));
+      await symlink(outside, path.join(folder, file));
+    },
+  },
+  {
+    why: "sits in a folder that can't be listed",
+    links: true,
+    make: (folder, file) => chmod(path.dirname(path.join(folder, file)), 0o000),
+  },
+];
+
+for (const row of UNTAKEN_FILES) {
+  test(`a script file that ${row.why} counts as present: Studio's copy and its record stay`, async (t) => {
+    if (row.links && process.platform === "win32") t.skip("links and folder modes differ on Windows");
+    const world = await setUp({
+      files: { [MAIN_FILE]: "print(1)\n", [SHARED_FILE]: "return {}\n" },
+      studio: [
+        { ref: MAIN, source: "print(1)\n" },
+        { ref: SHARED, source: "return {}\n" },
+      ],
+    });
+    t.after(() => chmod(path.dirname(path.join(world.folder, MAIN_FILE)), 0o755).catch(() => {}));
+    await world.sync.start();
+    await row.make(world.folder, MAIN_FILE);
+    await world.settle();
+    await world.sync.changed(world.helper.edit(SHARED, "return 1\n"));
+    assert.equal(await world.sync.start(), ScriptSyncMode.On);
+    assert.deepEqual(world.helper.removes(), [], "nothing removed from Studio");
+    assert.equal(world.helper.source(MAIN), "print(1)\n");
+    const record = JSON.parse(await read(world.folder, SCRIPT_RECORD.join("/")));
+    assert.equal(record.scripts["ServerScriptService/Main.server.luau"], helperHash("print(1)\n"), "still recorded");
+    assert.equal(record.scripts["ReplicatedStorage/Shared.luau"], helperHash("return 1\n"), "the others sync on");
+    assert.ok(
+      world.log.some((line) => line.includes("src/ServerScriptService")),
+      "and a note says why",
+    );
+  });
+}
 
 test("the sync for many games: a game's folder is learnt from its calls, and its helper's binding starts it", async () => {
   const { root, folder } = await gameFolder({ [MAIN_FILE]: "print(1)\n" });

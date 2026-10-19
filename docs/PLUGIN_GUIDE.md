@@ -651,7 +651,8 @@ or replace Studio's full installer validation, user consent, licensing review or
 ### Panel context notifications
 
 `studioPlugin.onContextChanged(callback)` returns an unsubscribe function. The host notifies
-the mounted plugin panel when its plugin changes; notifications carry no credentials. Re-read
+the mounted plugin panel when its plugin or the selected game changes; notifications carry no
+credentials. A request asked before a game change is still answered, for the game it was asked in. Re-read
 status through declared actions, coalesce refreshes and ignore stale in-flight responses.
 Declared Connect/Unlock actions can omit an extra confirmation: the UI gesture begins account
 setup, while OS/browser authorization remains intact. Disconnect and publish still require confirmation.

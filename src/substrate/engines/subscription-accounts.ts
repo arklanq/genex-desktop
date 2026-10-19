@@ -156,15 +156,17 @@ export class SubscriptionAccounts {
     throw new Error(MESSAGE.full);
   }
 
-  /** Keep an account that signed in, with its email when the CLI told one. */
+  /**
+   * Keep an account that signed in, with the email its CLI told now. One that told none keeps no
+   * email: the person signed in may not be the one an earlier email named.
+   */
   async remember(id: string, details: { email?: string | null }): Promise<void> {
     // The Terminal login is the CLI's own: Studio lists it whenever it holds a sign-in.
     if (id === AccountId.Terminal) return;
     if (!isAccountId(id)) throw new Error(MESSAGE.unknown(String(id)));
     const file = await this.#read();
     const others = (file.accounts ?? []).filter((account) => account.id !== id);
-    const previous = file.accounts?.find((account) => account.id === id);
-    const email = details.email ?? previous?.email;
+    const { email } = details;
     await this.#write({ ...file, accounts: [...others, { id, ...(email ? { email } : {}) }] });
   }
 

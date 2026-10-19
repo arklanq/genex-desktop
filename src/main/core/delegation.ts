@@ -49,6 +49,7 @@ import { git } from "../../substrate/snapshots.ts";
 import {
   DelegateEventType,
   EngineError,
+  type DelegatePermissions,
   type DelegateRequest,
   type DelegateResult,
   type LiveToolResult,
@@ -74,9 +75,15 @@ import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { chatTurnOf, openDoor, recordSteerDelivered, settleDoor, type SteerDoor } from "./chat-steer.ts";
 import type { LeadAnswers, LeadSession, PersonSession } from "./chat-permissions.ts";
 import type { ActiveDelegation } from "./internals.ts";
-import { PluginCapability, type PluginAppliedSet, type PluginInfo, type PluginTool } from "../../shared/plugins.ts";
+import {
+  CallCutOff,
+  PluginCapability,
+  type PluginAppliedSet,
+  type PluginInfo,
+  type PluginTool,
+} from "../../shared/plugins.ts";
 import type { PluginRegistry, PluginSnapshot } from "../../substrate/plugins/registry.ts";
-import { type CutOffCall, clearCutOffs, peekCutOffs } from "./cut-off-calls.ts";
+import { type CutOffCall, clearCutOffs, noteCutOff, peekCutOffs } from "./cut-off-calls.ts";
 import { clearUnsaved, peekUnsaved, type UnsavedFile } from "./unsaved-files.ts";
 import {
   addedNotice,
@@ -106,7 +113,8 @@ import { readEngineBinding } from "../../substrate/game-engine-binding.ts";
 import { FolderHolds, kindPending, type ProjectFact } from "../../shared/project-facts.ts";
 import { CapabilityAudience } from "../planning-capabilities.ts";
 import type { ConnectorCallOptions } from "./plugin-tools.ts";
-import { workerHolder } from "./plugin-locks.ts";
+import { type PersonWrote, personWroteWatch, workerHolder } from "./plugin-locks.ts";
+import { noteAsking, noteEvent, type ToolsInFlight, toolsInFlight } from "./steer-cut.ts";
 import { type ToolOffered, toolAllowRule } from "../../substrate/plugins/tool-allow.ts";
 import { type RunCreditCap, runCreditCap } from "./run-credits.ts";
 import { checkpointWords } from "./plugin-hooks.ts";
@@ -352,6 +360,10 @@ interface DelegationSession {
   chatTurn?: string;
   /** Its input mid-turn, when it answers a chat turn on an engine that reads messages as it works. */
   door?: SteerDoor;
+  /** A chat turn's session: its tool calls in flight, read from its events (`steer-cut.ts`), so a steer cuts it between them. */
+  tools?: ToolsInFlight;
+  /** A chat turn's session: the person's word that ends its plugin calls' waits for a lock (`engine.steer`). */
+  personWrote?: PersonWrote;
   /** The run's controls it keeps: the chat's own session after a run it led (`honouredRunControls`). */
   runControls?: RunControlGrant;
   /**
@@ -2269,6 +2281,7 @@ export class DelegationService {
       ...(runControls ? { runControls } : {}),
       liveRun: liveRunOf(p, director, seat),
       ...(chatTurn && target.steersMidTurn ? { door: openDoor() } : {}),
+      ...(chatTurn ? { tools: toolsInFlight(target.engineId), personWrote: personWroteWatch() } : {}),
       threadId,
       hostTools: hostToolsEligible(p, target.candidate, seat),
       offered: toolAllowRule(p.toolAllow),
@@ -2583,7 +2596,7 @@ export class DelegationService {
       ...(p.compact ? { compact: true } : {}),
       ...(extraReads.length ? { extraReads } : {}),
       ...(denyReads.length ? { denyReads } : {}),
-      ...askFields(reach),
+      ...askFields(reach, session.tools),
       ...(p.interviewTools?.length ? { interviewTools: p.interviewTools } : {}),
       ...this.#coordinatorFields(p),
       ...(Array.isArray(p.images) && p.images.length
@@ -2658,7 +2671,11 @@ export class DelegationService {
    */
   #onEvent(session: DelegationSession): NonNullable<DelegateRequest["onEvent"]> {
     return (event) => {
-      if (event.type !== DelegateEventType.SteerDelivered) return session.mirror.onEvent(event);
+      if (event.type !== DelegateEventType.SteerDelivered) {
+        // Read before it is mirrored: a steer waiting to cut this session hears its tools ended.
+        if (session.tools) noteEvent(session.tools, event);
+        return session.mirror.onEvent(event);
+      }
       const { chatTurn } = session;
       const { id } = event.payload;
       const chatsOwn = chatTurn && !session.leadTurn;
@@ -2834,7 +2851,8 @@ export class DelegationService {
     const lead = session.leads !== null;
     const callSignal = lead ? AbortSignal.any([signal, session.ended.signal]) : signal;
     // A worker's calls pass the locks it holds for its life (an in-place writer's); the lead's hold their own.
-    const holder = holderField(session);
+    // A chat turn's call stops waiting for one once the person writes: its signal taken now, as the call starts.
+    const locking = { ...holderField(session), ...personWroteField(session) };
     // Connector first: its names are `<connector>__<tool>`, and the registry is the
     // only thing that can say whether one of them is really on this list. A call to one the
     // session was not handed (another game's kind, a narrowed session's) is refused before
@@ -2845,7 +2863,7 @@ export class DelegationService {
         outlivesTurn: lead,
         ...this.#runConsentFor(name, p, session),
         ...callRunField(session),
-        ...holder,
+        ...locking,
       });
     }
     if (!tools.plugins.some((tool) => tool.name === name)) {
@@ -2860,7 +2878,7 @@ export class DelegationService {
       attribution: session.attribution,
       credits: session.credits,
       lead,
-      ...holder,
+      ...locking,
     });
     return pluginAnswer(result);
   }
@@ -2972,6 +2990,10 @@ export class DelegationService {
       clearCutOffs(this.#x.cutOffCalls, p.threadId, tools.cutOffs);
       clearUnsaved(this.#x.unsavedFiles, p.threadId, tools.unsaved);
     }
+    // Calls it made once a background task woke it past its turn's end: the CLI refused them in the
+    // person's words, so the next session hears they were Genex's and are not done.
+    for (const call of result.cutAfterTurn ?? [])
+      noteCutOff(this.#x.cutOffCalls, p.threadId, { ...call, reason: CallCutOff.TurnEnded });
     const resumable = threadId && sessionId && (isChatsOwnSession(p) || session.chatLead);
     if (resumable) {
       await this.rememberContractor(threadId, {
@@ -3076,6 +3098,11 @@ function sessionTools(
   };
 }
 
+/** The signal a chat turn's call takes as it starts: the person writing in its chat ends its wait for a lock. */
+function personWroteField(session: Pick<DelegationSession, "personWrote">): { personWrote?: AbortSignal } {
+  return session.personWrote ? { personWrote: session.personWrote.current.signal } : {};
+}
+
 /**
  * The holder a worker's plugin and connector calls hold their locks as (`workerHolder`): a seated
  * worker's, or an unseated in-place worker's; none for any other session.
@@ -3119,6 +3146,8 @@ function activeDelegation(
     settled: session.ended.signal,
     ...(session.chatTurn ? { chatTurn: session.chatTurn } : {}),
     ...(session.door ? { steer: session.door } : {}),
+    ...(session.tools ? { tools: session.tools } : {}),
+    ...(session.personWrote ? { personWrote: session.personWrote } : {}),
     ...(worker ? { worker: { id: worker.id, chatThreadId: worker.chatThreadId } } : {}),
     ...(session.reviewer ? { reviewer: session.reviewer } : {}),
     ...(session.leadsInPlace && session.liveRun ? { leadsInPlace: session.liveRun } : {}),
@@ -3244,12 +3273,24 @@ function callRunField(
 
 /**
  * How the session asks, if it does: the chat's own session's permissions, a lead's or coordinator's,
- * or a worker's seat in the chat's mode.
+ * or a worker's seat in the chat's mode. A chat turn's call waiting for the person's answer is not
+ * in flight for a cut (`noteAsking`): a message that switches the turn does not wait for the card.
  */
-function askFields({ person, lead, worker }: SessionReach): Partial<DelegateRequest> {
+function askFields({ person, lead, worker }: SessionReach, tools?: ToolsInFlight): Partial<DelegateRequest> {
   if (worker) return { worker };
-  if (person) return { permissions: person.request };
+  if (person) return { permissions: tools ? askingNoted(person.request, tools) : person.request };
   return lead ? { leadAsks: lead.request } : {};
+}
+
+/** The chat's permissions, each question noted as asking while its card waits for the person. */
+function askingNoted(permissions: DelegatePermissions, tools: ToolsInFlight): DelegatePermissions {
+  return {
+    ...permissions,
+    ask: (request, signal) => {
+      noteAsking(tools, request.toolUseId, true);
+      return permissions.ask(request, signal).finally(() => noteAsking(tools, request.toolUseId, false));
+    },
+  };
 }
 
 /** A chat turn's session on an engine that reads messages mid-turn: its engine says once whether it takes them. */

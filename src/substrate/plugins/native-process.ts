@@ -81,6 +81,13 @@ async function gpuCache(binary: string): Promise<string[]> {
   return [cache];
 }
 /**
+ * The extension class a GPU job may issue for its Metal cache, to Metal's shader compiler: that
+ * compiler is a system process of its own that builds Metal's shader module there, and a refused
+ * extension fails every shader the cache has not compiled yet (a new Mac, a macOS or Blender
+ * update), which crashes the first render.
+ */
+const READ_WRITE_EXTENSION = "com.apple.app-sandbox.read-write";
+/**
  * setsid(2) and setpgid(2), by their macOS syscall numbers: a descendant that could call them
  * would leave the job's process group, and the group is how a job is stopped.
  */
@@ -113,8 +120,8 @@ export const JOB_UTILITIES = [
  * The Seatbelt profile for one job. Everything is named: programs only from the runtime's folder,
  * its interpreter and `JOB_UTILITIES`; signals and process details only for the job and the
  * processes it started (its children and its own process group, which `runNativeProcess` makes
- * the job's alone), never Studio or another app; reads and writes only under the given paths; no
- * network. Forking stays allowed — a runtime may use helper processes — but a descendant cannot
+ * the job's alone), never Studio or another app; reads and writes only under the given paths; a
+ * read-write extension only for `extensions`; no network. Forking stays allowed — a runtime may use helper processes — but a descendant cannot
  * leave the job's process group, and `runNativeProcess` stops the group when the job ends.
  */
 export function nativeSandboxProfile(p: {
@@ -124,6 +131,8 @@ export function nativeSandboxProfile(p: {
   writes: string[];
   /** Files the job may write whose names only start so (a program's own temporary names): plain absolute paths only. */
   writePrefixes?: string[];
+  /** Folders the job may hand to a system service as a read-write extension: its GPU cache, never more. */
+  extensions?: string[];
   denied: string[];
   gpu: boolean;
 }): string {
@@ -157,6 +166,11 @@ export function nativeSandboxProfile(p: {
     `(allow file-read* ${subpaths(p.reads)})`,
     `(allow file-read* file-write* ${subpaths(p.writes)})`,
     ...(prefixes.length ? [`(allow file-read* file-write* ${prefixes.map(prefixRule).join(" ")})`] : []),
+    ...(p.extensions?.length
+      ? [
+          `(allow file-issue-extension (require-all (require-any ${subpaths(p.extensions)}) (extension-class ${quote(READ_WRITE_EXTENSION)})))`,
+        ]
+      : []),
     ...(p.denied.length ? [`(deny file-read* ${subpaths(p.denied)})`] : []),
     "(deny network*)",
   ].join("\n");
@@ -273,7 +287,7 @@ export interface NativeProcessResult {
 }
 
 /** System folders every job may read: the OS, its tools, fonts and device nodes. */
-const SYSTEM_READS = [
+export const SYSTEM_READS = [
   "/System",
   "/usr",
   "/bin",
@@ -303,8 +317,9 @@ type SandboxRequest = Pick<
 async function prepareSandbox(p: SandboxRequest): Promise<{ profile: string; home: string }> {
   const root = p.binaryRoot ?? runtimeRoot(p.binary);
   const binaryRoot = await realpath(root).catch(() => path.resolve(root));
+  const extensions = p.gpu ? await gpuCache(p.binary) : [];
   const reads = await aliases([...p.reads, binaryRoot, ...SYSTEM_READS]),
-    writes = await aliases([...p.writes, p.scratch, ...(p.gpu ? await gpuCache(p.binary) : [])]),
+    writes = await aliases([...p.writes, p.scratch, ...extensions]),
     denied = await aliases(p.denyRead);
   const home = path.join(p.scratch, "home");
   await mkdir(home, { recursive: true });
@@ -313,7 +328,7 @@ async function prepareSandbox(p: SandboxRequest): Promise<{ profile: string; hom
   const writePrefixes = p.writePrefixes ?? [];
   await writeFile(
     profile,
-    nativeSandboxProfile({ binaryRoot, interpreters, reads, writes, writePrefixes, denied, gpu: !!p.gpu }),
+    nativeSandboxProfile({ binaryRoot, interpreters, reads, writes, writePrefixes, extensions, denied, gpu: !!p.gpu }),
   );
   return { profile, home };
 }

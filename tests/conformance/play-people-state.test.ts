@@ -383,6 +383,41 @@ describe("regenerating the account's avatar", () => {
     await two;
     assert.equal(store.getState().me?.avatarVariant, 2);
   });
+
+  it("says a regenerated avatar is being saved until every press's save ends, kept or refused", async () => {
+    const first = deferred<PlayMe | null>();
+    const second = deferred<PlayMe | null>();
+    const answers = [first.promise, second.promise];
+    const { api } = fakeApi({ playAvatarVariant: () => answers.shift() ?? Promise.reject(new Error("extra")) });
+    const store = createPeopleStore(api);
+    await store.loadMe();
+    assert.equal(store.getState().avatarSaving, false, "nothing pressed");
+    const one = store.setAvatarVariant(1);
+    const two = store.setAvatarVariant(2);
+    assert.equal(store.getState().avatarSaving, true, "at the press");
+    first.resolve({ ...me(), avatarVariant: 1 });
+    await one;
+    assert.equal(store.getState().avatarSaving, true, "the second press still saves");
+    second.reject(new Error("refused"));
+    await assert.rejects(two, /refused/);
+    assert.equal(store.getState().avatarSaving, false, "every save ended");
+  });
+
+  it("does not report an older press's refusal once a newer press is kept", async () => {
+    const first = deferred<PlayMe | null>();
+    const second = deferred<PlayMe | null>();
+    const answers = [first.promise, second.promise];
+    const { api } = fakeApi({ playAvatarVariant: () => answers.shift() ?? Promise.reject(new Error("extra")) });
+    const store = createPeopleStore(api);
+    await store.loadMe();
+    const one = store.setAvatarVariant(1);
+    const two = store.setAvatarVariant(2);
+    first.reject(new Error("refused"));
+    await one;
+    second.resolve({ ...me(), avatarVariant: 2 });
+    await two;
+    assert.equal(store.getState().me?.avatarVariant, 2);
+  });
 });
 
 describe("the account across sign-in, offline and a sign-in that ended", () => {

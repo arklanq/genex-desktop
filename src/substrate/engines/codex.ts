@@ -191,6 +191,8 @@ export interface CodexEngineOptions {
   /** Injected in tests. Production asks the `codex` CLI, never a credential file. */
   authStatusFn?: (home: string | null) => Promise<CodexAuthStatus>;
   findBinaryFn?: () => Promise<string | null>;
+  /** Injected in tests: the plan's rate limits for the account in `home`, as Codex's app server answers. */
+  readRateLimits?: (home: string) => Promise<unknown>;
 }
 
 /** One `codex exec` invocation, as an async stream of the CLI's own JSONL events. */
@@ -388,6 +390,9 @@ export class CodexEngine implements Engine {
   readonly #readModels: typeof readCodexModels | undefined;
   #usage: ProviderUsage | null = null;
   #usageRead: Promise<ProviderUsage | null> | null = null;
+  /** Bumped by every login recheck: a usage read begun before it read the account before. */
+  #loginGeneration = 0;
+  readonly #readRateLimits: CodexEngineOptions["readRateLimits"];
   /** The host-skills folder whose skills every `codex exec` disables, or null when they are kept. */
   readonly #suppressedSkillsDir: string | null;
   /** The opt-in to dynamic tools on the app server (`CodexEngineOptions.codexDynamicTools`). */
@@ -428,6 +433,7 @@ export class CodexEngine implements Engine {
     this.#authStatusFn = options.authStatusFn;
     this.#refreshCatalogue = options.refreshCatalogue ?? (options.execFn ? async () => {} : refreshCodexCatalogue);
     this.#findBinaryFn = options.findBinaryFn;
+    this.#readRateLimits = options.readRateLimits;
   }
 
   /**
@@ -532,13 +538,21 @@ export class CodexEngine implements Engine {
 
   async recheckLogin(): Promise<EngineStatus> {
     invalidateCodingCli(EngineId.Codex);
+    this.#forgetUsage();
     // Finish an earlier check before forcing a fresh result after login/logout.
     await this.#authProbe;
     this.#authFailure = null;
     this.#authCache = null;
-    this.#usage = null;
+    this.#forgetUsage();
     this.#catalog.invalidate();
     return this.probeAuth();
+  }
+
+  /** Drop the plan's limits and any read of them under way: they may be another account's. */
+  #forgetUsage(): void {
+    this.#loginGeneration += 1;
+    this.#usage = null;
+    this.#usageRead = null;
   }
 
   usageSnapshot = (): ProviderUsage | null => this.#usage;
@@ -560,32 +574,49 @@ export class CodexEngine implements Engine {
     );
   }
 
-  /** The plan's limits for the composer, read at most once a minute from the account itself. */
+  /**
+   * The plan's limits for the composer, read at most once a minute from the account itself. A read
+   * that a login recheck overtook is dropped, and its callers wait for a read of the account
+   * signed in now.
+   */
   async readUsage(): Promise<ProviderUsage | null> {
     if (this.#usage && Date.now() - Date.parse(this.#usage.measuredAt) < USAGE_FRESH_MS) return this.#usage;
     if (this.#usageRead) return this.#usageRead;
-    this.#usageRead = (async () => {
-      // A test double stands in for the CLI; it has no account to ask.
-      if (this.#execFn) return null;
-      const login = await this.resolveLogin();
-      if (login.source === LoginSource.None) return null;
-      const home = login.home ?? this.systemHome;
-      const installation = await requireCodingCli(EngineId.Codex, this.#executable, undefined, false);
-      const usage = normalizeCodexUsage(
-        await readCodexRateLimits(
-          installation.path,
-          await codexProfileArgs(home),
-          subscriptionEnv({ ...installation.env, CODEX_HOME: home }),
-        ),
-      );
-      if (usage) this.#usage = usage;
-      return usage ?? this.#usage;
-    })()
-      .catch(() => this.#usage)
+    const generation = this.#loginGeneration;
+    const current = () => generation === this.#loginGeneration;
+    const read: Promise<ProviderUsage | null> = this.#askUsage()
+      .then((usage) => {
+        if (!current()) return this.readUsage();
+        if (usage) this.#usage = usage;
+        return usage ?? this.#usage;
+      })
+      .catch(() => (current() ? this.#usage : this.readUsage()))
       .finally(() => {
-        this.#usageRead = null;
+        if (this.#usageRead === read) this.#usageRead = null;
       });
-    return this.#usageRead;
+    this.#usageRead = read;
+    return read;
+  }
+
+  /** Ask the signed-in account for its plan's limits. */
+  async #askUsage(): Promise<ProviderUsage | null> {
+    // A test double stands in for the CLI; it has no account to ask.
+    if (this.#execFn && !this.#readRateLimits) return null;
+    const login = await this.resolveLogin();
+    if (login.source === LoginSource.None) return null;
+    const home = login.home ?? this.systemHome;
+    const limits = this.#readRateLimits ?? ((at: string) => this.#cliRateLimits(at));
+    return normalizeCodexUsage(await limits(home));
+  }
+
+  /** The rate limits Codex's app server reports for the account in `home`. */
+  async #cliRateLimits(home: string): Promise<unknown> {
+    const installation = await requireCodingCli(EngineId.Codex, this.#executable, undefined, false);
+    return readCodexRateLimits(
+      installation.path,
+      await codexProfileArgs(home),
+      subscriptionEnv({ ...installation.env, CODEX_HOME: home }),
+    );
   }
 
   /**

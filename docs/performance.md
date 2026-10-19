@@ -23,6 +23,7 @@ headline metric; everything else about it is a diagnostic.
 | Build turn | turn starts | turn's result recorded | ms outside model time | director `hostTimings` spans, `build_observation` (not yet aggregated) |
 | Scroll | a fling in a long chat | rows drawn where it lands | frames painted with a blank block, beside a GPU-heavy game | `npm run test:ui -- chat-scroll-ui` (screencast frames, CPU profile, trace) |
 | Run graph | run event | graph committed | ms; commits per event | `graph-commit`, Profiler counts (`event-batch` is never emitted) |
+| Play | Play pressed in the switch | the first screen's covers loaded | ms after a relaunch and switching back; covers on screen still blank in a fast scroll | trace (cover requests), dev-control snapshot `play` (cards, covers on screen shown or blank, clips) |
 | Idle | nothing happening | — | CPU %, rAF/s, memory after an hour of Autopilot | trace and heap on demand |
 
 A journey that is "not yet" instrumented gets its marks before anyone optimizes it.
@@ -102,10 +103,20 @@ counters carry the regression gates.
 - Endless "working" animations (status shimmer, busy dots and spinners, the working node's pulse)
   run only while the window is in front and was touched in the last two minutes
   (`renderer/motion-rest.ts`); while one runs, Chromium draws every frame.
+- A live home background asks for no frames while Play or Plugins covers home (`ShaderCanvas`
+  `covered`): the workspace is only hidden there, which its IntersectionObserver cannot see, so it
+  drew every frame unseen.
+- Play's covers load with their page rather than as they near the screen (a card's
+  `content-visibility` hid a lazy cover until it was almost in view), the next page is read two
+  screens ahead, and a cover the window has shown starts shown when Play opens again.
+- A size read in an effect waits for a ResizeObserver's first call instead of forcing a layout
+  mid-commit.
 - Live's native view follows a resize in the window's own frame: main keeps the slot's right and
   bottom margins until the renderer measures again (`main/preview-anchor.ts`).
 - Coding-CLI discovery reads the login shell's PATH once and asks an unchanged binary for
-  `--version`/`--help` once; sessions reuse both until Recheck.
+  `--version`/`--help` once, an answer kept across launches; sessions reuse both until Recheck.
+- The launch's bootstrap does not wait for the engine checks: it carries the engines the last
+  launch checked while this launch's checks run (`main/engine-boot.ts`).
 - Plugin packages are inspected from directory listings, several folders at a time; event bodies
   are read through a sliding window.
 

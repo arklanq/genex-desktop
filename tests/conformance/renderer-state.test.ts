@@ -12,6 +12,9 @@ import { describe, it } from "node:test";
 import type { EventEnvelope } from "../../src/shared/event-log.ts";
 import type { ConversationRecord, GameProject, ProjectAssets } from "../../src/shared/studio-api.ts";
 import type { UiEvent } from "../../src/shared/ui-events.ts";
+import { PermissionMode } from "../../src/shared/permissions.ts";
+import { EngineId } from "../../src/shared/providers.ts";
+import { shownPermissionMode } from "../../src/renderer/chat/use-permission-mode.ts";
 import { createRefresher } from "../../src/renderer/state/refresher.ts";
 import {
   computerControlOffered,
@@ -19,6 +22,7 @@ import {
   setComputerControl,
 } from "../../src/renderer/use-computer-control.ts";
 import { StudioPlatform } from "../../src/shared/boot.ts";
+import { PlayViewerPhase } from "../../src/shared/play.ts";
 import { UpdateAction } from "../../src/shared/app-update.ts";
 import {
   createEventLogStore,
@@ -402,6 +406,45 @@ describe("the threads store: the open game is derived from the open chat", () =>
     );
     assert.deepEqual(threadMeta(null), {});
   });
+
+  it("reads the permission mode a chat's record keeps, and only a known one", () => {
+    const bypass = thread("rift-chat", { kind: "game", project: "rift", permissionMode: "bypassPermissions" });
+    assert.equal(threadMeta(bypass).permissionMode, "bypassPermissions");
+    assert.equal(threadMeta(thread("x", { kind: "game", permissionMode: "yolo" })).permissionMode, undefined);
+  });
+
+  it("shows a chat opened again in the mode its record keeps, not the one new chats start in", () => {
+    const record = thread("rift-chat", { kind: "game", project: "rift", permissionMode: "bypassPermissions" });
+    const shown = (picked?: PermissionMode) =>
+      shownPermissionMode({
+        engine: EngineId.ClaudeCode,
+        picked,
+        recorded: threadMeta(record).permissionMode,
+        defaultMode: PermissionMode.Auto,
+      });
+    assert.equal(shown(), PermissionMode.Bypass, "the pick is gone after switching chats or a restart");
+    assert.equal(shown(PermissionMode.Manual), PermissionMode.Manual, "a pick on its way to the host shows at once");
+    assert.equal(
+      shownPermissionMode({
+        engine: EngineId.OpenCode,
+        picked: undefined,
+        recorded: PermissionMode.Bypass,
+        defaultMode: PermissionMode.Auto,
+      }),
+      PermissionMode.Auto,
+      "an engine that cannot honour the mode runs, and shows, Auto",
+    );
+    assert.equal(
+      shownPermissionMode({
+        engine: EngineId.ClaudeCode,
+        picked: undefined,
+        recorded: undefined,
+        defaultMode: PermissionMode.AcceptEdits,
+      }),
+      PermissionMode.AcceptEdits,
+      "a chat that never chose shows the mode new chats start in",
+    );
+  });
 });
 
 describe("the library store", () => {
@@ -751,6 +794,22 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     assert.equal(app.layout.getState().stageView, "builds", "another game's build leaves this stage alone");
     fake.emit({ type: "stage.show", payload: { project: "rift", view: "live" } });
     assert.equal(app.layout.getState().stageView, "live");
+  });
+
+  it("makes the copy of the game the bar's Remix closed the viewer on, as a card's Remix does", async () => {
+    const { fake, app } = started();
+    await tick();
+    await app.play.open({ slug: "pond", title: "Pond", coverUrl: null });
+    fake.emit({ type: "play.viewer", payload: { slug: "pond", openId: 1, phase: PlayViewerPhase.Playing } });
+    fake.emit({
+      type: "play.viewer",
+      payload: { slug: "pond", openId: 1, phase: PlayViewerPhase.Closed, remix: true },
+    });
+    assert.deepEqual(fake.callsOf("playRemix"), [["pond"]]);
+    assert.equal(app.play.getState().making?.slug, "pond", "Create shows the copy being made");
+    assert.equal(app.play.getState().viewer, null);
+    fake.emit({ type: "play.viewer", payload: { slug: "pond", openId: 1, phase: PlayViewerPhase.Closed } });
+    assert.equal(fake.callsOf("playRemix").length, 1, "a plain closing makes nothing");
   });
 
   it("a downloaded update waits for a restart: read at the bootstrap, and announced while the studio runs", async () => {

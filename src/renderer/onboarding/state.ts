@@ -7,6 +7,7 @@ import type { ClaudeLoginState } from "../../shared/claude-login.ts";
 import type { CodexLoginState } from "../../shared/codex-login.ts";
 import { CodingCliState } from "../../shared/coding-cli.ts";
 import { EngineStatusCode } from "../../shared/engine-descriptor.ts";
+import { ModelCatalogState } from "../../shared/model-catalog.ts";
 import { EngineId, type SubscriptionId } from "../../shared/providers.ts";
 import type { EngineDescriptor } from "../types.ts";
 import { MarkState } from "./art.ts";
@@ -27,7 +28,10 @@ export type Subscription = SubscriptionId;
 /** The subscriptions, in the order their buttons stand. */
 export const SUBSCRIPTIONS: readonly Subscription[] = [EngineId.ClaudeCode, EngineId.Codex];
 
-type Words = Record<"connect" | "install" | "installing" | "update" | "updating" | "recheck" | "on", string>;
+type Words = Record<
+  "connect" | "install" | "installing" | "update" | "updating" | "recheck" | "on" | "notStarting",
+  string
+>;
 
 const WORDS: Record<Subscription, Words> = {
   [EngineId.ClaudeCode]: {
@@ -38,6 +42,7 @@ const WORDS: Record<Subscription, Words> = {
     updating: "Updating Claude Code…",
     recheck: "Check Claude Code again",
     on: "Claude Code connected",
+    notStarting: "Claude Code is signed in, but Genex couldn't start it.",
   },
   [EngineId.Codex]: {
     connect: "Connect ChatGPT",
@@ -47,6 +52,7 @@ const WORDS: Record<Subscription, Words> = {
     updating: "Updating Codex…",
     recheck: "Check Codex again",
     on: "ChatGPT connected",
+    notStarting: "Codex is signed in, but Genex couldn't start it.",
   },
 };
 
@@ -77,7 +83,7 @@ export type ConnectView =
   | { kind: typeof ConnectViewKind.On; label: string };
 
 export interface ConnectInput {
-  engine: Pick<EngineDescriptor, "status" | "account"> | undefined;
+  engine: Pick<EngineDescriptor, "status" | "account" | "catalog"> | undefined;
   claude?: ClaudeLoginState["phase"];
   codexActive?: boolean;
   codex?: CodexLoginState["phase"];
@@ -115,7 +121,7 @@ function claudeSignInView(phase: ConnectInput["claude"], pastingCode: boolean): 
 /** The subscription's one-line button for its engine and sign-in state. */
 export function connectView(id: Subscription, input: ConnectInput): ConnectView {
   const words = WORDS[id];
-  if (input.engine?.status.code === EngineStatusCode.Ready) return { kind: ConnectViewKind.On, label: words.on };
+  if (input.engine?.status.code === EngineStatusCode.Ready) return readyView(words, input);
   const signingIn = id === EngineId.ClaudeCode ? claudeSignInView(input.claude, input.pastingCode === true) : undefined;
   if (signingIn) return signingIn;
   // Codex signs in in the browser; while it checks the sign-in there is nothing left to cancel.
@@ -128,6 +134,29 @@ export function connectView(id: Subscription, input: ConnectInput): ConnectView 
     };
   }
   return cliView(words, input);
+}
+
+/**
+ * Whether a signed-in CLI failed to start for Genex: its model list is read by starting it, so a
+ * list that never loaded means no build could run either, whatever the sign-in says.
+ */
+function failsToStart(engine: ConnectInput["engine"]): boolean {
+  return engine?.catalog?.state === ModelCatalogState.Unavailable;
+}
+
+/** A signed-in CLI's button: connected, unless Genex could not start it, then a check again. */
+function readyView(words: Words, input: ConnectInput): ConnectView {
+  if (!failsToStart(input.engine)) return { kind: ConnectViewKind.On, label: words.on };
+  if (input.checking || input.engine?.catalog?.refreshing)
+    return { kind: ConnectViewKind.Busy, label: "Checking…", cancel: false };
+  return { kind: ConnectViewKind.Action, action: ConnectAction.Recheck, label: words.recheck };
+}
+
+/** The line under a signed-in CLI Genex could not start, or null; none while a check runs. */
+export function startTrouble(id: Subscription, engine: ConnectInput["engine"]): string | null {
+  const ready = engine?.status.code === EngineStatusCode.Ready;
+  const settled = ready && failsToStart(engine) && !engine?.catalog?.refreshing;
+  return settled ? WORDS[id].notStarting : null;
 }
 
 /** The button when no sign-in is under way: an install or check running, else what the CLI needs. */

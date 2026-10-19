@@ -22,17 +22,18 @@ Genex's moments never ask.
 
 ## Loops in place
 
-Except for web games at the folder's root (Blender files beside them allowed), the chat leads the
-Loop in place on Claude Code, Codex or OpenCode. It keeps save points, starts workers, pauses if
-blocked and claims finish; a reviewer checks (three no's stop it). Plugins add steps, reviewer
-pictures and editor locks: while you use an editor, agents wait. A linked engine game is no web game; Unreal and Godot
-projects outside the game get no Loop or Rewind.
+Except for web games at the folder's root (Blender files allowed), the chat leads the Loop in
+place (Claude Code, Codex or OpenCode). It keeps save points, starts workers, pauses if blocked,
+claims finish; a reviewer checks (no's stop it, timed Loops only late). Plugins add steps, reviewer
+pictures and editor locks: while you use an editor, agents wait. A linked engine game is no web
+game; Unreal and Godot projects outside it get no Loop or Rewind.
 
 ## Unreal
 
 The lead works in the open editor through Genex's helper, one holder at a time; while you play
-there the chat reads “Waiting for you to finish in Unreal”. Rewind saves, closes and reopens Unreal.
-Agents and blind judges play it. Mac games skip hardware ray tracing. An **Unreal plugin** project
+the chat reads “Waiting for you to finish in Unreal”. Rewind saves, closes and reopens Unreal.
+Agents and blind judges play it. Mac games skip hardware ray tracing. Agents set up projects they
+link; Undo reverts both. An **Unreal plugin** project
 is a host project with the plugin in `Plugins/`; its tools build, test and package it.
 
 ## Godot, Roblox, Unity

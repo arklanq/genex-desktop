@@ -43,6 +43,7 @@ import { parseOpenCodeLine, translateOpenCodeEvent, type Translated } from "./op
 import {
   type CompleteRequest,
   type CompleteResponse,
+  DelegateEventType,
   type DelegateRequest,
   type DelegateResult,
   type Engine,
@@ -721,9 +722,15 @@ const SUMMED_USAGE = [
   "cost_usd",
 ] as const;
 
-/** One translated event: forwarded to the log, and folded into the run. */
+/** One translated event: forwarded to the log, and folded into the run. A step's edge is the session's activity. */
 function applyTranslated(request: Pick<DelegateRequest, "onEvent">, run: OpenCodeRun, translated: Translated): void {
   if (translated.sessionId) run.sessionId = translated.sessionId;
+  const phase = translated.activity;
+  if (phase)
+    request.onEvent?.({
+      type: DelegateEventType.Activity,
+      payload: { phase, engine: EngineId.OpenCode, sessionId: run.sessionId },
+    });
   for (const event of translated.events)
     request.onEvent?.(event as Parameters<NonNullable<DelegateRequest["onEvent"]>>[0]);
   if (translated.text) run.summary = translated.text;
@@ -940,6 +947,7 @@ async function gitMetadata(cwd: string): Promise<string[]> {
   const dirs: string[] = [];
   for (const flag of ["--absolute-git-dir", "--git-common-dir"]) {
     const answer = await promisify(execFile)("git", ["-C", cwd, "rev-parse", flag], {
+      windowsHide: true,
       timeout: GIT_PROBE_TIMEOUT_MS,
     }).catch(() => null);
     if (answer)

@@ -188,6 +188,8 @@ export class LocalServerEngine implements Engine {
   readonly label = "Local server";
   readonly kind = EngineKind.Direct;
   readonly supportsSessions = true;
+  /** Its sessions run Genex's own loop (`LocalSessions`), which reads the person's messages between rounds. */
+  readonly steersMidTurn = true;
   readonly sessions: LocalSessions;
   readonly #settings: ServerSettings;
   readonly #keys: ApiKeyStore;

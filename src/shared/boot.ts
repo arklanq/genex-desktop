@@ -18,8 +18,23 @@ export const BootPhase = {
   Ready: "ready",
   /** The sandbox cannot start: the window shows how to set it up, and Retry. */
   SandboxSetup: "sandbox-setup",
+  /** Windows: the core is starting, and the window says which step it is on. */
+  Starting: "starting",
+  /** The studio's harness would not start: the window says so, with Try again, a report and Quit. */
+  Failed: "failed",
 } as const;
 export type BootPhase = (typeof BootPhase)[keyof typeof BootPhase];
+
+/** What a starting core is doing, as the window's status line says it. */
+export const StartStep = {
+  /** Reading the settings, the event log and the games. */
+  Games: "games",
+  /** Starting the protected workspace: on Windows the slow step, with its network check. */
+  Workspace: "workspace",
+  /** Plugins, jobs and the engines, then the window opens on the studio. */
+  Studio: "studio",
+} as const;
+export type StartStep = (typeof StartStep)[keyof typeof StartStep];
 
 /** Why the sandbox cannot start. */
 export const SandboxProblemCode = {
@@ -93,6 +108,15 @@ export interface BootState {
   platform: string;
   phase: BootPhase;
   sandbox: SandboxProblem | null;
+  /**
+   * A Set up has already run this launch, so a window that loads again (after a renderer crash)
+   * does not raise Windows' approval prompt again unasked. Absent until then.
+   */
+  setupTried?: true;
+  /** What the core is doing while the phase is Starting. */
+  step?: StartStep;
+  /** Why the studio would not start, while the phase is Failed. */
+  failure?: string;
 }
 
 /** How Set up (Windows) ended when it did not fail. */

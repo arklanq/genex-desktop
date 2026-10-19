@@ -12,7 +12,8 @@ it does not open credential storage. Unlocking an account does not approve tool-
 permissions or charges.
 
 The game composer Add menu exposes installed plugins and configured MCP connectors. Manage opens
-Plugins; Setup opens that plugin's registered settings panel. Connecting a source does not
+Plugins; a plugin's name, its hover Settings and Setup open that plugin's page with its registered
+settings panel. Connecting a source does not
 create a new conversation. The next provider request resolves the enabled, project-scoped tool
 registry. An active native session receives a refreshed tool contract at its next supported
 response/session boundary; Studio retains the conversation and its provider resume identity.
@@ -79,7 +80,9 @@ requests. Claude reads SDK initialization metadata; Codex uses paginated app-ser
 Neither sends a prompt or starts a turn. Only unsupported Codex discovery falls back to the CLI
 cache. Snapshots refresh at startup, sign-in changes, focus after sixty seconds, and on request.
 Late answers from a previous identity are discarded. Failed refreshes retain same-identity rows as
-stale; absent catalogs expose provider default. Authentication and discovery failures stay separate.
+stale; absent catalogs expose provider default. Authentication and discovery failures stay separate,
+except in first launch: discovery starts the CLI, so a signed-in subscription whose list never
+loaded is not shown connected there but offers a check again, which retries discovery too.
 
 Aliases retain their request IDs and show reported canonical targets. Explicit model IDs and saved
 cross-provider roles are never silently replaced. New unset roles and effort defer to CLI defaults
@@ -260,8 +263,10 @@ values become secrets and unsupported fields are reported. The command is one li
 shell without expansion (`shared/command-line.ts`) and saved as an argument array, quoted back
 when edited. The id comes from the name (`github`, `github-2`) and never changes after saving.
 A URL saves as streamable HTTP and falls back to SSE when the server refuses it; an existing SSE
-server stays SSE. A URL server signs in through the browser when it asks, unless an
-Authorization header is given. Studio resolves its launch environment through the user's
+server stays SSE. Switching between On this Mac and From a URL drops the secret rows, so an
+environment variable is never sent as a header (or the other way). A URL server signs in through
+the browser when it asks, unless it has a header (every header is a key); a switch that cannot be
+saved is that Connect's failure. Studio resolves its launch environment through the user's
 login-shell PATH. A changed launch command requires renewed user trust.
 Connect completes setup in one Studio flow. A connected row shows its tool count;
 Connect is offered for recovery, not as an extra required step after a successful connection.
@@ -476,8 +481,9 @@ usage (see Native context telemetry). Each engine reuses a reading under a
 minute old, shares an in-flight read and falls
 back to its last reading on failure; a Recheck clears it. The composer asks when its ring panel
 opens or the ring is hovered, and every minute while open; until the first reading it draws each
-plan this setup uses at full size with shimmering bars for its limits. Its last row opens Settings →
-Model Providers. Fixture engines report fixed limits.
+plan this setup uses at full size with shimmering bars for its limits. The panel leaves the
+`model_scoped` windows out (`shownLimits`; `SHOW_MODEL_LIMITS` in `usage-words.ts` brings them back). Its
+last row opens Settings → Model Providers. Fixture engines report fixed limits.
 `promptbar-redesign.test.ts` covers both normalizers; account access is proven only against a
 real login.
 
@@ -521,7 +527,9 @@ The sign-in flow states that generated assets use Genex credits. Required servic
 belong to Genex's authorization flow. Disable/remove the plugin or disconnect to stop access.
 Legacy paid-tools settings and saved local allowance files are not deleted, but no longer gate
 Studio's asset tools. The existing API credit balance, quotes and service admission remain
-binding; Studio does not buy credits or enable automatic top-ups.
+binding; Studio does not buy credits or enable automatic top-ups. A generation's wait for unaccepted
+terms comes out of its CLI's own time, so the CLI stops (and its answer is recorded) inside the
+host's 190 s ceiling for the call; with under 30 s left after the wait nothing is submitted.
 
 Studio sets the pinned CLI's documented `GENEX_ASSET_BUDGET_CAP=0` in its host-owned launch
 environment. This disables only the extra CLI project allowance. Source inspection and pinned-CLI
@@ -593,8 +601,9 @@ once declined; none of this for a game whose owner keeps its code untouched), an
 storage and answers its preview and exposure numbers, or reports the kept shot, the last send and
 the cover Genex holds with who chose it. A publish, and a draft until the game is first public,
 shoots the demo again after exporting and sends the frame once the upload is recorded, through the
-pinned CLI's `genex cover --json` in Studio's publish copy; `genex__cover-set` sends it now after a
-consent card. Bytes Genex already answered for, and a cover the owner picked on genex.games, are
+pinned CLI's `genex cover --json` in Studio's publish copy, with the kept clip behind it;
+`genex__cover-set` sends the picture alone now after a consent card (the clip goes only with a
+publish). Bytes Genex already answered for, and a cover the owner picked on genex.games, are
 never uploaded again; the owner's pick is recorded (`kept_owner`) whenever Genex reports it, at a
 send or a status check, a shot kept or not; a refused, rate-limited, failed or silent send leaves the publish done with a
 warning in `genex__publish-status`. Nothing is read from or written to the game folder for it.
@@ -635,9 +644,16 @@ Package inspection checks both ASAR and unpacked resources for Codex/Claude nati
 The packaged smoke matrix uses isolated discovery roots for neither/one/both providers and scripted
 status/structured execution. Live subscription execution is separate: explicitly select GPT-5.6-Sol,
 never Astra. A fixture or successful version probe is not live Claude SDK compatibility evidence.
-The version-guarded `scripts/patch-sandbox-runtime.mjs` fixes SRT 0.0.73 absolute-path lookup at
-install/build time; it checks filesystem executability without a one-second `which` subprocess.
-It changes neither sandbox policy nor command execution. Re-review on dependency changes.
+The version-guarded `scripts/patch-sandbox-runtime.mjs` fixes SRT 0.0.73 at install/build time.
+Absolute-path lookup checks filesystem executability without a one-second `which` subprocess.
+Windows `initialize()` runs srt-win's egress check, folder grants and deny stamps through SRT's own
+async runner instead of `spawnSync`, which froze the start window ("Not Responding") on Electron's
+main thread; `sandbox-windows-start.test.ts` fails on Windows CI when the start holds the event loop.
+Those steps report their times (`setStudioStepLog`); with the session's own steps and the core's
+boot marks they land in `studio.log`, so a slow start names its slow step. The core's Windows
+sandbox starts in the background (`startInBackground`): `create` refuses only what Set up fixes,
+the window opens on the games, and every launch waits for the rest or retries a failed start.
+The patch changes neither sandbox policy nor command execution. Re-review on dependency changes.
 
 External provider clean-profile acceptance: after rebuilding the package, run
 `STUDIO_ACCEPT_CODEX=/absolute/external/codex STUDIO_ACCEPT_CLAUDE=/absolute/external/claude node tests/e2e/run-clean-provider-profiles.mjs`.

@@ -160,23 +160,23 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
   [`src/main/ipc-handle.ts`](../../src/main/ipc-handle.ts). Plugin, MCP, terminal and permission
   channels accept only the main window's top-level frame. Follow the [IPC recipe](recipes.md#ipc-channel).
 - **Boot state.** The renderer first calls `bootState` (`studio:boot`, registered before any core;
-  contract in [`src/shared/boot.ts`](../../src/shared/boot.ts)): the platform, which it sets as
-  `data-platform` on the root, and the phase. When `ProcessSandbox` raises
-  `SandboxUnavailableError` ([`src/substrate/sandbox-unavailable.ts`](../../src/substrate/sandbox-unavailable.ts):
-  unsupported platform, missing Linux tools found by a PATH lookup, Windows `not_provisioned` or
-  `wfp_fence_inactive` by code, Linux `isolation-blocked` from
-  [`linux-isolation.ts`](../../src/substrate/linux-isolation.ts)), main holds the boot gate
-  ([`src/main/boot-gate.ts`](../../src/main/boot-gate.ts)) and opens a core-less setup window
-  instead of exiting; `studio:boot.retry` recreates the core and, once started, replaces
-  that window with the studio. On Windows, `studio:boot.setup` (native) first installs the sandbox
-  with the unpacked srt-win
-  ([`src/substrate/windows-sandbox-setup.ts`](../../src/substrate/windows-sandbox-setup.ts), one
-  UAC prompt) and retries; a dismissed prompt changes nothing. Other startup failures keep the error dialog and exit; smoke
-  and developer launches still fail (the `sandbox-setup` fixture shows the screen over a ready
-  core). The window's title bar comes from
+  contract in [`src/shared/boot.ts`](../../src/shared/boot.ts)): the platform (`data-platform` on
+  the root) and the phase. When `ProcessSandbox` raises `SandboxUnavailableError`
+  ([`src/substrate/sandbox-unavailable.ts`](../../src/substrate/sandbox-unavailable.ts):
+  unsupported platform, missing Linux tools, Windows `not_provisioned` or `wfp_fence_inactive`,
+  Linux `isolation-blocked` from [`linux-isolation.ts`](../../src/substrate/linux-isolation.ts)),
+  main holds the boot gate ([`src/main/boot-gate.ts`](../../src/main/boot-gate.ts)) on a core-less
+  setup window; `studio:boot.retry` recreates the core, whose window replaces it. Windows runs
+  `studio:boot.setup` (native,
+  [`src/substrate/windows-sandbox-setup.ts`](../../src/substrate/windows-sandbox-setup.ts), one
+  UAC prompt) by itself; failures offer `studio:boot.report` (native). Windows opens that window
+  before the core (phase `starting`, stepped by boot marks). A harness that would not start, a
+  core failing there, or a start past three minutes (Try again relaunches) holds the gate on
+  `failed`: Try again, the report, Quit (`studio:boot.quit`). Other failures show the error
+  dialog and exit; smoke and developer launches fail. The window's title bar comes from
   [`src/main/window-chrome.ts`](../../src/main/window-chrome.ts): `hiddenInset` on macOS
-  (lights on the headers' line), a themed 48 px `titleBarOverlay` on Windows and Linux
-  (`studio:window.controls`).
+  (lights centred on headers), a themed 48 px `titleBarOverlay` on Windows (see-through on
+  Home) and Linux (`studio:window.controls`).
 - [`src/main/studio-core.ts`](../../src/main/studio-core.ts) keeps the core's lifecycle, the event
   log's front door, settings and public methods. It assembles the EventStore, snapshots,
   `GameWorkspaces`, the engine registry, the preview pool and the `HarnessHost`.
@@ -370,6 +370,8 @@ holds the registered engines, builds the `EngineDescriptor` list the UI reads (`
 answers fallbacks: a rate limit falls back only to a direct engine; context overflow and auth fall
 back to nothing. `StudioCore.init` registers the engines and sets the preferred order: local first
 (it cannot be rate limited), then the subscriptions.
+[`main/engine-boot.ts`](../../src/main/engine-boot.ts) answers the bootstrap with the last
+launch's checked engines while this launch checks.
 
 **Provider table.** [`src/shared/providers.ts`](../../src/shared/providers.ts) `PROVIDERS` is the one
 table of provider identity: id, the label a person says, whether it is a subscription, its login
@@ -396,8 +398,8 @@ spawner for it, `claudeLaunchOptions`) and stops with its whole tree (`taskkill 
 [`src/substrate/process-tree.ts`](../../src/substrate/process-tree.ts)). Studio or game-local
 dependencies and packaged binaries are excluded. A persisted override that is not ready yields to a
 ready automatic installation, an explicit executable never. Diagnostics share a 15-second
-cache; sessions skip it but reuse the login PATH and unchanged binaries' probe answers until
-Recheck. Running processes keep theirs. `main/index.ts` configures protected `engine-homes/coding-clis.json`, which no
+cache; sessions skip it but reuse the login PATH and unchanged binaries' probe answers (kept
+across launches) until Recheck. Running processes keep theirs. `main/index.ts` configures protected `engine-homes/coding-clis.json`, which no
 renderer or agent channel can write. Descriptors carry `account` (login source, variable, what
 signing out leaves, CLI state and version). Fixture and smoke sessions search no paths or standard
 locations (`configureCodingClis`), so status checks never run a machine-installed provider or report
@@ -943,7 +945,7 @@ not in the caller's workspace.
 
 **Genex cover** (`cover.ts`): the game's `genex-cover` demo, shot with `observe`'s `still` into the
 plugin's `covers/<project>/`, sent by `genex cover --json` after a recorded publish (the next one
-aborts it) or by `genex__cover-set`.
+aborts it), with the kept `genex-clip` clip after it, or by `genex__cover-set` (the picture only).
 
 **Plugin skills.** A manifest skill is inline text or (API 3) a package `.md` file with a summary
 (`PluginSkill`, `shared/plugins.ts`). `PluginRegistry.snapshot()` reads tools, guidance and the

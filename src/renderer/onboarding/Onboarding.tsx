@@ -72,6 +72,7 @@ import {
   ConnectViewKind,
   installsCli,
   markState,
+  startTrouble,
   type ConnectView,
   type Subscription,
 } from "./state.ts";
@@ -843,7 +844,8 @@ function useSubscriptions(engines: EngineDescriptor[], onEnginesRefresh: () => v
   const recheck = async (id: Subscription) => {
     setChecking((current) => ({ ...current, [id]: true }));
     try {
-      await auth(id).refresh();
+      // A CLI that is signed in but did not start is looked at by starting it again.
+      await Promise.all([auth(id).refresh(), window.studio.refreshModels(id).catch(() => false)]);
     } finally {
       setChecking((current) => ({ ...current, [id]: false }));
     }
@@ -865,6 +867,8 @@ function useSubscriptions(engines: EngineDescriptor[], onEnginesRefresh: () => v
   };
   const trouble = (id: Subscription): string | null | undefined => {
     if (views[id].kind === ConnectViewKind.On) return null;
+    const notStarting = startTrouble(id, auth(id).engine);
+    if (notStarting) return notStarting;
     const installProblem = installer(id).problem;
     if (installProblem) return installProblem;
     if (id === EngineId.ClaudeCode)

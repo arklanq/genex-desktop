@@ -356,7 +356,8 @@ async function buildGodot(root, resources, sdk) {
 async function buildUnity(root, resources, sdk) {
   const unity = path.join(resources, "plugins/unity");
   await mkdir(unity, { recursive: true });
-  await cp(path.join(root, "src/plugins/unity/plugin.json"), path.join(unity, "plugin.json"));
+  for (const file of ["plugin.json", "icon.svg"])
+    await cp(path.join(root, "src/plugins/unity", file), path.join(unity, file));
   // Genex's own type goes in as data: a panel can load no font from anywhere else.
   const panel = await inlinePanelSdk(await readFile(path.join(root, "src/plugins/unity/panel.html"), "utf8"), sdk);
   await writeFile(path.join(unity, "panel.html"), await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")));

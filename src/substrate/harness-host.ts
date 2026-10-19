@@ -13,6 +13,7 @@
  *    restarts, appending `workspace_restored`.
  */
 import type { ChildProcess } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { atomicWriteJson, ensureDir, listJsonFiles, readJson } from "./fsx.ts";
 import { shortId } from "./ids.ts";
@@ -35,7 +36,7 @@ import {
 } from "../shared/protocol.ts";
 import { StudioPlatform } from "../shared/boot.ts";
 import { type ProcessSandbox, killChild, shellQuote } from "./spawn.ts";
-import { longPath } from "./windows-sandbox.ts";
+import { longPath, windowsAccessReport } from "./windows-sandbox.ts";
 import { HarnessInbox } from "./harness-inbox.ts";
 import { rpcDeadlineMs } from "./rpc-deadlines.ts";
 
@@ -57,14 +58,16 @@ const SUSPENDED_TICK_FACTOR = 3;
 const DEFAULT_CRASH_LOOP = { count: 3, windowMs: 5 * MINUTE_MS } as const;
 /** How much of a malformed protocol line the log keeps. */
 const MALFORMED_LINE_PREVIEW_CHARS = 200;
+/** The newest stderr lines a boot that exits carries in its error, so the failure says why. */
+const BOOT_STDERR_LINES = 8;
 
 const MESSAGE = {
   NotReady: "harness did not report ready within timeout",
   NotRunning: "harness is not running",
   Exited: "harness exited",
   DispatchFailed: "dispatch failed",
-  ExitedDuringBoot: (code: number | null, signal: NodeJS.Signals | null) =>
-    `harness exited during boot (code ${code}, signal ${signal})`,
+  ExitedDuringBoot: (code: number | null, signal: NodeJS.Signals | null, stderr: readonly string[]) =>
+    [`harness exited during boot (code ${code}, signal ${signal})`, ...stderr].join("\n"),
   DispatchTimedOut: (type: string) => `dispatch ${type} timed out`,
   UnknownMethod: (method: string) => `unknown substrate method: ${method}`,
   RpcDeadline: (method: string, deadlineMs: number) =>
@@ -179,6 +182,8 @@ export { HarnessState };
 export class HarnessHost {
   readonly options: HarnessHostOptions;
   #child: ChildProcess | null = null;
+  /** The running self's newest stderr lines, for the error a boot that exits rejects with. */
+  #stderrTail: readonly string[] = [];
   #codec = new LineCodec();
   #state: HarnessState = HarnessState.Stopped;
   #nextDispatchId = 1;
@@ -306,8 +311,14 @@ export class HarnessHost {
       }
     });
     let stderr = "";
+    const tail: string[] = [];
+    this.#stderrTail = tail;
     const emitStderr = (line: string) => {
-      if (line.trim()) this.options.onLog?.(line.replace(/\r$/, ""), "stderr");
+      if (!line.trim()) return;
+      const text = line.replace(/\r$/, "");
+      this.options.onLog?.(text, "stderr");
+      tail.push(text);
+      if (tail.length > BOOT_STDERR_LINES) tail.shift();
     };
     child.stderr?.setEncoding("utf8");
     child.stderr?.on("data", (chunk: string) => {
@@ -398,6 +409,18 @@ export class HarnessHost {
     this.#intentionalStop = true;
     this.#stopHeartbeatMonitor();
     killChild(child, this.#platform);
+  }
+
+  /**
+   * Windows, sandboxed: who may open each folder from the profile down to the harness's files, in
+   * the log after a boot that exited. Its sandbox user walks every one of them before it runs a line.
+   */
+  async #logBootAccess(): Promise<void> {
+    if (this.#platform !== StudioPlatform.Windows || !this.options.sandbox.enabled) return;
+    const long = (p: string) => longPath(p, this.#platform);
+    const paths = [path.dirname(long(this.options.bootstrap)), long(this.options.workspace)];
+    const lines = await windowsAccessReport(long(os.homedir()), paths).catch(() => []);
+    for (const line of lines) this.options.onLog?.(`[host] ${line}`, "stderr");
   }
 
   get #platform(): NodeJS.Platform {
@@ -611,7 +634,9 @@ export class HarnessHost {
     const info: ExitInfo = { at: this.#now(), code, signal, harnessVersion: this.#harnessVersion };
     const waiters = this.#readyWaiters;
     this.#readyWaiters = [];
-    for (const waiter of waiters) waiter.reject(new Error(MESSAGE.ExitedDuringBoot(code, signal)));
+    const said = this.#stderrTail;
+    for (const waiter of waiters) waiter.reject(new Error(MESSAGE.ExitedDuringBoot(code, signal, said)));
+    if (waiters.length > 0) void this.#logBootAccess();
     for (const [, pending] of this.#pendingDispatch) pending.reject(new Error(MESSAGE.Exited));
     this.#pendingDispatch.clear();
 

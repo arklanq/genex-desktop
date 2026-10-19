@@ -2,10 +2,13 @@
  * Play: the page shown (a shelf, Friends or someone's profile), the shelves' counts and tabs, the
  * pages of genex.games' catalog read so far, Recent, and the game the viewer shows. A tab read once draws at once when it comes back, and is read again behind it once a
  * minute old. Opening a game shows its cover at once and remembers it in Recent; main's
- * `UiEvent.PlayViewer` then says how the viewer goes.
+ * `UiEvent.PlayViewer` then says how the viewer goes. The Assets shelf keeps its switchers' choice,
+ * the person's own library as Mine reads it, and the whole catalog its kind switcher reads.
  */
 import { createStore, type StoreApi } from "zustand/vanilla";
+import type { LibraryPage, LibraryQuery } from "../../shared/asset-library.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
+import type { GenexCatalogItem } from "../../shared/mention-corpus.ts";
 import {
   PLAY_SHELF_TABS,
   PLAY_SHELVES,
@@ -19,7 +22,19 @@ import {
   type RemixProgress,
   RemixStep,
 } from "../../shared/play.ts";
+import { type PlayChangeResult, PlayChangeOutcome, type PlayGameChange } from "../../shared/play-manage.ts";
 import type { StudioApi } from "../../shared/studio-api.ts";
+import { changedGame } from "../play/card-menu/manage-model.ts";
+import {
+  ALL_ASSETS,
+  type AssetView,
+  EMPTY_LIBRARY,
+  type LibraryFeed,
+  type LibraryKey,
+  libraryKind,
+  sameLibraryKey,
+  withLibraryPage,
+} from "../play/asset-tiles.ts";
 import {
   countedSlugs,
   EMPTY_FEED,
@@ -102,7 +117,22 @@ export interface PlayState {
   remixFailed: boolean;
   /** The viewer's guest card asked to sign in: the shell signs in to Genex once (`useGuestSignIn`). */
   installAsked: boolean;
+  /** The Assets shelf's switchers: whose assets, and which kind; kept while other shelves show. */
+  assetView: AssetView;
+  /** The person's own library as Mine reads it, for one kind and search at a time. */
+  library: LibraryFeed;
+  /** The whole catalog, read once for the kind switcher's choices on Everyone. */
+  assetCatalog: AssetCatalog;
 }
+
+/** The whole catalog as the Assets shelf read it. */
+export interface AssetCatalog {
+  items: GenexCatalogItem[];
+  status: FeedStatus;
+  at: number;
+}
+
+const EMPTY_CATALOG: AssetCatalog = { items: [], status: FeedStatus.Loading, at: 0 };
 
 /** Play before anything is read: on Games, each shelf's first tab, and Recent as this profile remembers it. */
 export const initialPlay = (recent: PlayRecentEntry[] = []): PlayState => ({
@@ -117,6 +147,9 @@ export const initialPlay = (recent: PlayRecentEntry[] = []): PlayState => ({
   remixed: null,
   remixFailed: false,
   installAsked: false,
+  assetView: ALL_ASSETS,
+  library: EMPTY_LIBRARY,
+  assetCatalog: EMPTY_CATALOG,
 });
 
 /** A tab's state, or the empty one. */
@@ -202,6 +235,29 @@ export function onlineCounted(state: PlayState, category: PlayCategory, counts: 
   return games === feed.games ? state : withFeed(state, category, { ...feed, games });
 }
 
+/**
+ * A game was changed from its card's menu: every tab and Recent show `next` in its place, or drop
+ * it once it left the catalog (null).
+ */
+export function gameChanged(state: PlayState, game: Pick<PlayGame, "id" | "slug">, next: PlayGame | null): PlayState {
+  const feeds: PlayState["feeds"] = {};
+  for (const [category, feed] of Object.entries(state.feeds) as Array<[PlayCategory, FeedState]>) {
+    const at = feed.games.findIndex((shown) => shown.id === game.id);
+    if (at === -1) {
+      feeds[category] = feed;
+      continue;
+    }
+    const games = next ? feed.games.with(at, next) : feed.games.filter((shown) => shown.id !== game.id);
+    feeds[category] = { ...feed, games };
+  }
+  const recent = next
+    ? state.recent.map((entry) =>
+        entry.slug === game.slug ? { slug: next.slug, title: next.title, coverUrl: next.coverUrl } : entry,
+      )
+    : state.recent.filter((entry) => entry.slug !== game.slug);
+  return { ...state, feeds, recent };
+}
+
 /** A game was opened: its cover shows at once, and it leads Recent. */
 export function gameOpened(state: PlayState, game: PlayRecentEntry): PlayState {
   return {
@@ -217,12 +273,22 @@ export function gameOpened(state: PlayState, game: PlayRecentEntry): PlayState {
   };
 }
 
-/** Main's news about the viewer; the guest card's Sign in waits for the shell. */
+/** Whether main's news is the viewer shown closing for its bar's Remix: the app makes the copy then. */
+export const remixClosed = (shown: ViewerShown | null, event: PlayViewerEvent): boolean =>
+  event.remix === true && shown?.slug === event.slug && shown.openId === event.openId;
+
+/**
+ * Main's news about the viewer; the guest card's Sign in waits for the shell. The maker's name
+ * closes the viewer onto their profile.
+ */
 export function viewerReported(state: PlayState, event: PlayViewerEvent): PlayState {
   const viewer = viewerAfter(state.viewer, event);
   const installAsked = state.installAsked || event.install === true;
   const same = viewer === state.viewer && installAsked === state.installAsked;
-  return same ? state : { ...state, viewer, installAsked };
+  if (same) return state;
+  const next = { ...state, viewer, installAsked };
+  const closed = state.viewer !== null && viewer === null;
+  return closed && event.profile ? profileShown(next, event.profile) : next;
 }
 
 /** Main never answered the opening shown: its cover says it failed, with Try again. */
@@ -296,6 +362,67 @@ export const remixFailureTold = (state: PlayState): PlayState =>
 export const installAnswered = (state: PlayState): PlayState =>
   state.installAsked ? { ...state, installAsked: false } : state;
 
+/** A switcher on the Assets shelf turned: whose assets, or which kind. The same choice changes nothing. */
+export function assetViewChosen(state: PlayState, change: Partial<AssetView>): PlayState {
+  const view = { ...state.assetView, ...change };
+  const same = view.scope === state.assetView.scope && view.kind === state.assetView.kind;
+  return same ? state : { ...state, assetView: view };
+}
+
+/**
+ * A library page is on its way: a further one marks itself coming; a first one keeps the list it
+ * reads again, and otherwise starts the new list empty and loading.
+ */
+export function libraryRequested(state: PlayState, key: LibraryKey, more: boolean): PlayState {
+  const feed = state.library;
+  if (more) return { ...state, library: { ...feed, loadingMore: true, moreFailed: false } };
+  if (sameLibraryKey(feed, key) && feed.assets.length > 0) return state;
+  return { ...state, library: { ...EMPTY_LIBRARY, kind: key.kind, query: key.query.trim() } };
+}
+
+/** A library page arrived. */
+export const libraryLoaded = (
+  state: PlayState,
+  key: LibraryKey,
+  page: LibraryPage,
+  more: boolean,
+  at: number,
+): PlayState => ({ ...state, library: withLibraryPage(state.library, key, page, more, at) });
+
+/**
+ * A library page could not be read: a list with assets keeps them (a further page's failure is
+ * said under them), an empty one says it failed.
+ */
+export function libraryFailed(state: PlayState, more: boolean): PlayState {
+  const feed = state.library;
+  if (more) return { ...state, library: { ...feed, loadingMore: false, moreFailed: true } };
+  if (feed.assets.length > 0) return { ...state, library: { ...feed, loadingMore: false } };
+  return { ...state, library: { ...feed, status: FeedStatus.Failed, loadingMore: false } };
+}
+
+/** The catalog is on its way: what was read stays; nothing read yet says it is loading. */
+export const catalogRequested = (state: PlayState): PlayState =>
+  state.assetCatalog.items.length > 0 ? state : { ...state, assetCatalog: { ...EMPTY_CATALOG } };
+
+/** The catalog arrived. */
+export const catalogLoaded = (state: PlayState, items: GenexCatalogItem[], at: number): PlayState => ({
+  ...state,
+  assetCatalog: { items, status: FeedStatus.Ready, at },
+});
+
+/** The catalog could not be read: what was read stays; nothing read says it failed. */
+export const catalogFailed = (state: PlayState): PlayState =>
+  state.assetCatalog.items.length > 0
+    ? state
+    : { ...state, assetCatalog: { ...state.assetCatalog, status: FeedStatus.Failed } };
+
+/** The library read a key asks genex.games for, the page after `cursor` when there is one. */
+function libraryQuery(key: LibraryKey, cursor: string | null): LibraryQuery {
+  const kind = libraryKind(key.kind);
+  const query = key.query.trim();
+  return { ...(kind ? { kind } : {}), ...(query ? { query } : {}), ...(cursor ? { before: cursor } : {}) };
+}
+
 /** Play's store and the reads and actions it runs. */
 export interface PlayStore extends StoreApi<PlayState> {
   /** Read the shelves' counts and which tabs have something in them. */
@@ -322,21 +449,86 @@ export interface PlayStore extends StoreApi<PlayState> {
   remix(game: PlayGame): Promise<void>;
   /** Copy the viewer's game as a card's is: the viewer closes at once. */
   remixViewed(): Promise<void>;
+  /** Turn the Assets shelf's switchers. */
+  chooseAssets(change: Partial<AssetView>): void;
+  /** Read the person's library for a kind and search (when it has none or is stale), or with `more` its next page. */
+  loadLibrary(key: LibraryKey, options?: { more?: boolean; force?: boolean }): Promise<void>;
+  /** Read the whole catalog for the kind switcher (when it has none or is stale). */
+  loadAssetCatalog(options?: { force?: boolean }): Promise<void>;
+  /**
+   * Change a published game from its card's menu; its cards change at once. Throws when
+   * genex.games refused it or could not be reached.
+   */
+  manage(game: PlayGame, change: PlayGameChange): Promise<PlayChangeResult>;
+  /** A game's new cover took: its cards show it. */
+  coverChanged(game: PlayGame, coverUrl: string): void;
 }
 
-type PlayApi = Pick<StudioApi, "playFeed" | "playShelves" | "playOnline" | "playOpen" | "playClose" | "playRemix">;
+type PlayApi = Pick<
+  StudioApi,
+  | "playFeed"
+  | "playShelves"
+  | "playOnline"
+  | "playOpen"
+  | "playClose"
+  | "playRemix"
+  | "playManage"
+  | "assetLibrary"
+  | "playCatalog"
+>;
 
-/** Play's store over `api`, remembering Recent in `storage`. */
+/** The store's `manage`: send the change, then show it on every card of the game at once. */
+function managing(api: PlayApi, shown: (game: PlayGame, next: PlayGame | null) => void): PlayStore["manage"] {
+  return async (game, change) => {
+    const result = await api.playManage(game.id, change);
+    if (result.outcome !== PlayChangeOutcome.Done) return result;
+    shown(game, changedGame(game, change, result));
+    return result;
+  };
+}
+
+/** Told a game changed from a card's menu, with its card after (null once it left the catalog). */
+export type GameChangeListener = (gameId: string, next: PlayGame | null) => void;
+
+/** A page without the games that left the catalog from a card's menu: a read begun before cannot bring one back. */
+const withoutGone = (page: PlayFeedPage, gone: ReadonlySet<string>): PlayFeedPage =>
+  gone.size === 0 ? page : { ...page, games: page.games.filter((game) => !gone.has(game.id)) };
+
+/**
+ * Show a game's change on every card and in Recent (kept in `storage`), remember one that left the
+ * catalog in `gone`, and tell `onGameChanged`.
+ */
+function showing(
+  store: StoreApi<PlayState>,
+  storage: KeyValueStorage | null,
+  gone: Set<string>,
+  onGameChanged: GameChangeListener,
+) {
+  return (game: PlayGame, next: PlayGame | null): void => {
+    if (!next) gone.add(game.id);
+    store.setState((state) => gameChanged(state, game, next), true);
+    writeRecent(store.getState().recent, storage);
+    onGameChanged(game.id, next);
+  };
+}
+
+/**
+ * Play's store over `api`, remembering Recent in `storage`; `onGameChanged` hears every change made
+ * from a card's menu, so the cards other stores show (a profile's) change too.
+ */
 export function createPlayStore(
   api: PlayApi,
   storage: KeyValueStorage | null,
   now: () => number = Date.now,
+  onGameChanged: GameChangeListener = () => {},
 ): PlayStore {
   const store = createStore<PlayState>()(() => initialPlay(readRecent(storage)));
   const set = (change: (state: PlayState) => PlayState) => store.setState(change, true);
   const inFlight = new Map<string, Promise<void>>();
   /** Each tab's first-page reads so far: a further page read before the latest one lands nowhere. */
   const firstReads = new Map<PlayCategory, number>();
+  /** The games unpublished or deleted from a card's menu, which no later page shows again. */
+  const gone = new Set<string>();
 
   const loadShelves = async (): Promise<void> => {
     try {
@@ -355,7 +547,7 @@ export function createPlayStore(
     const stale = () => more && firstReads.get(category) !== generation;
     set((state) => feedRequested(state, category, more));
     try {
-      const page = await api.playFeed({ category, cursor });
+      const page = withoutGone(await api.playFeed({ category, cursor }), gone);
       set((state) => (stale() ? moreDropped(state, category) : feedLoaded(state, category, page, more, now())));
     } catch {
       set((state) => feedFailed(state, category, more));
@@ -391,7 +583,7 @@ export function createPlayStore(
     set((state) => gameOpened(state, game));
     writeRecent(store.getState().recent, storage);
     try {
-      await api.playOpen(game.slug);
+      await api.playOpen(game.slug, game.title);
     } catch {
       set((state) => openRefused(state, game.slug));
     }
@@ -414,7 +606,12 @@ export function createPlayStore(
     }
   };
 
+  const assets = assetReads(api, store, set, now);
+  const shown = showing(store, storage, gone, onGameChanged);
+  const manage = managing(api, shown);
+
   return Object.assign(store, {
+    ...assets,
     loadShelves,
     chooseShelf: (shelf: PlayShelf) => set((state) => shelfChosen(state, shelf)),
     showFriends: () => set(friendsShown),
@@ -438,5 +635,75 @@ export function createPlayStore(
       await close().catch(() => {});
       await made;
     },
+    manage,
+    coverChanged: (game: PlayGame, coverUrl: string) => shown(game, { ...game, coverUrl }),
   });
+}
+
+/** The Assets shelf's reads: the person's library page by page, and the whole catalog. */
+function assetReads(
+  api: Pick<PlayApi, "assetLibrary" | "playCatalog">,
+  store: StoreApi<PlayState>,
+  set: (change: (state: PlayState) => PlayState) => void,
+  now: () => number,
+) {
+  const inFlight = new Map<string, Promise<void>>();
+  /** First reads of the library so far: a further page asked before a newer first read lands nowhere. */
+  let libraryReads = 0;
+  const once = (key: string, read: () => Promise<void>): Promise<void> => {
+    const running = inFlight.get(key);
+    if (running) return running;
+    const started = read().finally(() => inFlight.delete(key));
+    inFlight.set(key, started);
+    return started;
+  };
+
+  /**
+   * One library read. Its answer lands only while the list is still the one it was asked for (a
+   * list the person turned away from is not shown under another's switchers), and a further page
+   * only while no first read has started since.
+   */
+  const readLibrary = async (key: LibraryKey, more: boolean): Promise<void> => {
+    const cursor = more ? store.getState().library.nextCursor : null;
+    const generation = libraryReads;
+    const current = (state: PlayState) => sameLibraryKey(state.library, key) && (!more || generation === libraryReads);
+    try {
+      const page = await api.assetLibrary(libraryQuery(key, cursor));
+      set((state) => (current(state) ? libraryLoaded(state, key, page, more, now()) : state));
+    } catch {
+      set((state) => (current(state) ? libraryFailed(state, more) : state));
+    }
+  };
+
+  const loadLibrary = (key: LibraryKey, options: { more?: boolean; force?: boolean } = {}): Promise<void> => {
+    const more = options.more === true;
+    const feed = store.getState().library;
+    const same = sameLibraryKey(feed, key);
+    if (more && (!same || !feed.nextCursor || feed.loadingMore)) return Promise.resolve();
+    const fresh = same && feed.status === FeedStatus.Ready && now() - feed.at < FEED_STALE_MS;
+    if (!more && fresh && !options.force) return Promise.resolve();
+    if (!more) libraryReads += 1;
+    // The list takes the key before a read is joined: coming back to a list whose read is still on
+    // its way shows that list again, and its answer lands there.
+    set((state) => libraryRequested(state, key, more));
+    return once(`library:${key.kind}:${key.query.trim()}:${more}`, () => readLibrary(key, more));
+  };
+
+  const loadAssetCatalog = (options: { force?: boolean } = {}): Promise<void> => {
+    const catalog = store.getState().assetCatalog;
+    const fresh = catalog.status === FeedStatus.Ready && now() - catalog.at < FEED_STALE_MS;
+    if (fresh && !options.force) return Promise.resolve();
+    return once("catalog", async () => {
+      set(catalogRequested);
+      try {
+        const items = await api.playCatalog();
+        set((state) => catalogLoaded(state, items, now()));
+      } catch {
+        set(catalogFailed);
+      }
+    });
+  };
+
+  const chooseAssets = (change: Partial<AssetView>) => set((state) => assetViewChosen(state, change));
+  return { loadLibrary, loadAssetCatalog, chooseAssets };
 }

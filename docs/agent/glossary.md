@@ -171,7 +171,8 @@ Every project's Loop is the director's wake loop, in one of two profiles (`LoopP
 - **Finish check**: the lead's `finish` claim checked by a reviewer. The seed asks `finish.review`
   and settles with `finish.settle` (`loop/finish-check.ts`); only the host seats the reviewer and
   writes the `finish_check` record (`src/main/core/finish-review.ts`); three no's in a row since
-  the run last opened stop it (`MAX_FINISH_REJECTIONS`, `src/shared/finish-check.ts`). Builds draws
+  the run last opened stop it (`MAX_FINISH_REJECTIONS`, `src/shared/finish-check.ts`), except a
+  timed Loop with more than `FINISH_TIME_LEFT_MS` (20 min) left, which keeps working. Builds draws
   it as Checking, Not yet, Done or Stopped (`FinishCheckState`, `FinishLook` in
   `src/renderer/run-tree.ts`).
 - **Soft cap**: a timed Loop's hours (`loop/time-cap.ts`): a heads-up 15 minutes before, time's up

@@ -225,10 +225,26 @@ async function unnamedSave(call: Call, sent: Sent): Promise<ToolResult | undefin
   return untitled ? errorResult(MESSAGE.UntitledScene) : undefined;
 }
 
-/** Marks or forgets the agent's own play once the editor took its play or its stop. */
-async function notePlay(call: Call, command: string): Promise<void> {
-  if (command === Command.Play) await call.agentPlay.started().catch(() => undefined);
-  if (command === Command.Stop) await call.agentPlay.stopped().catch(() => undefined);
+/** The last play or stop a call runs, alone or in a batch: what the editor's Play mode ends up as. */
+const lastPlayChange = (sent: Sent): string | undefined =>
+  commandsOf(sent)
+    .map(({ command }) => command)
+    .filter((command) => command === Command.Play || command === Command.Stop)
+    .at(-1);
+
+/**
+ * Marks the agent's own play before the editor gets the command: entering Play reloads the
+ * scripts, and the editor lock may ask whose play it is before the command answers. A play that
+ * never started is forgotten by the lock's probe once it sees the editor stopped.
+ */
+async function markPlay(call: Call, sent: Sent): Promise<void> {
+  if (commandsOf(sent).some(({ command }) => command === Command.Play))
+    await call.agentPlay.started().catch(() => undefined);
+}
+
+/** Forgets the agent's own play once the editor took its stop. */
+async function noteStop(call: Call, sent: Sent): Promise<void> {
+  if (lastPlayChange(sent) === Command.Stop) await call.agentPlay.stopped().catch(() => undefined);
 }
 
 /** The editor's catalogue for a call, or the answer that says why it could not be read. */
@@ -264,9 +280,10 @@ async function callRunCommand(call: Call, args: Record<string, unknown>): Promis
   if (!look.ok) return problemResult(look, sent.command);
   const held = await unnamedSave(call, sent);
   if (held) return held;
+  await markPlay(call, sent);
   const answer = await runCommand(call.at.root, sent, call.deps, { signal: call.signal });
   if (!answer.ok) return problemResult(answer, sent.command);
-  await notePlay(call, sent.command);
+  await noteStop(call, sent);
   return commandResult(answer.result);
 }
 

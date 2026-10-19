@@ -15,6 +15,8 @@ export interface ProviderUsageReport {
  * id: Codex names the bucket after itself). A bucket without an id reads as that one.
  */
 const CODEX_MAIN_LIMIT = "codex";
+/** The id prefix of a model-scoped weekly limit (`model_scoped`), such as `model:fable`. */
+export const MODEL_LIMIT_PREFIX = "model:";
 
 const percentOf = (value: unknown) =>
   typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : null;
@@ -51,7 +53,7 @@ export function normalizeClaudeUsage(value: unknown, measuredAt = new Date().toI
     const label = `Weekly · ${name}`;
     if (!name || windows.some((row) => row.label === label)) continue;
     windows.push({
-      id: `model:${name.toLowerCase()}`,
+      id: `${MODEL_LIMIT_PREFIX}${name.toLowerCase()}`,
       label,
       percent: percentOf(window.utilization),
       ...resetOf(window.resets_at),

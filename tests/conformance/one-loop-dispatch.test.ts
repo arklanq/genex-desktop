@@ -11,7 +11,7 @@ import { setImmediate } from "node:timers/promises";
 import * as builtinHookParts from "../../src/harness-seed/loop/builtin-hooks.ts";
 import { afterLeadLoopRun, afterLoopRunGrant } from "../../src/harness-seed/loop/after-loop-run.ts";
 import { afterLoopRunNote } from "../../src/harness-seed/loop/after-loop-run-prompts.ts";
-import { launchFromIntake, startsNextOpenLoop } from "../../src/harness-seed/loop/chat-dispatch.ts";
+import { handleUserMessage, launchFromIntake, startsNextOpenLoop } from "../../src/harness-seed/loop/chat-dispatch.ts";
 import * as directorParts from "../../src/harness-seed/loop/director.ts";
 import * as openContractParts from "../../src/harness-seed/loop/director/open/contract.ts";
 import { servesOpenLoop } from "../../src/harness-seed/loop/director/open/contract.ts";
@@ -696,6 +696,34 @@ describe("after a Loop in place", () => {
       rows.map(([label, , , next]) => [label, next]),
     );
   });
+
+  it(
+    "Keep building after a finished Loop in place starts the next Loop on its goal and what is left, with no turn deciding",
+    TEST_TIMEOUT,
+    async () => {
+      const host = await hostOn(Project.GodotGame, { facts: GODOT, turns: [finishes] });
+      await host.start();
+      host.turns.push(finishes);
+      // The chat's turn for the tap: begun and ended, with nothing asked of a session in it.
+      host.rec.handle("turn.begin", () => ({ turnId: "turn-keep" }));
+      host.rec.handle("turn.end", () => null);
+      const keep = {
+        type: "user_message",
+        threadId: host.threadId,
+        project: host.game.name,
+        text: "Keep building: fix what’s left.\n- The door sticks.",
+        engine: "claude-code",
+        messageId: "m-keep",
+        autopilot: { hours: 3, keepBuilding: true },
+      };
+      await handleUserMessage(studioOf(host) as never, keep as never);
+      assert.ok(await host.until(() => host.appended("run_started").length > 1), "the next Loop started");
+      const next = host.appended("run_started").at(-1);
+      assert.match(String(next?.goal), /The door sticks/, "what is left is its goal");
+      assert.match(String(next?.goal), new RegExp(String(host.run.goal).slice(0, 20)), "beside the last Loop's goal");
+      assert.ok(await host.until(() => host.appended("run_finished").length > 1), "and it ran to its close");
+    },
+  );
 
   it("a Loop message after it starts the next Loop, even when the game list can't be read", TEST_TIMEOUT, async () => {
     const host = await hostOn(Project.GodotGame, { facts: GODOT, turns: [finishes] });

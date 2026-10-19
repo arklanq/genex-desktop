@@ -65,6 +65,7 @@ import {
   renderEnvFile,
   srtWinExecFailure,
   srtWinPath,
+  windowsDependencyErrors,
   windowsDenyRead,
   windowsRunEnv,
   windowsSessionFor,
@@ -182,6 +183,15 @@ export interface SandboxOptions {
   platform?: NodeJS.Platform;
   /** Test seams for the Windows backend; production finds each of these itself. */
   windows?: WindowsSeams;
+  /**
+   * Windows: `create` checks only what Set up fixes (Git Bash, the sandbox user and its network
+   * filter) and starts the rest behind it. srt-win's network check and folder grants took minutes
+   * on a fresh PC, and the window waited on them; every launch waits for the start anyway.
+   * Elsewhere the sandbox starts in `create` as before.
+   */
+  startInBackground?: boolean;
+  /** Where the sandbox says how long each step of its start took (Windows). */
+  log?: (line: string) => void;
 }
 
 /** What a test may hand the Windows backend instead of letting it look for itself. */
@@ -192,6 +202,8 @@ export interface WindowsSeams {
   session?: WindowsSandboxSession;
   /** The real user's profile folder (default: the home folder). */
   profile?: string;
+  /** sandbox-runtime's Windows dependency check (default: {@link windowsDependencyErrors}). */
+  dependencyErrors?: () => Promise<string[]>;
 }
 
 /** The part of sandbox-runtime's `SandboxManager` this file drives. */
@@ -265,7 +277,8 @@ const MESSAGE = {
  * Refuse, with the typed setup problem, a platform or machine the sandbox cannot run on: the
  * window then offers the fix instead of the app quitting. Missing Linux tools are looked up on
  * PATH only after sandbox-runtime's own check fails. On Windows the dependency check runs srt-win
- * probes of its own, so it is skipped: `initialize` reports a missing setup with a typed code.
+ * probes of its own, so it is skipped here and asked only when a start fails
+ * ({@link asWindowsSetupProblem}).
  */
 function assertSandboxReady(
   runtime: Pick<SandboxRuntime, "isSupportedPlatform" | "checkDependencies">,
@@ -285,8 +298,29 @@ function asSetupProblem(error: unknown): unknown {
   return setup ? new SandboxUnavailableError(setup) : error;
 }
 
+/**
+ * A failed Windows start as the setup problem the window shows, when it is one: by the error's
+ * code, else by sandbox-runtime's dependency check, whose refusal `initialize` throws untyped. A
+ * failure the check does not explain, or a check that fails itself, stays the error it was.
+ */
+async function asWindowsSetupProblem(error: unknown, dependencyErrors: () => Promise<string[]>): Promise<unknown> {
+  const typed = asSetupProblem(error);
+  if (typed !== error) return typed;
+  const errors = await dependencyErrors().catch((): string[] => []);
+  const problem = sandboxProblem({
+    platform: StudioPlatform.Windows,
+    supported: true,
+    dependencyErrors: errors,
+    missingTools: [],
+  });
+  return problem ? new SandboxUnavailableError(problem) : error;
+}
+
 /** What a launch needs from a run or a long-lived start. */
-type LaunchRequest = Pick<RunRequest, "command" | "cwd" | "env" | "label" | "policy" | "stdin" | "confine">;
+type LaunchRequest = Pick<RunRequest, "command" | "cwd" | "env" | "label" | "policy" | "stdin" | "confine"> & {
+  /** A process that outlives this call (the harness): Windows sets the folder grants above its roots again first. */
+  longLived?: boolean;
+};
 
 /** How one process starts: the program, its arguments, its environment, and whether srt wraps it. */
 interface LaunchPlan {
@@ -457,7 +491,10 @@ export class ProcessSandbox {
   /** Domains opened by runs in flight, with how many runs hold each open (PH-3). */
   #opened = new Map<string, number>();
   #initialized = false;
+  /** The start in flight, shared by every caller that needs it; cleared when it fails, so the next one tries again. */
+  #starting: Promise<void> | null = null;
   #initError: Error | null = null;
+  #log: ((line: string) => void) | null = null;
   #toolPath: (() => Promise<string>) | null = null;
   #resolvedToolPath: Promise<string> | null = null;
   readonly #platform: NodeJS.Platform;
@@ -494,7 +531,10 @@ export class ProcessSandbox {
     sandbox.#toolPath = options.toolPath ?? null;
     sandbox.#runtime = options.runtime ?? null;
     sandbox.#seams = options.windows ?? {};
-    if (sandbox.enabled) await sandbox.#initialize();
+    sandbox.#log = options.log ?? null;
+    if (!sandbox.enabled) return sandbox;
+    if (options.startInBackground && platform === StudioPlatform.Windows) await sandbox.#startInBackground();
+    else await sandbox.#initialize();
     return sandbox;
   }
 
@@ -545,6 +585,8 @@ export class ProcessSandbox {
    * process alive. Safe to call twice.
    */
   async dispose(): Promise<void> {
+    // A start in flight joins the session; it leaves only after that.
+    await this.#starting?.catch(() => {});
     if (this.#windows) {
       this.#windows.session.leave(this);
       return;
@@ -561,6 +603,39 @@ export class ProcessSandbox {
 
   async #initialize(): Promise<void> {
     if (this.#initialized) return;
+    this.#starting ??= this.#boot().catch((error: unknown) => {
+      this.#starting = null;
+      throw error;
+    });
+    await this.#starting;
+  }
+
+  /**
+   * Windows: refuse now what Set up fixes, so the window still opens on the setup screen, and
+   * start the rest behind it. A start that fails there is tried again by the first launch, which
+   * reports its error.
+   */
+  async #startInBackground(): Promise<void> {
+    const runtime = this.#runtime ?? (await import("@anthropic-ai/sandbox-runtime")).SandboxManager;
+    assertSandboxReady(runtime, this.#platform);
+    const bash = this.#seams.bash === undefined ? await findGitBash() : this.#seams.bash;
+    if (!bash) throw new SandboxUnavailableError(gitMissingProblem());
+    const gaps = await (this.#seams.dependencyErrors ?? windowsDependencyErrors)().catch((): string[] => []);
+    const problem = sandboxProblem({
+      platform: StudioPlatform.Windows,
+      supported: true,
+      dependencyErrors: gaps,
+      missingTools: [],
+    });
+    if (problem) throw new SandboxUnavailableError(problem);
+    const started = performance.now();
+    this.#initialize().then(
+      () => this.#log?.(`started in the background in ${Math.round(performance.now() - started)} ms`),
+      (error: unknown) => this.#log?.(`background start failed: ${errorMessage(error)}`),
+    );
+  }
+
+  async #boot(): Promise<void> {
     try {
       const SandboxManager = this.#runtime ?? (await import("@anthropic-ai/sandbox-runtime")).SandboxManager;
       assertSandboxReady(SandboxManager, this.#platform);
@@ -603,19 +678,29 @@ export class ProcessSandbox {
     await Promise.all(this.policy.allowWrite.map((dir) => mkdir(dir, { recursive: true })));
     const toolDirs = [(await this.toolPath()) ?? "", process.env.PATH ?? ""].flatMap((value) => value.split(";"));
     const gitRoot = gitRootOf(bash);
+    const installDir = path.dirname(longPath(process.execPath, this.#platform));
     const read = [
-      path.dirname(longPath(process.execPath, this.#platform)),
+      installDir,
       ...grantableToolDirs(toolDirs, profile, this.policy.denyRead),
       ...(insideWindowsPath(profile, gitRoot) ? [gitRoot] : []),
     ];
-    const session = this.#seams.session ?? windowsSessionFor(runtime, { profile, srtWin: srtWinPath() });
+    const session =
+      this.#seams.session ??
+      windowsSessionFor(runtime, {
+        profile,
+        srtWin: srtWinPath(),
+        installDir,
+        ...(this.#log ? { log: this.#log } : {}),
+      });
     const backend = { session, bash, read, profile, curlHome: await writeCurlHome(this.scratchDir) };
     await session
       .join(this, { grants: this.#windowsGrants(backend), config: this.#windowsSessionConfig() })
-      .catch((error: unknown) => {
-        throw asSetupProblem(error);
+      .catch(async (error: unknown) => {
+        throw await asWindowsSetupProblem(error, this.#seams.dependencyErrors ?? windowsDependencyErrors);
       });
     this.#windows = backend;
+    // A folder or deny added while the session started (a start in the background) joins it now.
+    session.update(this, this.#windowsGrants(backend));
   }
 
   /**
@@ -680,7 +765,7 @@ export class ProcessSandbox {
     // Held open until the process is gone, as `run` holds it for the length of a run.
     const close = await this.#openDomains(request.policy);
     try {
-      const plan = await this.#launchPlan(request);
+      const plan = await this.#launchPlan({ ...request, longLived: true });
       const done = () => {
         plan.release?.();
         close();
@@ -787,6 +872,7 @@ export class ProcessSandbox {
     try {
       if (!backend.session.covers(needed))
         throw new SandboxLaunchError(SandboxLaunchCode.NotGranted, [...needed.write, ...needed.read].join(", "));
+      if (request.longLived) await backend.session.refreshAncestors();
       const cwd = longPath(request.cwd, this.#platform);
       const command = `${await this.#runPrelude(backend, request, files)} ${request.command}`;
       const wrapped = await manager

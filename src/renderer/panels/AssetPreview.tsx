@@ -1,9 +1,9 @@
 /**
  * An asset opened over the window: a picture (click to see it at full size), a model or texture in
  * the 3D viewer with its animations in one bar, a clip, text, or why it cannot show. Nothing frames
- * it but Reveal in Finder and Close.
+ * it but its library actions (Save, Share), Reveal in Finder and Close.
  */
-import type { JSX, MouseEvent, RefObject } from "react";
+import type { JSX, MouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Pause, Play } from "lucide-react";
 import { assetPreviewMode } from "../../shared/asset-preview.ts";
@@ -309,6 +309,7 @@ export function AssetPreview({
   asset,
   assets,
   clips = [],
+  library,
   onClose,
   onReveal,
 }: {
@@ -317,6 +318,8 @@ export function AssetPreview({
   assets: ProjectAsset[];
   /** Animation files of this model's rig, played on it after its own clips. */
   clips?: ProjectAsset[];
+  /** Save and Share, left of Reveal. */
+  library?: ReactNode;
   onClose: () => void;
   onReveal: () => void;
 }): JSX.Element {
@@ -333,9 +336,12 @@ export function AssetPreview({
       testId="asset-preview"
       onDismiss={onClose}
       actions={
-        <button type="button" className="lightbox-button" onClick={onReveal}>
-          {fileManagerWords(hostPlatform()).reveal}
-        </button>
+        <>
+          {library}
+          <button type="button" className="lightbox-button" onClick={onReveal}>
+            {fileManagerWords(hostPlatform()).reveal}
+          </button>
+        </>
       }
     >
       <div className="contents" data-asset-preview-mode={mode} data-preview-ready={ready}>

@@ -289,6 +289,28 @@ describe("Use in this game", () => {
     assert.equal(freed.linked, true, freed.message);
   });
 
+  it("a link the host refuses leaves the game's place as it was, still its own", async () => {
+    const mac = await robloxMac({ studios: [{ id: "studio-b", name: "Place1" }] });
+    const file = path.join(mac.home, "Places", "shared.rbxlx");
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, "");
+    const first = await makeGame(mac, "sky-race", "Sky Race");
+    const second = await makeGame(mac, "rally", "Rally");
+    const one = hostFor(mac, first);
+    assert.equal((await action<UsePlaceAnswer>(mac, "use-place", { file }, one.context)).linked, true);
+    const refusing: PluginContext = {
+      ...one.context,
+      host: (async (method: string, args?: Record<string, unknown>) => {
+        if (method === "game.engine.link") throw new Error("The game is busy");
+        return one.context.host(method as never, args as never);
+      }) as unknown as PluginContext["host"],
+    };
+    const answer = await action<UsePlaceAnswer>(mac, "use-place", { studio: "studio-b" }, refusing);
+    assert.equal(answer.reason, PlaceRefusal.Refused);
+    const taken = await action<UsePlaceAnswer>(mac, "use-place", { file }, hostFor(mac, second).context);
+    assert.equal(taken.reason, PlaceRefusal.Taken, "the first game still builds in its place");
+  });
+
   it("refuses a published place another live game builds in, by its id", async () => {
     const studios = [{ id: "studio-a", name: `Obby ${PLACE_ID}`, placeId: PLACE_ID, universeId: UNIVERSE_ID }];
     const mac = await robloxMac({ studios });

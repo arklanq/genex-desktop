@@ -514,6 +514,15 @@ describe("Studio's answers", () => {
     ]);
     await assert.rejects(lstat(path.join(game.marks, AGENT_PLAY_FILE)), "the play mark is gone once it answers");
   });
+
+  it("a playtest agent run during the agent's own play test leaves that play's mark as it was", async () => {
+    const game = await gameIn();
+    const running = JSON.stringify({ since: NOW - 60_000 });
+    await writeFile(path.join(game.marks, AGENT_PLAY_FILE), running);
+    const { studio } = standIn(async () => text("done"));
+    done(await ai(studio)[AskFirstTool.RobloxPlaytest]({ task: "Play it." }, game));
+    assert.equal(await readFile(path.join(game.marks, AGENT_PLAY_FILE), "utf8"), running);
+  });
 });
 
 describe("through the backend", () => {

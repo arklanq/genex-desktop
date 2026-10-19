@@ -31,6 +31,8 @@ import {
   WindowsSandboxSession,
   ancestorDirs,
   ancestorGrants,
+  bundledGitRoot,
+  ensureHostGit,
   findGitBash,
   gitRootFromExecPath,
   gitRootFromRegistry,
@@ -40,9 +42,13 @@ import {
   keepWindowsDenies,
   msysPath,
   msysPathList,
+  granteeOf,
   renderEnvFile,
+  sandboxSidOnce,
+  setupGaps,
   srtWinExecFailure,
   srtWinPath,
+  windowsAccessReport,
   windowsGrantHolders,
   windowsRunEnv,
   writeDeniesBeyondRead,
@@ -257,10 +263,58 @@ describe("read-attributes grants above each root", () => {
     assert.deepEqual(calls, [["1", at("AppData"), FolderAceOp.Grant]]);
   });
 
-  it("grants nothing while the sandbox user does not exist yet", async () => {
+  it("fails, saying why, without the sandbox user's id, rather than leave its folders closed", async () => {
+    // A sync follows a successful initialize, so the user exists. A missing id used to skip every
+    // grant silently, and the harness then stopped at its first walk: EPERM, lstat C:\Users\…\AppData.
     const calls: string[][] = [];
-    await holder(await tmpDir("windows-grants-"), 1, calls, { sid: async () => null }).sync([at("AppData")]);
+    const grants = holder(await tmpDir("windows-grants-"), 1, calls, { sid: async () => null });
+    await assert.rejects(grants.sync([at("AppData")]), /could not read the sandbox user's id/);
     assert.deepEqual(calls, []);
+  });
+
+  it("names the sandbox users' group in the folder grants, which other srt hosts' cleanup leaves alone", () => {
+    const user = "S-1-5-21-1-1001";
+    const group = "S-1-5-21-1-1002";
+    assert.equal(granteeOf({ sid: user, groupSid: group, inSandboxGroup: true }), group);
+    assert.equal(granteeOf({ sid: user, groupSid: group, inSandboxGroup: false }), user, "not a member yet");
+    assert.equal(granteeOf({ sid: user }), user, "an srt-win that names no group");
+    assert.equal(granteeOf({}), null, "no sandbox user yet");
+  });
+
+  it("asks again for the sandbox user's id when a probe comes back empty, and keeps it once found", async () => {
+    const answers = [null, "S-1-5-21-9"];
+    let asked = 0;
+    const sid = sandboxSidOnce(async () => {
+      asked++;
+      return answers.shift() ?? null;
+    }, 0);
+    assert.equal(await sid(), "S-1-5-21-9");
+    assert.equal(await sid(), "S-1-5-21-9");
+    assert.equal(asked, 2, "a found id is never asked for again");
+    let none = 0;
+    const missing = sandboxSidOnce(async () => {
+      none++;
+      return null;
+    }, 0);
+    assert.equal(await missing(), null);
+    assert.equal(none, 3, "three probes, then the caller says why it stops");
+  });
+
+  it("lists who may open each folder from the profile down to the files, for the log", async () => {
+    const listed: string[] = [];
+    const lines = await windowsAccessReport(PROFILE, [at("AppData", "Local", "genex", "app-1")], async (dir) => {
+      listed.push(dir);
+      return `${dir} PC\\srt-sandbox:(RA)\r\n\r\nSuccessfully processed 1 files\r\n`;
+    });
+    assert.deepEqual(listed, [
+      PROFILE,
+      at("AppData"),
+      at("AppData", "Local"),
+      at("AppData", "Local", "genex"),
+      at("AppData", "Local", "genex", "app-1"),
+    ]);
+    assert.equal(lines.length, listed.length * 2, "blank lines are dropped");
+    assert.equal(lines[2], `${at("AppData")} PC\\srt-sandbox:(RA)`);
   });
 });
 
@@ -320,7 +374,7 @@ describe("an entry on one folder alone", () => {
     ]);
     assert.deepEqual(icacls, edits.map(icaclsArgs));
     assert.deepEqual(icacls, [
-      ["C:\\Users\\Семён\\AppData", "/grant", `*${SID}:(RA)`],
+      ["C:\\Users\\Семён\\AppData", "/grant", `*${SID}:(S,RA)`],
       ["C:\\Users\\Семён\\it's", "/remove:g", `*${SID}`],
     ]);
   });
@@ -350,7 +404,7 @@ describe("an entry on one folder alone, on Windows", {
     return readFileSync(file, "utf16le");
   };
   const GUESTS = "S-1-5-32-546";
-  const guestsRead = /\(A;;(?:0x80|LO);;;BG\)/;
+  const guestsRead = /\(A;;0x100080;;;BG\)/;
 
   it("edits each folder of a batch, any name, and says which one it could not", async () => {
     const root = realpathSync.native(await tmpDir("folder-ace-"));
@@ -391,7 +445,7 @@ describe("an entry on one folder alone, on Windows", {
     await mkdir(path.join(elsewhere, "moved"));
     await rename(path.join(elsewhere, "moved"), moved);
     const inheritedElsewhere = /\(A;[A-Z]*ID[A-Z]*;(?:0x80|LO);;;BG\)/;
-    const granted = /\(A;;(?:0x80|LO);;;BU\)/;
+    const granted = /\(A;;0x100080;;;BU\)/;
     assert.match(sddl(moved, root), inheritedElsewhere, "the moved folder kept what it inherited");
     const grants = ancestorGrants(path.join(root, "holders"), {
       sid: async () => USERS,
@@ -447,7 +501,7 @@ describe("read and write denies", () => {
   });
 });
 
-describe("Git Bash and srt-win", () => {
+describe("which Git: Git Bash and the host's git", () => {
   it("reads Git's install folder from the registry or from git --exec-path", () => {
     const reg =
       "\r\nHKEY_LOCAL_MACHINE\\SOFTWARE\\GitForWindows\r\n    InstallPath    REG_SZ    C:\\Program Files\\Git\r\n";
@@ -457,14 +511,45 @@ describe("Git Bash and srt-win", () => {
     assert.equal(gitRootFromExecPath("/usr/libexec/git-core"), null);
   });
 
-  it("prefers the registry, falls back to git, and reports none when neither has bash.exe", async () => {
+  it("finds Genex's own Git in a packaged app's resources, and none outside a packaged app", () => {
+    assert.equal(bundledGitRoot("C:\\Genex\\app-0.1.9\\resources"), "C:\\Genex\\app-0.1.9\\resources\\git");
+    assert.equal(bundledGitRoot(undefined), null);
+  });
+
+  it("prefers an installed Git (registry, then git), then Genex's own, and reports none when none has bash.exe", async () => {
     const regOut = "    InstallPath    REG_SZ    C:\\Git\r\n";
     const exec = "D:/PortableGit/mingw64/libexec/git-core";
+    const bundled = "C:\\Genex\\resources\\git";
     const found = (want: string) => (file: string) => file === want;
     const fail = async () => {
       throw new Error("not found");
     };
     const table: Array<[string, Parameters<typeof findGitBash>[0], string | null]> = [
+      [
+        "an installed Git before the bundled one",
+        { bundled, registry: async () => regOut, execPath: async () => exec, exists: () => true },
+        "C:\\Git\\bin\\bash.exe",
+      ],
+      [
+        "bundled on a PC with no Git",
+        { bundled, registry: fail, execPath: fail, exists: () => true },
+        "C:\\Genex\\resources\\git\\bin\\bash.exe",
+      ],
+      [
+        "bundled only, as the package job runs it, though Git is installed",
+        { bundled, bundledOnly: true, registry: async () => regOut, execPath: async () => exec, exists: () => true },
+        "C:\\Genex\\resources\\git\\bin\\bash.exe",
+      ],
+      [
+        "bundled when the installed Git has no bash.exe",
+        {
+          bundled,
+          registry: async () => regOut,
+          execPath: fail,
+          exists: found("C:\\Genex\\resources\\git\\bin\\bash.exe"),
+        },
+        "C:\\Genex\\resources\\git\\bin\\bash.exe",
+      ],
       [
         "registry",
         { registry: async () => regOut, execPath: async () => exec, exists: () => true },
@@ -484,6 +569,48 @@ describe("Git Bash and srt-win", () => {
     }
   });
 
+  it("puts Git for Windows' cmd folder on PATH for the host's own git, or reports it missing", async () => {
+    const regOut = "    InstallPath    REG_SZ    C:\\Git\r\n";
+    const fail = async () => {
+      throw new Error("not found");
+    };
+    const viaRegistry = { registry: async () => regOut, execPath: fail, exists: () => true };
+    const bundled = { registry: fail, execPath: fail, exists: () => true, bundled: "C:\\Genex\\resources\\git" };
+    const table: Array<[string, Parameters<typeof ensureHostGit>[0], string, boolean, string]> = [
+      [
+        "Genex's own Git, on a PC with none",
+        bundled,
+        "C:\\Windows",
+        true,
+        "C:\\Genex\\resources\\git\\cmd;C:\\Windows",
+      ],
+      [
+        "an installed Git keeps its place beside Genex's own",
+        { ...viaRegistry, bundled: "C:\\Genex\\resources\\git" },
+        "C:\\Git\\cmd;C:\\Windows",
+        true,
+        "C:\\Git\\cmd;C:\\Windows",
+      ],
+      [
+        "no Git for Windows",
+        { registry: fail, execPath: fail, exists: () => true },
+        "C:\\Windows",
+        false,
+        "C:\\Windows",
+      ],
+      ["installed, not on PATH", viaRegistry, "C:\\Windows", true, "C:\\Git\\cmd;C:\\Windows"],
+      ["already on PATH", viaRegistry, "C:\\Windows;c:\\git\\CMD", true, "C:\\Windows;c:\\git\\CMD"],
+      ["empty PATH", viaRegistry, "", true, "C:\\Git\\cmd"],
+    ];
+    for (const [label, lookup, before, found, after] of table) {
+      const env: NodeJS.ProcessEnv = { PATH: before };
+      assert.equal(await ensureHostGit(lookup, env), found, label);
+      assert.equal(env.PATH, after, label);
+    }
+  });
+});
+
+describe("srt-win", () => {
   it("runs srt-win from the unpacked copy in a packaged app", () => {
     const packaged = path.join("/Genex", "resources", "app.asar", "node_modules", "@anthropic-ai", "sandbox-runtime");
     assert.equal(
@@ -685,13 +812,15 @@ function fakeAncestors() {
 function session(options: { realDenies?: boolean; profile?: string } = {}) {
   const runtime = fakeSessionRuntime();
   const ancestors = fakeAncestors();
+  const logged: string[] = [];
   const value = new WindowsSandboxSession({
     runtime: runtime.runtime,
     profile: options.profile ?? PROFILE,
     ancestors: ancestors.ancestors,
     ...(options.realDenies ? {} : { keepDenies: (paths: readonly string[]) => [...paths] }),
+    log: (line) => logged.push(line),
   });
-  return { session: value, runtime, ancestors };
+  return { session: value, runtime, ancestors, logged };
 }
 
 const GAMES = at("AI Games");
@@ -731,6 +860,17 @@ describe("the grant session", () => {
     await value.settled();
     assert.deepEqual(runtime.calls, ["initialize", "ancestors", "reset", "initialize", "ancestors"]);
     assert.deepEqual(synced.at(-1), synced[0], "every folder is granted again after the regrant");
+  });
+
+  it("sets the folders above the roots again for a process that outlives the call, and only once applied", async () => {
+    const s = session();
+    await s.session.refreshAncestors();
+    assert.deepEqual(s.ancestors.synced, [], "nothing is applied yet");
+    await s.session.join({}, { grants: { write: [WS], read: [] }, config: BASE_CONFIG });
+    await s.session.refreshAncestors();
+    assert.equal(s.ancestors.synced.length, 2);
+    assert.deepEqual(s.ancestors.synced[1], s.ancestors.synced[0]);
+    assert.deepEqual(s.runtime.calls, ["initialize"], "no reset, no initialize: srt's own grants stand");
   });
 
   it("a failed grant above the roots undoes the initialize and fails the join", async () => {
@@ -885,6 +1025,29 @@ describe("the grant session", () => {
     assert.deepEqual(s.runtime.calls, ["initialize"]);
   });
 
+  it("lets the sandbox user start srt-win from the install folder before initializing, taken back when it fails, until one succeeds", async () => {
+    // initialize's egress check runs srt-win as the sandbox user before it applies any grant, and
+    // a per-user install sits in the profile, where that user may open nothing.
+    const runtime = fakeSessionRuntime();
+    const value = new WindowsSandboxSession({
+      runtime: runtime.runtime,
+      profile: PROFILE,
+      ancestors: fakeAncestors().ancestors,
+      launcher: async () => {
+        runtime.calls.push("launcher");
+        return () => runtime.calls.push("launcher taken back");
+      },
+    });
+    const owner = {};
+    runtime.failInitializeIn("user", "not_provisioned");
+    await assert.rejects(value.join(owner, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG }));
+    await value.join(owner, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG });
+    assert.deepEqual(runtime.calls, ["launcher", "initialize", "launcher taken back", "launcher", "initialize"]);
+    value.update(owner, { write: [GAMES, LATE], read: [] });
+    await value.settled();
+    assert.deepEqual(runtime.calls.slice(5), ["reset", "initialize"], "the egress check runs once per process");
+  });
+
   it("an srt-win timeout in the egress check is tried again, up to three attempts in all", async () => {
     const s = session();
     s.runtime.failInitialize("srt_win_timeout", "srt_win_timeout");
@@ -927,6 +1090,15 @@ describe("the grant session", () => {
     assert.deepEqual(s.runtime.last().network.allowedDomains, []);
   });
 
+  it("logs how long srt's initialize and the folders above the roots took", async () => {
+    const s = session();
+    await s.session.join({}, { grants: { write: [WS], read: [] }, config: BASE_CONFIG });
+    assert.deepEqual(
+      s.logged.map((line) => line.replace(/\d+ ms$/, "N ms")),
+      ["initialize: N ms", "folders above the grants: N ms"],
+    );
+  });
+
   it("dispose resets and takes back the folders above the roots", async () => {
     const s = session();
     await s.session.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG });
@@ -945,7 +1117,18 @@ interface WrapCall {
   cwd: string | undefined;
 }
 
-async function windowsSandbox(options: { wrapError?: object; initializeError?: object; bash?: string | null } = {}) {
+async function windowsSandbox(
+  options: {
+    wrapError?: object;
+    initializeError?: object;
+    bash?: string | null;
+    dependencyErrors?: () => Promise<string[]>;
+    startInBackground?: boolean;
+    /** Hold srt's initialize until the returned open is called. */
+    holdInitialize?: boolean;
+    failInitializeIn?: { subcommand: string; code: string };
+  } = {},
+) {
   const root = realpathSync.native(await tmpDir("windows-launch-"));
   const workspace = path.join(root, "workspace");
   const secrets = path.join(root, "secrets");
@@ -953,6 +1136,9 @@ async function windowsSandbox(options: { wrapError?: object; initializeError?: o
   const bash = options.bash === undefined ? await testBash() : options.bash;
   const wraps: WrapCall[] = [];
   const s = session({ realDenies: true, profile: root });
+  const openInitialize = options.holdInitialize ? s.runtime.hold() : () => {};
+  if (options.failInitializeIn)
+    s.runtime.failInitializeIn(options.failInitializeIn.subcommand, options.failInitializeIn.code);
   if (options.initializeError) {
     const error = options.initializeError;
     s.runtime.runtime.initialize = async () => {
@@ -984,10 +1170,11 @@ async function windowsSandbox(options: { wrapError?: object; initializeError?: o
     secretPaths: [secrets, path.join(root, "never-created")],
     runtime,
     platform: "win32",
-    windows: { bash, session: s.session, profile: root },
+    windows: { bash, session: s.session, profile: root, dependencyErrors: options.dependencyErrors },
     toolPath: async () => "",
+    ...(options.startInBackground ? { startInBackground: true } : {}),
   });
-  return { sandbox, root, workspace, secrets, wraps, session: s };
+  return { sandbox, root, workspace, secrets, wraps, session: s, openInitialize };
 }
 
 describe("ProcessSandbox on Windows", () => {
@@ -1097,6 +1284,20 @@ describe("ProcessSandbox on Windows", () => {
     assert.deepEqual(await envFiles(), []);
   });
 
+  it("sets the folders above the roots again before a long-lived process, never before a run", async () => {
+    // The harness walks every folder from the drive down to its bootstrap before running a line;
+    // anything that rewrote one of them since the apply stops it there.
+    const w = await windowsSandbox();
+    const synced = () => w.session.ancestors.synced.length;
+    const before = synced();
+    await w.sandbox.run({ command: "true", cwd: w.workspace });
+    assert.equal(synced(), before, "a run uses the grants as applied");
+    const { child } = await w.sandbox.spawnLongLived({ command: "true", cwd: w.workspace });
+    await new Promise((resolve) => child.once("close", resolve));
+    assert.equal(synced(), before + 1);
+    assert.equal(w.session.session.active, 0);
+  });
+
   it("dispose leaves the session, which takes back the instance's grants", async () => {
     const w = await windowsSandbox();
     assert.notEqual(w.session.session.applied, null);
@@ -1173,6 +1374,94 @@ describe("ProcessSandbox on Windows", () => {
       assert.equal(error.problem.platform, "win32");
       return true;
     });
+  });
+
+  it("an unprovisioned PC is the setup screen when initialize refuses it untyped, by srt's own dependency check", async () => {
+    // sandbox-runtime runs its dependency check first in initialize and throws a plain Error on
+    // it; only a check of its own, asked after, says the sandbox user or its filters are missing.
+    const unprovisioned = "Sandbox user is not provisioned (user=false, cred=false).";
+    await assert.rejects(
+      windowsSandbox({
+        initializeError: new Error(`Sandbox dependencies not available: ${unprovisioned}`),
+        dependencyErrors: async () => [unprovisioned],
+      }),
+      (error: unknown) => {
+        if (!(error instanceof SandboxUnavailableError)) return false;
+        assert.equal(error.problem.code, SandboxProblemCode.NotProvisioned);
+        assert.deepEqual(error.problem.details, [unprovisioned]);
+        return true;
+      },
+    );
+    // A failure the check does not explain, or a check that fails itself, stays the error it was.
+    for (const dependencyErrors of [async () => [], async () => Promise.reject(new Error("srt-win missing"))]) {
+      await assert.rejects(
+        windowsSandbox({ initializeError: new Error("proxy port in use"), dependencyErrors }),
+        (error: unknown) => !(error instanceof SandboxUnavailableError) && /proxy port in use/.test(String(error)),
+      );
+    }
+  });
+});
+
+describe("ProcessSandbox on Windows, started in the background", () => {
+  const ready = async () => [];
+
+  it("is created while srt still initializes, and a run waits for the start", async () => {
+    const w = await windowsSandbox({ startInBackground: true, holdInitialize: true, dependencyErrors: ready });
+    let finished = false;
+    const run = w.sandbox.run({ command: "printf started", cwd: w.workspace }).then((result) => {
+      finished = true;
+      return result;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(finished, false, "the run waits for the start");
+    assert.deepEqual(w.session.runtime.calls, ["initialize"], "the one start, shared by the run");
+    w.openInitialize();
+    const result = await run;
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, "started");
+    assert.deepEqual(w.session.runtime.calls, ["initialize"]);
+    await w.sandbox.dispose();
+  });
+
+  it("still refuses at once what Set up fixes: no sandbox user, no Git for Windows", async () => {
+    const unprovisioned = "Sandbox user is not provisioned (user=false, cred=false).";
+    await assert.rejects(
+      windowsSandbox({ startInBackground: true, dependencyErrors: async () => [unprovisioned] }),
+      (error: unknown) =>
+        error instanceof SandboxUnavailableError && error.problem.code === SandboxProblemCode.NotProvisioned,
+    );
+    await assert.rejects(
+      windowsSandbox({ startInBackground: true, bash: null, dependencyErrors: ready }),
+      (error: unknown) =>
+        error instanceof SandboxUnavailableError && error.problem.code === SandboxProblemCode.GitMissing,
+    );
+  });
+
+  it("a start that failed behind the window is tried again by the next run", async () => {
+    const w = await windowsSandbox({
+      startInBackground: true,
+      dependencyErrors: ready,
+      failInitializeIn: { subcommand: "acl", code: "acl_grant_failed" },
+    });
+    // The start behind the window fails first; a run that came during it would report that failure.
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const result = await w.sandbox.run({ command: "printf again", cwd: w.workspace });
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(result.stdout, "again");
+    assert.deepEqual(w.session.runtime.calls, ["initialize", "initialize"]);
+    await w.sandbox.dispose();
+  });
+});
+
+describe("what is not set up yet", () => {
+  const set = { provisioned: true, credPresent: true };
+  it("names a missing sandbox user or credential, then missing filters, and nothing on a set-up PC", () => {
+    assert.equal(setupGaps({ user: { provisioned: false, credPresent: false }, wfp: { state: "absent" } }).length, 1);
+    assert.equal(setupGaps({ user: { provisioned: true, credPresent: false }, wfp: { state: "installed" } }).length, 1);
+    assert.equal(setupGaps({ user: set, wfp: { state: "absent" } }).length, 1);
+    assert.deepEqual(setupGaps({ user: set, wfp: { state: "installed" } }), []);
+    // Reading the filters needs an administrator; srt treats it as informational, and so do we.
+    assert.deepEqual(setupGaps({ user: set, wfp: { state: "cannot-read" } }), []);
   });
 });
 

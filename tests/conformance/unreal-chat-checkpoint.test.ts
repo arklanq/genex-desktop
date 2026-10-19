@@ -159,6 +159,7 @@ function standInOps(editor: StandInEditor): MomentOps {
     exported: async () => true,
     exportReference: async () => ({}),
     restoreClosed: { mark: () => {}, take: () => false },
+    mayEndPlay: async () => false,
   };
 }
 

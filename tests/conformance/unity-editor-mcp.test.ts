@@ -420,6 +420,49 @@ describe("the Unity editor connector", () => {
     await close();
   });
 
+  it("marks the agent's play before Unity gets the command, alone or in a batch: the lock may ask while Play starts", async () => {
+    const root = await openProject();
+    const stand = editor([
+      savingCatalogue(),
+      look(),
+      json(200, { success: true, result: "Entered play mode" }),
+      savingCatalogue(),
+      look(),
+      json(200, { success: true, result: { results: [] } }),
+    ]);
+    const marks: string[] = [];
+    const marker: AgentPlayMarker = {
+      started: async () => void marks.push(`started, ${commandsSent(stand.seen).length} commands sent`),
+      stopped: async () => void marks.push("stopped"),
+    };
+    const { call, close } = await connect(async () => ({ root, game: root }), stand.deps, marker);
+    await call(EditorTool.RunCommand, { command: "editor_play" });
+    await call(EditorTool.RunCommand, {
+      command: "batch",
+      parameters: { operations: [{ command: "editor_play", params: {} }] },
+    });
+    assert.deepEqual(marks, ["started, 0 commands sent", "started, 1 commands sent"]);
+    assert.deepEqual(commandsSent(stand.seen), ["editor_play", "batch"]);
+    await close();
+  });
+
+  it("forgets the agent's play when a batch stops it", async () => {
+    const root = await openProject();
+    const marks: string[] = [];
+    const marker: AgentPlayMarker = {
+      started: async () => void marks.push("started"),
+      stopped: async () => void marks.push("stopped"),
+    };
+    const stand = editor([savingCatalogue(), look(), json(200, { success: true, result: { results: [] } })]);
+    const { call, close } = await connect(async () => ({ root, game: root }), stand.deps, marker);
+    await call(EditorTool.RunCommand, {
+      command: "batch",
+      parameters: { operations: [{ command: "editor_stop", params: {} }] },
+    });
+    assert.deepEqual(marks, ["stopped"]);
+    await close();
+  });
+
   it("refuses a tool it does not have", async () => {
     const { call, seen, close } = await openEditor([]);
     const answer = await call("delete_everything");

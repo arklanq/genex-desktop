@@ -1,3 +1,4 @@
+import type { KeepBuildingTap } from "../keep-building.ts";
 import { LearningSummary } from "../chat/LearningSummary.tsx";
 /**
  * The morning card — the last thing a run writes into the chat, and usually the first thing
@@ -24,6 +25,8 @@ import type { AssetDeliveredPayload } from "../../shared/game-assets.ts";
 import type { LoopProfile } from "../../shared/project-facts.ts";
 import { Presence, type PresenceChild } from "../ui/Presence.tsx";
 import { webBuildShown } from "../web-build-shown.ts";
+import { type StillToFix, stopWhyLine } from "../chat-entries.ts";
+import { StillToFixCard } from "../chat/StillToFixCard.tsx";
 
 /** How long a finished build's card keeps the place of a result that has not come yet. */
 const RESULT_WAIT_MS = 3 * SECOND_MS;
@@ -79,11 +82,49 @@ export interface MorningCardProps {
   assets?: AssetDeliveredPayload[];
   /** stopped with a follow-up waiting: that message answers "what next", so the card only shows the result */
   handedOff?: boolean;
+  /** ended without the reviewer's yes: what is done and still to fix, which the card lists in place of the report */
+  stillToFix?: StillToFix | null;
+  /** Keep building on what is left (the chat's Loop again); none where no chat can take it */
+  onKeepBuilding?: KeepBuildingTap | null;
   onShowLive?: () => void;
   onOpenAssets?: () => void;
   onOpenStudio?: () => void;
   onResume?: () => void;
   onNotice?: Notify;
+}
+
+/** Keep building on what is left, when there is something left and a chat to take it. */
+function keepOf(
+  stillToFix: StillToFix | null,
+  onKeepBuilding: KeepBuildingTap | null,
+): (() => Promise<boolean>) | null {
+  return stillToFix && onKeepBuilding ? () => onKeepBuilding(stillToFix.notDone) : null;
+}
+
+/** The card's lead: what is done and still to fix with its actions, else the run's report. */
+function ReportOrLeft({
+  summary,
+  stillToFix,
+  onKeepBuilding,
+  children,
+}: {
+  summary: string | null;
+  stillToFix: StillToFix | null;
+  onKeepBuilding: (() => Promise<boolean>) | null;
+  children: ReactNode;
+}): JSX.Element | null {
+  if (stillToFix)
+    return (
+      <StillToFixCard
+        done={stillToFix.done}
+        notDone={stillToFix.notDone}
+        why={stopWhyLine(stillToFix.why, stillToFix.hours, stillToFix.notDone.length > 0)}
+        onKeepBuilding={onKeepBuilding}
+      >
+        {children}
+      </StillToFixCard>
+    );
+  return summary ? <Markdown text={summary} /> : null;
 }
 
 export function MorningCard({
@@ -104,6 +145,8 @@ export function MorningCard({
   after,
   assets,
   handedOff = false,
+  stillToFix = null,
+  onKeepBuilding = null,
   onShowLive,
   onOpenAssets,
   onOpenStudio,
@@ -138,7 +181,9 @@ export function MorningCard({
         return Boolean(outcome.head) || outcome.landed === true;
       });
   // A landed build the outcome already plays speaks for itself; the "because" line would repeat it.
-  const showBecause = !handedOff && !(outcomeHasPlayback && outcome?.landed === true);
+  // What is left to fix says why the Loop stopped and what to do: no report or "because" beside it.
+  const showBecause = !handedOff && !stillToFix && !(outcomeHasPlayback && outcome?.landed === true);
+  const keep = keepOf(stillToFix, handedOff ? null : onKeepBuilding);
   const showLive = (): void => {
     // A landed build is already the game folder; loading it puts the stage back on the real
     // thing after a run in which a merged build may have been shown from a worktree.
@@ -194,7 +239,9 @@ export function MorningCard({
   };
   return (
     <div data-testid="morning-card" className="flex min-w-0 flex-col gap-1.5">
-      {words.summary && <Markdown text={words.summary} />}
+      <ReportOrLeft summary={words.summary} stillToFix={stillToFix} onKeepBuilding={keep}>
+        {actions.map(button)}
+      </ReportOrLeft>
       {/* The result loads after the card shows: its place is kept, silently, while it may still come, so
           nothing moves when it lands; a result that never comes closes the place, a late one opens in it. */}
       <Presence>
@@ -227,7 +274,7 @@ export function MorningCard({
           <LearningSummary text={words.learned} onOpenStudio={onOpenStudio} />
         </div>
       ) : null}
-      {actions.length > 0 && <div className="flex flex-wrap gap-1.5">{actions.map(button)}</div>}
+      {!stillToFix && actions.length > 0 && <div className="flex flex-wrap gap-1.5">{actions.map(button)}</div>}
     </div>
   );
 }

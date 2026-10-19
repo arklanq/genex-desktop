@@ -4,7 +4,11 @@
  * and then installs the editor through its own command line (`Unity Hub -- --headless install`),
  * started on its own so it goes on while Genex restarts; its output is kept in the plugin's storage
  * and read back for the card's progress. Signing in stays the person's: Genex only opens Hub. Do it
- * for me runs every step in order and waits for the person's sign-in between them.
+ * for me runs every step in order and waits for the person's sign-in between them; Stop ends
+ * whichever step runs (Hub's download and copy, its listing of releases, its install) and starts
+ * none after it. The install is known by its process only while that process is Unity Hub; once
+ * Genex sees it ended, its record says so, so a process that later gets its id is never taken for
+ * it nor signalled.
  */
 import { execFile, spawn } from "node:child_process";
 import { mkdir, open, rm, statfs, writeFile } from "node:fs/promises";
@@ -36,6 +40,8 @@ export const UNITY_TEAM_ID = "9QW8UQUTAA";
 /** The app inside Hub's disk image, and Hub's program inside the app. */
 const HUB_APP = "Unity Hub.app";
 const HUB_PROGRAM = path.posix.join("Contents", "MacOS", "Unity Hub");
+/** The end of Hub's program path as the computer lists its process, wherever Hub is. */
+const HUB_PROCESS = path.posix.join(HUB_APP, HUB_PROGRAM);
 /** The Unity release line Genex's Unity work was measured on; its newest final release is installed. */
 export const INSTALL_LINE = "6000.3";
 /** The plugin storage folder holding the install's record, its output and Hub's download. */
@@ -51,6 +57,9 @@ const LOG_TAIL_BYTES = 64 * 1024;
 const SIGN_IN_WAIT_MS = 30 * MINUTE_MS;
 const SIGN_IN_POLL_MS = 3 * SECOND_MS;
 const GIGABYTE = 1024 * 1024 * 1024;
+/** A Mac's own program that lists processes, and how long it may take. */
+const PS = "/bin/ps";
+const PS_MS = 10 * SECOND_MS;
 
 const MESSAGE = {
   Download: (why: string) => `Couldn't download Unity Hub (${why}). Check your connection, then try again.`,
@@ -71,9 +80,17 @@ const MESSAGE = {
 
 /**
  * The record of an editor install Genex started: the version, the program's id and when; an
- * install that could not start keeps -1 and whether Hub's own window may still get past it.
+ * install that could not start keeps -1 and whether Hub's own window may still get past it; one
+ * seen ended (or stopped) is never looked for by its id again.
  */
-type EditorRecord = { version: string; pid: number; startedAt: string; inHub?: true; stopped?: true };
+type EditorRecord = {
+  version: string;
+  pid: number;
+  startedAt: string;
+  inHub?: true;
+  stopped?: true;
+  ended?: true;
+};
 
 /** What the installer reaches besides the files: the network, programs, processes, disks and the clock. */
 export interface InstallDeps {
@@ -85,7 +102,8 @@ export interface InstallDeps {
   run: AppRunner;
   /** Starts a program on its own, its output into `log`, and answers its process id. */
   start: (command: string, args: string[], log: string) => Promise<number>;
-  alive: (pid: number) => boolean;
+  /** The program a running process runs, as the computer lists it; undefined once it is gone. */
+  programOf: (pid: number) => Promise<string | undefined>;
   /** Sends a signal to a process, or to its group with a negative id; a gone one is no error. */
   kill: (pid: number, signal: NodeJS.Signals) => void;
   freeBytes: (folder: string) => Promise<number>;
@@ -188,13 +206,14 @@ async function download(state: Installing, file: string): Promise<void> {
   });
 }
 
-/** Mounts the image, checks Unity signed its Hub, copies it into Applications and unmounts. */
-async function copyIn(deps: InstallDeps, image: string, mount: string): Promise<void> {
+/** Mounts the image, checks Unity signed its Hub, copies it into Applications and unmounts; a Stop ends it between steps. */
+async function copyIn(deps: InstallDeps, image: string, mount: string, signal: AbortSignal): Promise<void> {
   const attach = ["attach", "-nobrowse", "-readonly", "-quiet", "-mountpoint", mount, image];
-  await deps.run("/usr/bin/hdiutil", attach, APP_COPY_MS);
+  await deps.run("/usr/bin/hdiutil", attach, APP_COPY_MS, signal);
   try {
-    const place = { applications: deps.env.applications, name: HUB_APP, team: UNITY_TEAM_ID };
-    await placeApp(deps.run, path.join(mount, HUB_APP), place).catch((error: unknown) => {
+    const trash = path.join(deps.env.home, ".Trash");
+    const place = { applications: deps.env.applications, name: HUB_APP, team: UNITY_TEAM_ID, trash };
+    await placeApp(deps.run, path.join(mount, HUB_APP), place, signal).catch((error: unknown) => {
       const notSigned = error instanceof AppInstallError && error.problem === AppInstallProblem.NotSigned;
       throw new Error(notSigned ? MESSAGE.NotUnity : MESSAGE.Copy(errorMessage(error)));
     });
@@ -219,7 +238,7 @@ async function getHub(state: Installing): Promise<void> {
   try {
     await download(state, image);
     await mkdir(mount, { recursive: true });
-    await copyIn(deps, image, mount);
+    await copyIn(deps, image, mount, state.stop.signal);
     state.hubJob = null;
   } catch (error) {
     // A download the person stopped keeps Stop's own words.
@@ -231,10 +250,20 @@ async function getHub(state: Installing): Promise<void> {
   }
 }
 
-/** The editor install Genex started, as the card reads it: running, stopped, or none. */
+/** Whether the install a record names still runs: its process is still Unity Hub, and it was never seen ended. */
+async function installRuns(deps: InstallDeps, record: EditorRecord): Promise<boolean> {
+  if (record.stopped || record.ended || record.pid <= 0) return false;
+  return (await deps.programOf(record.pid))?.endsWith(`/${HUB_PROCESS}`) === true;
+}
+
+/**
+ * The editor install Genex started, as the card reads it: running, stopped, or none. An install
+ * seen ended is recorded so, and its record is dropped once Unity is there.
+ */
 async function editorJob(state: Installing): Promise<InstallJob | null> {
   const folder = folderIn(await state.storage());
-  const record = await readJsonIfExists<EditorRecord>(path.join(folder, EDITOR_RECORD)).catch(() => null);
+  const file = path.join(folder, EDITOR_RECORD);
+  const record = await readJsonIfExists<EditorRecord>(file).catch(() => null);
   if (!record?.version || !Number.isInteger(record.pid)) return null;
   const { percent, phase, last } = progressIn(await tailOf(path.join(folder, EDITOR_LOG)));
   const job = {
@@ -244,8 +273,12 @@ async function editorJob(state: Installing): Promise<InstallJob | null> {
     ...(phase ? { phase } : {}),
   };
   if (record.stopped) return { ...job, state: JobState.Failed, why: MESSAGE.YouStopped, stopped: true };
-  if (state.deps.alive(record.pid)) return { ...job, state: JobState.Running };
-  if ((await readFacts(state.deps.env, null)).editor) return null;
+  if (await installRuns(state.deps, record)) return { ...job, state: JobState.Running };
+  if (record.pid > 0 && !record.ended) await atomicWriteJson(file, { ...record, ended: true }).catch(() => undefined);
+  if ((await readFacts(state.deps.env, null)).editor) {
+    await rm(file, { force: true });
+    return null;
+  }
   // An install that never started keeps its own words; one Hub ran and lost, Hub's window may finish.
   if (record.pid < 0) return { ...job, state: JobState.Failed, why: last, ...(record.inHub ? { inHub: true } : {}) };
   const why = HUB_DONE.test(last) ? MESSAGE.Elsewhere(record.version) : MESSAGE.Stopped(last);
@@ -260,18 +293,32 @@ async function failEditor(deps: InstallDeps, folder: string, why: string, inHub 
   throw new Error(why);
 }
 
-/** Asks Hub for its releases and starts installing the chosen one on its own; answers the record kept. */
-async function startEditor(deps: InstallDeps, hub: string, folder: string): Promise<void> {
+/** Refuses with Stop's own words once the person pressed Stop. */
+function unlessStopped(signal: AbortSignal): void {
+  if (signal.aborted) throw new Error(MESSAGE.YouStopped);
+}
+
+/**
+ * Asks Hub for its releases and starts installing the chosen one on its own; answers the record
+ * kept. A Stop ends the listing and starts nothing; one that came while the install started ends it.
+ */
+async function startEditor(deps: InstallDeps, hub: string, folder: string, signal: AbortSignal): Promise<void> {
   const arch = archOf(deps.arch);
   const listing = ["--", "--headless", "editors", "--releases", "--json", "--architecture", arch];
-  const listed = await deps.run(hubProgram(hub), listing, RELEASES_MS).catch((error: unknown) => {
+  const listed = await deps.run(hubProgram(hub), listing, RELEASES_MS, signal).catch((error: unknown) => {
+    unlessStopped(signal);
     return failEditor(deps, folder, MESSAGE.List(errorMessage(error)), true);
   });
+  unlessStopped(signal);
   const version = chooseRelease(releasesIn(listed.out));
   if (!version) return failEditor(deps, folder, MESSAGE.NoRelease, true);
   const args = ["--", "--headless", "install", "--version", version, "--architecture", arch];
   const pid = await deps.start(hubProgram(hub), args, path.join(folder, EDITOR_LOG));
-  await atomicWriteJson(path.join(folder, EDITOR_RECORD), { version, pid, startedAt: deps.now().toISOString() });
+  const record: EditorRecord = { version, pid, startedAt: deps.now().toISOString() };
+  await atomicWriteJson(path.join(folder, EDITOR_RECORD), record);
+  if (!signal.aborted) return;
+  deps.kill(-pid, "SIGTERM");
+  await atomicWriteJson(path.join(folder, EDITOR_RECORD), { ...record, stopped: true });
 }
 
 /**
@@ -289,7 +336,7 @@ async function installEditor(state: Installing): Promise<void> {
   if (free < UNITY_SIZE_GB) await failEditor(deps, folder, MESSAGE.Space(free));
   state.hubJob = { kind: JobKind.Editor, state: JobState.Running };
   try {
-    await startEditor(deps, hub, folder);
+    await startEditor(deps, hub, folder, state.stop.signal);
   } finally {
     if (state.hubJob?.state === JobState.Running) state.hubJob = null;
   }
@@ -316,6 +363,7 @@ async function openHub(deps: InstallDeps): Promise<void> {
 async function drive(state: Installing): Promise<void> {
   const { deps } = state;
   await getHub(state);
+  if (state.stop.signal.aborted) return;
   if (!(await hasLicense(deps.env))) {
     await openHub(deps);
     state.hubJob = { kind: JobKind.SignIn, state: JobState.Running };
@@ -338,12 +386,18 @@ async function stopAll(state: Installing): Promise<void> {
   const folder = folderIn(await state.storage());
   const file = path.join(folder, EDITOR_RECORD);
   const record = await readJsonIfExists<EditorRecord>(file).catch(() => null);
-  if (record && record.pid > 0 && state.deps.alive(record.pid)) {
+  if (record && (await installRuns(state.deps, record))) {
     state.deps.kill(-record.pid, "SIGTERM");
     await atomicWriteJson(file, { ...record, stopped: true });
   }
   state.hubJob = state.hubJob?.kind === JobKind.Hub ? { ...stopped, kind: JobKind.Hub } : stopped;
   await state.driving?.catch(() => undefined);
+}
+
+/** The state for a step the person starts on its own: an earlier Stop stops nothing of it, unless Do it for me runs. */
+function fresh(state: Installing): Installing {
+  if (!state.driving) state.stop = new AbortController();
+  return state;
 }
 
 /** The installer over one plugin storage: Hub's install in memory, the editor's on disk, and Do it for me. */
@@ -352,9 +406,9 @@ export function createInstaller(deps: InstallDeps, storage: () => Promise<string
   return {
     /** The install the card shows: Hub's while it runs or after it stopped, else the editor's. */
     job: async (): Promise<InstallJob | null> => state.hubJob ?? (await editorJob(state)),
-    getHub: () => getHub(state),
+    getHub: () => getHub(fresh(state)),
     openHub: () => openHub(deps),
-    installEditor: () => installEditor(state),
+    installEditor: () => installEditor(fresh(state)),
     /** Starts Do it for me and answers at once; the card follows it, and a stop shows on its row. */
     stop: () => stopAll(state),
     setUp: (): void => {
@@ -402,8 +456,9 @@ export function systemInstallDeps(env: EditorsEnv, opener: (launch: Launch) => P
     env,
     arch: process.arch === "arm64" ? "arm64" : "x64",
     fetch: globalThis.fetch,
-    run: async (command, args, timeoutMs) => {
-      const done = await run(command, args, { timeout: timeoutMs, maxBuffer: OUTPUT_MAX_BYTES, windowsHide: true });
+    run: async (command, args, timeoutMs, signal) => {
+      const options = { timeout: timeoutMs, maxBuffer: OUTPUT_MAX_BYTES, windowsHide: true, signal };
+      const done = await run(command, args, options);
       return { out: done.stdout, err: done.stderr };
     },
     start: async (command, args, log) => {
@@ -416,14 +471,12 @@ export function systemInstallDeps(env: EditorsEnv, opener: (launch: Launch) => P
       child.unref();
       return child.pid ?? -1;
     },
-    alive: (pid) => {
-      if (pid <= 0) return false;
-      try {
-        process.kill(pid, 0);
-        return true;
-      } catch {
-        return false;
-      }
+    programOf: async (pid) => {
+      if (pid <= 0) return undefined;
+      const listed = await run(PS, ["-ww", "-o", "comm=", "-p", String(pid)], { timeout: PS_MS }).catch(
+        () => undefined,
+      );
+      return listed?.stdout.trim() || undefined;
     },
     kill: (pid, signal) => {
       try {

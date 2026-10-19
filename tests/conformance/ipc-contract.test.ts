@@ -16,7 +16,7 @@ import {
   type StudioInvokeChannel,
   type StudioPushChannel,
 } from "../../src/shared/ipc-channels.ts";
-import { createStudioBridge, type BridgeIpc } from "../../src/preload/studio-bridge.ts";
+import { createStudioBridge, type BridgeIpc, PRELOAD_LOCAL_CALLS } from "../../src/preload/studio-bridge.ts";
 import { createIpcHandle, pushToRenderer, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import {
   FIXTURE_BLOCKED_CHANNELS,
@@ -68,7 +68,9 @@ test("every preload call invokes the channel the map names for it, and every cha
   const methodOf = new Map<string, string>(Object.entries(STUDIO_INVOKE_CHANNELS));
   const pushOf = new Map<string, string>(Object.entries(STUDIO_PUSH_CHANNELS));
   const used = new Set<string>();
+  const local = new Set<string>(PRELOAD_LOCAL_CALLS);
   for (const method of STUDIO_METHODS) {
+    if (local.has(method)) continue;
     const before = invokes.length;
     const unsubscribe = callBare(api, method);
     await new Promise((resolve) => setImmediate(resolve));
@@ -100,6 +102,23 @@ test("every preload call invokes the channel the map names for it, and every cha
     "a channel of the map that no preload call uses, or the reverse",
   );
   for (const channel of PUSH) assert.equal(count(channel), 0, `${channel} listener left subscribed`);
+});
+
+test("where a dropped file is on disk is answered by the preload alone, and a file that is only data has none", () => {
+  const { ipc, invokes } = rendererIpc();
+  const file = new File(["notes"], "notes.txt", { type: "text/plain" });
+  const api = createStudioBridge(ipc, {
+    getPathForFile: (given) => (given === file ? "/Users/me/Downloads/notes.txt" : ""),
+  });
+  assert.equal(api.pathOfFile(file), "/Users/me/Downloads/notes.txt");
+  const throwing = createStudioBridge(ipc, {
+    getPathForFile: () => {
+      throw new Error("not a file on disk");
+    },
+  });
+  assert.equal(throwing.pathOfFile(file), "");
+  assert.equal(createStudioBridge(ipc).pathOfFile(file), "", "a bridge with no webUtils knows no place");
+  assert.deepEqual(invokes, [], "main is never asked");
 });
 
 test("the preload unwraps main's envelope: a value resolves, an error rejects with main's message", async () => {

@@ -37,7 +37,7 @@ function useEnds(rail: { current: HTMLDivElement | null }): [Ends, () => void] {
   useEffect(() => {
     const element = rail.current;
     if (!element) return;
-    measure();
+    // The observer's first call measures once the row is laid out, never forcing a layout mid-commit.
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();

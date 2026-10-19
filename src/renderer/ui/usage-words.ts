@@ -5,6 +5,7 @@
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { type ContextUsage, measuresPick } from "../../shared/context.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { MODEL_LIMIT_PREFIX, type ProviderUsage } from "../../shared/provider-usage.ts";
 import { MODEL_KEY_SEPARATOR } from "../model-key.ts";
 import { formatDuration, MINUTES_PER_HOUR } from "./loop-duration.ts";
 
@@ -19,6 +20,8 @@ const LIMIT_FULL = 90;
 const LIMIT_HIGH = 75;
 /** A reset further off than this is said as a day and time, not a countdown. */
 const COUNTDOWN_MINUTES = 24 * MINUTES_PER_HOUR;
+/** Model-scoped weekly limits (such as Fable's) stay off the panel for now; true shows them again. */
+const SHOW_MODEL_LIMITS = false;
 
 /**
  * The plans to draw while usage is still being read: each subscription this setup uses, by name,
@@ -47,6 +50,12 @@ export function resetWords(resetsAt: string | undefined, now = Date.now()): stri
   const minutes = Math.round((at - now) / MINUTE_MS);
   if (minutes < COUNTDOWN_MINUTES) return `Resets in ${formatDuration(Math.max(1, minutes))}`;
   return `Resets ${new Date(at).toLocaleString(undefined, { weekday: "short", hour: "numeric", minute: "2-digit" })}`;
+}
+
+/** The limits a plan shows: all it reports, less the model-scoped ones while those stay hidden. */
+export function shownLimits(windows: ProviderUsage["windows"]): ProviderUsage["windows"] {
+  if (SHOW_MODEL_LIMITS) return windows;
+  return windows.filter((window) => !window.id.startsWith(MODEL_LIMIT_PREFIX));
 }
 
 /** How close a limit is: full, high, or unremarkable (undefined). */

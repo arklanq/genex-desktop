@@ -41,6 +41,8 @@ import { RUN_START_EVENTS } from "../../shared/run-state.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { stopMoments } from "./moment-stops.ts";
+import { releaseHarnessDesktops } from "../harness-rpc/desktop.ts";
+import { forgetHarnessComputers } from "../harness-rpc/preview.ts";
 import { RetainedState } from "../../substrate/game-candidate.ts";
 
 /** Words the recovery writes into the logs the user reads, and the errors it throws at them. */
@@ -617,9 +619,9 @@ export class RecoveryService {
   }
 
   /**
-   * Give back every preview window the ending harness boot borrowed over RPC, the locks it held
-   * for its workers writing in place and the moments it asked for — its own `finally` blocks will
-   * never run. Windows the host
+   * Give back every preview window the ending harness boot borrowed over RPC (and the computers on
+   * them), its sessions on the person's computer, the locks it held for its workers writing in place
+   * and the moments it asked for — its own `finally` blocks will never run. Windows the host
    * holds for a delegation or a build carry no owner and are left to their own release.
    */
   async releaseHarnessLeases(): Promise<void> {
@@ -639,6 +641,10 @@ export class RecoveryService {
     const owner = `harness:${boot}`;
     const released = (await this.#x.previewPool?.releaseOwnedBy(owner).catch(() => [] as string[])) ?? [];
     for (const handle of released) this.#x.profileSources.delete(handle);
+    // The computers it played on those windows end with them (a Play Protocol game's process, an
+    // editor's play), and its sessions on the person's computer let it go.
+    await forgetHarnessComputers(this.#x, released);
+    await releaseHarnessDesktops(this.#x);
   }
 
   /**

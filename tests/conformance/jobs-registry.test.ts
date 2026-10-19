@@ -8,7 +8,7 @@
  */
 import assert from "node:assert/strict";
 import { type ChildProcess, spawn } from "node:child_process";
-import { readdir, readFile, stat, writeFile, mkdir } from "node:fs/promises";
+import { readdir, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import path from "node:path";
 import { after, it } from "node:test";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -538,4 +538,45 @@ it("answers nothing for an id or a game it does not hold", async () => {
     assert.equal(await h.service.stop(project, id, JobStopper.Agent), null, `${project} ${id}`);
   }
   assert.deepEqual(await h.service.list(".."), []);
+});
+
+/** Make a job's record unwritable: a folder with something in it where its `job.json` goes. */
+async function blockRecord(root: string, id: string): Promise<void> {
+  const record = path.join(root, GAME, id, "job.json");
+  await rm(record, { force: true });
+  await mkdir(path.join(record, "in-the-way"), { recursive: true });
+}
+
+it("a job whose end record cannot be written still ends, is told, and frees its place", async () => {
+  const h = await harness();
+  const sleepers = await Promise.all(
+    Array.from({ length: MAX_RUNNING_JOBS_PER_GAME }, () => h.service.start(startRequest(h, "sleep 30"))),
+  );
+  const blocked = sleepers[0];
+  assert.ok(blocked);
+  await blockRecord(h.root, blocked.id);
+  await h.service.stop(GAME, blocked.id, JobStopper.Agent).catch(() => null);
+  assert.equal((await h.endOf(blocked.id)).state, JobState.Stopped, "its end is told");
+  const next = await h.service.start(startRequest(h, "sleep 30"));
+  assert.equal(next.state, JobState.Running, "the game has room again");
+  await h.service.stopAll(JobStopper.Quit);
+});
+
+it("a job whose start record cannot be written is refused and leaves nothing running or listed", async () => {
+  let root = "";
+  const h = await harness({
+    spawn: async (request) => {
+      await blockRecord(root, request.label.replace(/^job-/, ""));
+      const child = spawn("/bin/sh", ["-c", request.command], { detached: true, stdio: ["pipe", "pipe", "pipe"] });
+      strays.push(child);
+      return { child, sandboxed: false };
+    },
+  });
+  root = h.root;
+  await assert.rejects(h.service.start(startRequest(h, "sleep 30")));
+  const [failed] = await readdir(path.join(h.root, GAME));
+  assert.ok(failed);
+  await h.endOf(failed);
+  assert.deepEqual(await h.service.list(GAME), [], "no job is listed as running");
+  assert.equal(await h.service.get(GAME, failed), null);
 });

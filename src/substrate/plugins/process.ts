@@ -39,6 +39,8 @@ const CUT_OFF_MESSAGE: Record<CallCutOff, string> = {
     "The studio's loop ended while this call ran, so whether it took effect is unknown; accepted remote jobs may still continue. Look before you repeat it.",
   [CallCutOff.PluginEnded]: "The plugin stopped while this call ran, so whether it took effect is unknown.",
   [CallCutOff.AppLost]: "The app this call drives went away while it ran, so whether it took effect is unknown.",
+  [CallCutOff.TurnEnded]:
+    "This call was made after the session's turn had ended, so no answer could reach it; the person declined nothing.",
 };
 
 /**

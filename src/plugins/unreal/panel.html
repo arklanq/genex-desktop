@@ -197,7 +197,14 @@ code{font:12px/18px var(--mono);letter-spacing:-.02em;padding:7px 10px;border-ra
 .error:empty,#kept:empty{display:none}
 /* While the panel first asks, the line saying so stands alone. */
 #app[aria-busy="false"] #checking{display:none}
-@media (prefers-reduced-motion:reduce){button,.card{transition:none}button:not(.row):active:not(:disabled){scale:none}.orb,.state[data-tone="starting"]::before{animation:none}}
+/* A choice in a block: Genex's own box (two points rounder than the system's), then its name and what it means, the whole row one target. */
+.choice{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;cursor:pointer}
+.choice input{appearance:none;-webkit-appearance:none;display:grid;place-items:center;width:18px;height:18px;flex:none;margin:1px 0 0;border:1.5px solid color-mix(in srgb,var(--fg) 32%,var(--bg));border-radius:6px;background:var(--field);cursor:pointer;transition:background 120ms,border-color 120ms}
+.choice input:checked{background:var(--accent-fill);border-color:var(--accent-fill)}
+.choice input:checked::before{content:"";width:12px;height:12px;background:var(--accent-text);-webkit-mask:var(--tick) center/contain no-repeat;mask:var(--tick) center/contain no-repeat}
+.choice input:disabled,.choice:has(input:disabled){cursor:not-allowed}
+.choice .words{display:grid;gap:4px;min-width:0}
+@media (prefers-reduced-motion:reduce){button,.card,.choice input{transition:none}button:not(.row):active:not(:disabled){scale:none}.orb,.state[data-tone="starting"]::before{animation:none}}
 /* On a dialog's card the dialog holds the heading and the padding: the page keeps a thin edge for focus rings. */
 :root[data-surface="card"] body{padding:4px}
 /* Last, so it wins over every class that sets a display. */
@@ -300,6 +307,19 @@ code{font:12px/18px var(--mono);letter-spacing:-.02em;padding:7px 10px;border-ra
       </div>
     </div>
 
+    <div id="agents" class="group" hidden>
+      <p class="label">Agents</p>
+      <div class="block">
+        <label class="choice" for="while-playing">
+          <input type="checkbox" id="while-playing">
+          <span class="words">
+            <span>Agents may use Unreal while you play</span>
+            <span class="quiet small">They go ahead even in a play session, and may stop your play. Turn off to have them wait until you stop.</span>
+          </span>
+        </label>
+      </div>
+    </div>
+
     <div id="facts" class="group mac">
       <p id="facts-label" class="label">This computer</p>
       <div class="block">
@@ -351,6 +371,9 @@ const Action = {
   UseProject: "use-project",
   GetXcode: "get-xcode",
   RayTracingOff: "ray-tracing-off",
+  Agents: "agents",
+  AgentsGoAhead: "agents-go-ahead",
+  AgentsWait: "agents-wait",
 };
 /** What Get Xcode opens, as the backend names it (XcodeStep). Wire values: never rename. */
 const XcodeStep = { Install: "install", Open: "open", Downloads: "downloads" };
@@ -444,7 +467,7 @@ const WORDS = {
   unverifiedHint: (version) => `A project made in Unreal ${version}'s New Project dialog works in chats, not in Loops.`,
   create: "Create and open",
   creating: (name) => `Creating ${name}…`,
-  setUpText: "Genex turns on two Epic plugins and adds a small helper so agents can work in it. Undo setup takes it back.",
+  setUpText: "Genex turns on Epic's plugins for agents and adds a small helper so they can work in it. Undo setup takes it back.",
   setUp: (name) => `Set up ${name}`,
   setUpAndOpen: (name) => `Set up and open ${name}`,
   switchEngine: (name, made, target) =>
@@ -549,6 +572,8 @@ const FIXTURE_REFUSAL = "unsupported-in-fixture";
  */
 const ui = { view: null, back: null, shown: "", picked: false, busy: false, creating: null, quitAt: null, gotUnreal: null, offer: null, since: null, moved: false, inGame: false, switchTo: null, madeNote: null };
 let last = null, closed = false, listed = "";
+/** Whether agents may use Unreal while the person plays, as the backend keeps it for every game; null until read. */
+let agents = null;
 /** The status request in flight, and the one queued after it that every caller asking meanwhile shares. */
 let inflight = Promise.resolve(), queued = null;
 
@@ -1209,6 +1234,7 @@ function render() {
   if (view === View.Project && s.project) renderProject(s);
   renderRayTracing(s, view);
   renderXcode(s, view);
+  renderAgents(view);
   // This computer goes once there is nothing to say about it: no engine, and nothing about Xcode.
   $("facts").hidden = $("engine-row").hidden && $("xcode-ready").hidden && $("xcode").hidden;
   renderNotes(s, view);
@@ -1238,13 +1264,37 @@ function tick() {
 const onlyOne = (s) =>
   !s.chosen && !s.linked && !ui.view && !ui.shown && s.engine && s.projects.length === 1 && s.next !== Step.Choose;
 
+/** The Agents block, beside a project: whether agents may use Unreal while the person plays. */
+function renderAgents(view) {
+  $("agents").hidden = !agents || view !== View.Project;
+  if (agents) $("while-playing").checked = agents.whilePlaying;
+}
+
+/** The person's choice for the Agents box, kept by the backend; the box shows what it kept. */
+async function chooseAgents(whilePlaying) {
+  const box = $("while-playing");
+  box.disabled = true;
+  try {
+    agents = await api.call("action", whilePlaying ? Action.AgentsGoAhead : Action.AgentsWait, {});
+  } catch (e) {
+    showError(e);
+  } finally {
+    box.disabled = false;
+    if (!closed && last) render();
+  }
+}
+
 /** Asks the backend where things stand and renders the answer. */
 async function loadStatus() {
   if (closed || ui.busy) return;
   try {
     // Until the person picks a game, status names none and shows the open game's own, the one chosen last or the most recent.
-    const s = await api.call("action", Action.Status, ui.picked ? { project: ui.shown } : {});
+    const [s, kept] = await Promise.all([
+      api.call("action", Action.Status, ui.picked ? { project: ui.shown } : {}),
+      api.call("action", Action.Agents, {}).catch(() => agents),
+    ]);
     if (closed) return;
+    agents = kept;
     if (onlyOne(s)) {
       ui.shown = s.projects[0].file;
       ui.picked = true;
@@ -1632,4 +1682,5 @@ window.addEventListener("pagehide", () => {
   clearInterval(timer);
   clearInterval(clock);
 });
+$("while-playing").addEventListener("change", (event) => void chooseAgents(event.currentTarget.checked));
 </script></body></html>

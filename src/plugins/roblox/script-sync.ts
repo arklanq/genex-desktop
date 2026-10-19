@@ -19,17 +19,22 @@
  *   with the record's hash as the base, so the helper refuses it when Studio changed meanwhile, and
  *   the same conflict rule applies. A script Studio changes (`scripts.changed`) is written to its
  *   file. Echoes are dropped by hash: a write is recorded before it lands, so the change it causes
- *   on the other side matches the record.
+ *   on the other side matches the record. A change Studio refuses while a play test runs is sent
+ *   again after {@link BUSY_RETRY_MS}; a watch an error ended is armed again after
+ *   {@link WATCH_REARM_MS}.
  * - **What is skipped.** Scripts Studio's Script Sync keeps in files of its own (listed as synced)
  *   are skipped both ways. A `default.project.json` at the game's top that Genex didn't write is the
  *   person's Rojo project: Rojo keeps their scripts in step, so Genex writes no script either way.
+ *   A script file the scan finds but can't take (too long, not UTF-8, unreadable, a link, or in a
+ *   folder it can't list) counts as present: neither side's copy is touched for it.
  *   A `src/` that is a link is refused, and nothing is read or written. Every write stays inside
  *   the game folder by real path; a link anywhere on the way is refused and nothing is written
  *   through it.
  */
-import { watch as watchFolder } from "node:fs";
+import { type Dirent, watch as watchFolder } from "node:fs";
 import { lstat, readdir, realpath, stat, unlink } from "node:fs/promises";
 import path from "node:path";
+import { SECOND_MS } from "../../shared/duration.ts";
 import { atomicWriteJson, ensureDirBelow, isJsonObject, readRegularFile } from "../../substrate/fsx.ts";
 import type { JobClock } from "../../substrate/job-process.ts";
 import { type HelperAsk, HelperLinkError, scriptTarget } from "./helper-link.ts";
@@ -49,6 +54,10 @@ import { isGameId } from "./studio-binding.ts";
 
 /** How long `src/` stays quiet before its changes are pushed: an editor's save is several writes. */
 export const SYNC_DEBOUNCE_MS = 150;
+/** How soon changes Studio refused while a play test ran are sent again. */
+export const BUSY_RETRY_MS = 5 * SECOND_MS;
+/** How soon a watch that stopped on an error is armed again. */
+export const WATCH_REARM_MS = 5 * SECOND_MS;
 /** Genex's record of the game's scripts, as path segments in the game folder. */
 export const SCRIPT_RECORD = [".genex", "roblox.json"] as const;
 /** Where a file's version goes when Studio's version of the same script wins. */
@@ -81,16 +90,21 @@ export const ScriptSyncMode = {
 } as const;
 export type ScriptSyncMode = (typeof ScriptSyncMode)[keyof typeof ScriptSyncMode];
 
-/** Watches a folder and everything below it; tests fire it by hand. */
-export type WatchFolder = (folder: string, onChange: () => void) => { close(): void };
+/** Watches a folder and everything below it, telling of an error that ended it; tests fire it by hand. */
+export type WatchFolder = (
+  folder: string,
+  onChange: () => void,
+  onError?: (error: unknown) => void,
+) => { close(): void };
 
-/** fs.watch over the folder and its subfolders; an error ends the watch with a log line. */
+/** fs.watch over the folder and its subfolders; an error ends the watch with a log line, and is told. */
 export function systemWatch(log: (line: string) => void): WatchFolder {
-  return (folder, onChange) => {
+  return (folder, onChange, onError) => {
     const watcher = watchFolder(folder, { recursive: true, persistent: false }, () => onChange());
     watcher.on("error", (error) => {
       log(`script sync: watching ${folder} stopped: ${String(error)}`);
       watcher.close();
+      onError?.(error);
     });
     return { close: () => watcher.close() };
   };
@@ -256,34 +270,92 @@ function sourceOf(bytes: Buffer): { source: string } | { problem: string } {
     : { source };
 }
 
+/**
+ * Script files the scan found but couldn't take (too long, not UTF-8, unreadable, a link, or in a
+ * folder it couldn't list): each counts as present, so neither side's copy is touched for it.
+ */
+class HeldFiles {
+  files = new Set<string>();
+  keys = new Set<string>();
+  /** Folders below `src/` the scan couldn't list or follow, each ending in `/`. */
+  folders: string[] = [];
+  /** The scan stopped at its file limit: every file it didn't reach counts as present. */
+  all = false;
+
+  holdFile(file: string): void {
+    const ref = scriptRefOf(file);
+    this.files.add(file);
+    if (ref) this.keys.add(scriptKey(ref));
+  }
+
+  /** Whether the script in `file` (or under another of its names) is held. */
+  holds(file: string, key: string): boolean {
+    if (this.all || this.files.has(file) || this.keys.has(key)) return true;
+    return this.folders.some((folder) => file.startsWith(folder));
+  }
+}
+
+/** What a scan of `src/` found: the scripts it read, and the files it found but couldn't take. */
+interface DiskScan {
+  scripts: DiskScript[];
+  held: HeldFiles;
+}
+
 /** Every script file below `src/` (by real path), read; links are never followed, other files skipped. */
-async function scanScripts(root: string, log: (line: string) => void): Promise<DiskScript[]> {
-  const found: DiskScript[] = [];
+async function scanScripts(root: string, log: (line: string) => void): Promise<DiskScan> {
+  const scan: DiskScan = { scripts: [], held: new HeldFiles() };
   const walk = async (dir: string, rel: string[]): Promise<void> => {
-    if (rel.length > MAX_DEPTH) return;
-    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    if (rel.length > MAX_DEPTH) return holdFolder(scan, rel, "is nested too deep", log);
+    const entries = await readdir(dir, { withFileTypes: true }).catch((error: unknown) => {
+      holdFolder(scan, rel, `can't be listed (${String(error)})`, log);
+      return [];
+    });
     for (const entry of entries.sort((a, b) => (a.name < b.name ? -1 : 1))) {
-      if (found.length >= MAX_FILES) return;
+      if (scan.scripts.length >= MAX_FILES) {
+        scan.held.all = true;
+        return;
+      }
       const parts = [...rel, entry.name];
       if (entry.isDirectory()) await walk(path.join(dir, entry.name), parts);
-      else if (entry.isFile() && entry.name.endsWith(SCRIPT_EXTENSION)) await readScript(found, root, parts, log);
+      else await scanFile(scan, root, entry, parts, log);
     }
   };
   await walk(root, []);
-  return found;
+  return scan;
 }
 
-async function readScript(found: DiskScript[], root: string, parts: string[], log: (line: string) => void) {
+/** One entry that isn't a folder: a link held, a script file read, anything else skipped. */
+async function scanFile(scan: DiskScan, root: string, entry: Dirent, parts: string[], log: (line: string) => void) {
+  if (entry.isSymbolicLink()) holdLink(scan, parts, log);
+  else if (entry.isFile() && entry.name.endsWith(SCRIPT_EXTENSION)) await readScript(scan, root, parts, log);
+}
+
+function holdFolder(scan: DiskScan, rel: string[], problem: string, log: (line: string) => void): void {
+  if (rel.length === 0) scan.held.all = true;
+  else scan.held.folders.push(`${rel.join("/")}/`);
+  log(`script sync: ${SCRIPTS_FOLDER}/${rel.join("/")} ${problem}; its scripts are left as they are in Studio`);
+}
+
+/** A link is never followed, and what it stands for is left alone on both sides. */
+function holdLink(scan: DiskScan, parts: string[], log: (line: string) => void): void {
+  const file = parts.join("/");
+  if (file.endsWith(SCRIPT_EXTENSION)) scan.held.holdFile(file);
+  else scan.held.folders.push(`${file}/`);
+  log(`script sync: ${SCRIPTS_FOLDER}/${file} is a link; it is never followed, and Studio's scripts there stay`);
+}
+
+async function readScript(scan: DiskScan, root: string, parts: string[], log: (line: string) => void) {
   const file = parts.join("/");
   const ref = scriptRefOf(file);
   if (!ref) return;
   const bytes = await readRegularFile(path.join(root, ...parts), MAX_SCRIPT_SOURCE_BYTES).catch(() => undefined);
   const read = bytes ? sourceOf(bytes) : { problem: "can't be read" };
   if ("problem" in read) {
+    scan.held.holdFile(file);
     log(`script sync: ${SCRIPTS_FOLDER}/${file} ${read.problem}; it stays out of Studio`);
     return;
   }
-  found.push({ file, ref, hash: helperHash(read.source), source: read.source });
+  scan.scripts.push({ file, ref, hash: helperHash(read.source), source: read.source });
 }
 
 /** Writes a script file below `src/`, its folders made on the way; a link on the way is refused. */
@@ -361,10 +433,14 @@ class SyncState {
   /** Scripts Script Sync keeps, and scripts with no file of their own (a clash), by key. */
   skipped = new Set<string>();
   queue: Promise<void> = Promise.resolve();
+  /** The files the last scan found but couldn't take: left alone on both sides. */
+  held = new HeldFiles();
   /** Scripts this reconcile couldn't carry to the other side (a request that failed). */
   misses = 0;
   watcher: { close(): void } | undefined;
   timer: unknown;
+  /** Arms the watch again after an error ended it. */
+  rearm: unknown;
 
   constructor(deps: ScriptSyncDeps) {
     this.deps = deps;
@@ -425,6 +501,13 @@ class SyncState {
     this.watcher?.close();
     this.watcher = undefined;
     this.deps.clock.clearTimeout(this.timer);
+    this.deps.clock.clearTimeout(this.rearm);
+  }
+
+  /** A pass over `src/` once `ms` have passed, in place of any pass already waiting. */
+  passIn(ms: number): void {
+    this.deps.clock.clearTimeout(this.timer);
+    this.timer = this.deps.clock.setTimeout(() => void this.enqueue(() => this.fromDisk()), ms);
   }
 
   /** The mode the folder allows now; anything but On stops the watch. */
@@ -460,7 +543,7 @@ class SyncState {
     }
     await ignoreLocks(this.deps.folder, (line) => this.log(line));
     const listed = await this.deps.ask(HelperMessage.ScriptsList, {});
-    const disk = await scanScripts(this.root as string, (line) => this.log(line));
+    const disk = await this.scan();
     this.misses = 0;
     await this.decideAll(listed.scripts, disk, options);
     await writeRecord(this.deps.folder, this.record);
@@ -501,12 +584,24 @@ class SyncState {
     const needed = plans.filter((plan) => plan.step === ScriptStep.ToDisk || plan.step === ScriptStep.Conflict);
     const sources = await this.studioSources(needed.flatMap((plan) => (plan.studio ? [plan.studio] : [])));
     for (const plan of plans) {
-      if (!plan.file) continue;
+      if (!plan.file || this.isHeld(plan.file, plan.key, plan.disk)) continue;
       // The script moved to another of its names: the record follows it.
       if (plan.recorded && plan.recorded.file !== plan.file) delete this.record.scripts[plan.recorded.file];
       const ref = (plan.studio ?? plan.disk?.ref ?? scriptRefOf(plan.file)) as ScriptRef;
       await this.apply({ ...plan, file: plan.file, ref: toRef(ref), studioSource: sources.get(plan.key) });
     }
+  }
+
+  /** The script files below `src/` now; what the scan couldn't take is kept in `held`. */
+  async scan(): Promise<DiskScript[]> {
+    const scan = await scanScripts(this.root as string, (line) => this.log(line));
+    this.held = scan.held;
+    return scan.scripts;
+  }
+
+  /** Whether the script in `file` has a file on disk the scan couldn't take: neither side is touched. */
+  isHeld(file: string, key: string, onDisk: DiskScript | undefined): boolean {
+    return onDisk === undefined && this.held.holds(file, key);
   }
 
   refuse(ref: ScriptRef): void {
@@ -593,6 +688,8 @@ class SyncState {
     }
     if (code === HelperErrorCode.Refused) this.skipped.add(scriptKey(ref));
     else this.misses++;
+    // Studio takes no script change while a play test runs: the change goes again after it.
+    if (code === HelperErrorCode.Busy) this.passIn(BUSY_RETRY_MS);
     this.log(`script sync: ${SCRIPTS_FOLDER}/${file} not sent to Studio: ${errorText(error)}`);
   }
 
@@ -604,6 +701,7 @@ class SyncState {
     } catch (error) {
       if (helperCode(error) !== HelperErrorCode.Conflict) {
         this.misses++;
+        if (helperCode(error) === HelperErrorCode.Busy) this.passIn(BUSY_RETRY_MS);
         this.log(`script sync: ${ref.path.join(".")} not removed from Studio: ${errorText(error)}`);
         return;
       }
@@ -615,10 +713,25 @@ class SyncState {
 
   watchScripts(): void {
     if (this.watcher || !this.root) return;
-    this.watcher = this.deps.watch(this.root, () => {
-      this.deps.clock.clearTimeout(this.timer);
-      this.timer = this.deps.clock.setTimeout(() => void this.enqueue(() => this.fromDisk()), SYNC_DEBOUNCE_MS);
-    });
+    const watcher = this.deps.watch(
+      this.root,
+      () => this.passIn(SYNC_DEBOUNCE_MS),
+      () => this.watchEnded(watcher),
+    );
+    this.watcher = watcher;
+  }
+
+  /** A watch an error ended is armed again a little later, with a pass for what changed meanwhile. */
+  watchEnded(watcher: { close(): void }): void {
+    if (this.watcher !== watcher) return;
+    watcher.close();
+    this.watcher = undefined;
+    this.deps.clock.clearTimeout(this.rearm);
+    this.rearm = this.deps.clock.setTimeout(() => {
+      if (this.current !== ScriptSyncMode.On) return;
+      this.watchScripts();
+      void this.enqueue(() => this.fromDisk());
+    }, WATCH_REARM_MS);
   }
 
   /** What changed under `src/` since the record: pushed, or removed from Studio, each request within `timeoutMs` when given. */
@@ -630,9 +743,7 @@ class SyncState {
       this.current = mode;
       return;
     }
-    const disk = (await scanScripts(this.root as string, (line) => this.log(line))).filter(
-      (script) => !this.skipped.has(scriptKey(script.ref)),
-    );
+    const disk = (await this.scan()).filter((script) => !this.skipped.has(scriptKey(script.ref)));
     for (const script of disk) {
       const recorded = this.record.scripts[script.file];
       if (script.hash !== recorded) await this.push(script.file, script.ref, script, recorded, timeoutMs);
@@ -651,7 +762,7 @@ class SyncState {
     for (const [file, hash] of Object.entries(this.record.scripts)) {
       const ref = scriptRefOf(file) as ScriptRef;
       const key = scriptKey(ref);
-      if (files.has(file) || this.skipped.has(key)) continue;
+      if (files.has(file) || this.skipped.has(key) || this.held.holds(file, key)) continue;
       if (keys.has(key)) delete this.record.scripts[file];
       else await this.remove(file, ref, hash, timeoutMs);
     }
@@ -659,7 +770,7 @@ class SyncState {
 
   /** Every file name already taken below `src/`: on disk, or held by the record. */
   takenFiles(disk: DiskScript[]): string[] {
-    return [...disk.map((script) => script.file), ...Object.keys(this.record.scripts)];
+    return [...disk.map((script) => script.file), ...this.held.files, ...Object.keys(this.record.scripts)];
   }
 
   /** The file a script is in, or goes in: on disk, in the record, or where the layout puts it. */
@@ -675,11 +786,15 @@ class SyncState {
     const ref = toRef(change);
     const key = scriptKey(ref);
     if (this.current !== ScriptSyncMode.On || this.skipped.has(key)) return;
-    const disk = await scanScripts(this.root as string, (line) => this.log(line));
+    const disk = await this.scan();
     const onDisk = disk.find((script) => scriptKey(script.ref) === key);
     const file = this.fileFor(ref, disk, onDisk);
     if (!file) {
       this.refuse(ref);
+      return;
+    }
+    if (this.isHeld(file, key, onDisk)) {
+      this.log(`script sync: ${SCRIPTS_FOLDER}/${file} can't be taken from disk; Studio's change to it isn't written`);
       return;
     }
     const recorded = this.record.scripts[file];

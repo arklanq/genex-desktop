@@ -447,6 +447,31 @@ describe("a subscription's accounts", () => {
     assert.equal(existsSync(path.join(accountsRoot, "claude-code", added.id)), false);
   });
 
+  it("never shows a forgotten account's email on the next account given its id", async () => {
+    const emails: Record<string, string> = {};
+    const { invoke, engines, signedIn } = loginFixture({}, false, { signedIn: ["/system/claude-code"], emails });
+    const engine = engines.get("claude-code");
+    assert.ok(engine);
+    const first = await engine.accounts.newAccount();
+    signedIn.add(first.home);
+    await settleSignIn(engine, first.home);
+    // Its CLI names the email only later, when the list asks.
+    emails[first.home] = "old@example.com";
+    const listed = async () => {
+      const answer = await invoke("studio:subscription.accounts", { engine: "claude-code" });
+      assert.ok(answer.ok);
+      return (answer.value as { id: string; email: string | null }[]).find((entry) => entry.id === first.id)?.email;
+    };
+    assert.equal(await listed(), "old@example.com");
+    await invoke("studio:subscription.forget-studio-login", { engine: "claude-code", account: first.id });
+    const next = await engine.accounts.newAccount();
+    assert.equal(next.id, first.id, "a forgotten account's id is given again");
+    signedIn.add(next.home);
+    delete emails[next.home];
+    await settleSignIn(engine, next.home);
+    assert.equal(await listed(), null, "the new person's CLI reports no email, so none shows");
+  });
+
   it("a finished sign-in remembers its account with its email and runs on it", async () => {
     const { engines, signedIn, started } = loginFixture({}, false, { signedIn: ["/system/codex"] });
     const engine = engines.get("codex");
@@ -1132,6 +1157,7 @@ describe("Play's share menu", () => {
       people: unused as PlayIpcDeps["people"],
       creators: unused as PlayIpcDeps["creators"],
       credits: unused as PlayIpcDeps["credits"],
+      manage: unused as PlayIpcDeps["manage"],
       web,
       share: (url, at) => shared.push([url, at]),
     });

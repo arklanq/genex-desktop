@@ -200,6 +200,7 @@ export function StageStrip({
   sound,
   emptyGame,
   livePreview,
+  gameControls,
   plugins,
   onNotice,
   onToolbarOpen,
@@ -226,6 +227,8 @@ export function StageStrip({
   emptyGame: boolean;
   /** Live shows the game's web preview (`live-views.ts`): only then do Run, Reload, Sound and Full screen show. */
   livePreview: boolean;
+  /** The game has something to run (`gameControlsShown`): only then do Play/Stop and Sound show. */
+  gameControls: boolean;
   plugins: PluginInfo[];
   onNotice: Notify;
   onToolbarOpen: (open: boolean) => void;
@@ -258,12 +261,12 @@ export function StageStrip({
             onSelect={onTab}
           />
         ) : null}
-        {livePreview ? <RunButton run={run.state} onToggle={run.toggle} /> : null}
+        {livePreview && gameControls ? <RunButton run={run.state} onToggle={run.toggle} /> : null}
         {livePreview ? <ReloadButton behind={behind} onReload={onReload} /> : null}
       </div>
       <span className="min-w-0 flex-1 self-stretch" />
       <div ref={end} className="flex shrink-0 items-center gap-2">
-        {livePreview ? <SoundButton on={sound.on} onToggle={sound.toggle} /> : null}
+        {livePreview && gameControls ? <SoundButton on={sound.on} onToggle={sound.toggle} /> : null}
         {livePreview ? <FullScreenButton offered={fullScreen.offered} onEnter={fullScreen.enter} /> : null}
         <PluginToolbar
           plugins={plugins}

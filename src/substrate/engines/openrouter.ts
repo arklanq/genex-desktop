@@ -264,6 +264,8 @@ export class OpenRouterEngine implements Engine {
   readonly label = "OpenRouter";
   readonly kind = EngineKind.Direct;
   readonly supportsSessions = true;
+  /** Its sessions run Genex's own loop (`LocalSessions`), which reads the person's messages between rounds. */
+  readonly steersMidTurn = true;
   readonly sessions: LocalSessions;
   readonly baseUrl: string;
   readonly #keys: ApiKeyStore;

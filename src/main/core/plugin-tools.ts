@@ -235,6 +235,11 @@ export interface PluginCallContext {
    * its run, as the chat's own session's.
    */
   lead?: boolean;
+  /**
+   * Ends the call's wait for its locks, never its run, once the person writes in the chat its session
+   * answers (`engine.steer`, `PersonWrote`): it is answered `person_wrote`, to read the message first.
+   */
+  personWrote?: AbortSignal;
 }
 
 /** The name of a consent card the studio itself asks with, or null for a plugin's. */
@@ -263,6 +268,8 @@ export interface ConnectorCallOptions {
   holder?: string;
   /** The harness itself made the call (`mcp.invoke`): its end, planned or not, cuts the call off. */
   byHarness?: boolean;
+  /** Ends its wait for its locks once the person writes in its session's chat, as `PluginCallContext.personWrote`. */
+  personWrote?: AbortSignal;
 }
 
 /**
@@ -624,7 +631,8 @@ export class PluginToolService {
       if (!bounded) return;
       if (left(until) <= CALL_FLOOR_MS) throw new NotRunInTime();
       const waitMs = this.#lockWaitMs(left(until) - this.#core.plugins.callCeilingOf(name));
-      release = await this.#holdNeeds(name, binding, signal, ctx.holder, callRun(ctx)?.runId, waitMs);
+      const runId = callRun(ctx)?.runId;
+      release = await this.#holdNeeds(name, binding, signal, ctx.holder, runId, waitMs, ctx.personWrote);
       if (left(until) <= CALL_FLOOR_MS) throw new NotRunInTime();
       ends = this.#x.locks.clock.timeout(left(until));
       ends.addEventListener("abort", cut, { once: true });
@@ -689,8 +697,9 @@ export class PluginToolService {
   /**
    * Hold, for one call, the locks the tool or connector `name` needs (`PluginRegistry.needsOf`):
    * in turn behind other holders, and while the person uses what one guards, until the agent's
-   * wait runs out (`LockRefused`). A wait on the person is told to the chat the call answers to.
-   * Answers the release; a call that needs nothing holds nothing.
+   * wait runs out or the person writes in its session's chat (`personWrote`), refused with
+   * `LockRefused`. A wait on the person is told to the chat the call answers to. Answers the
+   * release; a call that needs nothing holds nothing.
    */
   async #holdNeeds(
     name: string,
@@ -699,6 +708,7 @@ export class PluginToolService {
     holder: string | undefined,
     runId: string | undefined,
     waitMs: number,
+    personWrote?: AbortSignal,
   ): Promise<() => void> {
     const needs = this.#core.plugins.needsOf(name);
     if (!needs.length) return NO_RELEASE;
@@ -707,6 +717,7 @@ export class PluginToolService {
       binding,
       ...(threadId ? { threadId } : {}),
       ...(signal ? { signal } : {}),
+      ...(personWrote ? { personWrote } : {}),
       waitMs,
       holder: holder ?? shortId("call"),
     });
@@ -794,7 +805,7 @@ export class PluginToolService {
     name: string,
     binding: { project?: string | null; threadId?: string } | undefined,
     signal: AbortSignal,
-    { holder, runId }: ConnectorCallOptions,
+    { holder, runId, personWrote }: ConnectorCallOptions,
     deadline: number,
   ): Promise<() => void> {
     if (!binding?.project) return Promise.resolve(NO_RELEASE);
@@ -804,7 +815,7 @@ export class PluginToolService {
       ...(binding.threadId ? { threadId: binding.threadId } : {}),
     };
     const room = deadline - this.#x.locks.clock.now() - this.#core.mcp.callTimeoutOf(name);
-    return this.#holdNeeds(name, bound, signal, holder, runId, this.#lockWaitMs(room));
+    return this.#holdNeeds(name, bound, signal, holder, runId, this.#lockWaitMs(room), personWrote);
   }
 
   /**

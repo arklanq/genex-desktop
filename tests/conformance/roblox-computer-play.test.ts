@@ -316,6 +316,60 @@ describe("Roblox play: opening", () => {
     assert.deepEqual(world.of("start_stop_play"), [], "the person's play goes on");
   });
 
+  it("joins a multiplayer test the person started: it isn't the agent's, and close leaves it running", async () => {
+    const world = await playWorld({ multiplayer: HelperErrorCode.Busy });
+    // The person's own two-player test, listed already.
+    Object.assign(world.studio, { mode: "test", testPlayers: 2, startedAt: -10 });
+    const opened = await world.run(EnginePlayTool.Open, { players: 2 });
+    assert.equal(opened.joined, true);
+    assert.equal((await readAgentMarks(world.marks, world.now())).play, undefined, "the person's play is theirs");
+    assert.deepEqual(await world.run(EnginePlayTool.Close), { closed: true });
+    assert.equal(world.asked.includes(HelperMessage.PlayEnd), false, "the helper isn't asked to end it");
+    assert.equal(
+      world.of("execute_luau").some((one) => one.args.code === PLAY_LUAU.EndTest),
+      false,
+      "nor its server",
+    );
+    assert.equal(world.studio.testPlayers, 2, "the person's test goes on");
+  });
+
+  it("the agent's mark ends once the play it started is found stopped by the person", async () => {
+    for (const tool of [EnginePlayTool.Input, EnginePlayTool.State, EnginePlayTool.Shot]) {
+      const world = await playWorld();
+      await world.run(EnginePlayTool.Open);
+      world.studio.mode = "edit";
+      const args = tool === EnginePlayTool.Input ? { keys: "KeyW", seconds: 0.1 } : {};
+      assert.equal((await world.run(tool, args)).refused, EnginePlayRefusal.NotPlaying, tool);
+      assert.equal((await readAgentMarks(world.marks, world.now())).play, undefined, `${tool}: the mark is gone`);
+      assert.equal((await world.run(tool, args)).refused, EnginePlayRefusal.NotPlaying, `${tool}: and the play`);
+    }
+  });
+
+  it("the game's script changes reach Studio before a new play starts, never before joining one", async () => {
+    const world = await playWorld();
+    const order: string[] = [];
+    const game = { ...world.game, flush: async () => void order.push("flush") };
+    const play = createComputerPlay({
+      studio: {
+        studios: world.studioDeps.studios,
+        callTool: async (name, args) => {
+          if (name === "start_stop_play") order.push(`${name}:${String(args.is_start)}`);
+          return world.studioDeps.callTool(name, args);
+        },
+      },
+      shrink: async (bytes) => bytes,
+      now: world.now,
+      sleep: async () => {},
+    }).handlers;
+    await play[EnginePlayTool.Open]({}, game);
+    assert.deepEqual(order, ["flush", "start_stop_play:true"]);
+    await play[EnginePlayTool.Close]({}, game);
+    world.studio.mode = "solo";
+    order.length = 0;
+    await play[EnginePlayTool.Open]({}, game);
+    assert.deepEqual(order, [], "a play already running is joined as it is");
+  });
+
   it("no Studio connected for the game answers no-editor", async () => {
     const world = await playWorld();
     const opened = await createComputerPlay({

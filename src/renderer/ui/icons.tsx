@@ -1,7 +1,8 @@
 /**
  * The Genex icon set: line glyphs on one 24-unit grid with a 1.75 stroke, round caps and joins.
  * Parts marked `a-*` move once when the enclosing control is hovered or focused; the motion
- * lives in styles/icons.css and stops under Reduce Motion. Dots are the only fills.
+ * lives in styles/icons.css and stops under Reduce Motion. Dots, carets and Unity's mark are the
+ * only fills.
  */
 import type { JSX, ReactNode } from "react";
 
@@ -166,6 +167,15 @@ const glyphs = {
       <circle cx="14.5" cy="12.5" r="1.4" {...DOT} />
     </>
   ),
+  // Unity's own mark, as the Unity plugin's picture draws it, filled: a line copy would no longer be Unity's.
+  unity: (
+    <path
+      transform="translate(3.6 3.6) scale(.7)"
+      d="m12.9288 4.2939 3.7997 2.1929c.1366.077.1415.2905 0 .3675l-4.515 2.6076a.4192.4192 0 0 1-.4246 0L7.274 6.8543c-.139-.0745-.1415-.293 0-.3675l3.7972-2.193V0L1.3758 5.5977V16.793l3.7177-2.1456v-4.3858c-.0025-.1565.1813-.2682.318-.1838l4.5148 2.6076a.4252.4252 0 0 1 .2136.3676v5.2127c.0025.1565-.1813.2682-.3179.1838l-3.7996-2.1929-3.7178 2.1457L12 24l9.6954-5.5977-3.7178-2.1457-3.7996 2.1929c-.1341.082-.3229-.0248-.3179-.1838V13.053c0-.1565.087-.2956.2136-.3676l4.5149-2.6076c.134-.082.3228.0224.3179.1838v4.3858l3.7177 2.1456V5.5977L12.9288 0Z"
+      fill="currentColor"
+      stroke="none"
+    />
+  ),
   reload: (
     <g className="a-spin">
       <path d="M20 12a8 8 0 1 1-8-8c2.2 0 4.2.9 5.7 2.3L20 8.5" />
@@ -231,6 +241,8 @@ const glyphs = {
       <path d="M19.5 11.5l-7.6 7.6a4.8 4.8 0 0 1-6.8-6.8l8.1-8.1a3.2 3.2 0 0 1 4.5 4.5l-8 8a1.6 1.6 0 0 1-2.3-2.3l7.3-7.3" />
     </g>
   ),
+  // Save: a ribbon bookmark. Saved draws it filled (`.gi-filled` in styles/asset-library.css).
+  bookmark: <path d="M7.5 4.5h9a1 1 0 0 1 1 1v14.2l-5.5-3.9-5.5 3.9V5.5a1 1 0 0 1 1-1z" />,
   pin: (
     <g className="a-pin">
       <path d="M9 4h6M10 4v5l-3.2 3.4V15h10.4v-2.6L14 9V4M12 15v5.5" />
@@ -585,6 +597,27 @@ const glyphs = {
       <rect x="13" y="4" width="7" height="7" rx="1" />
       <rect x="4" y="13" width="7" height="7" rx="1" />
       <rect x="13" y="13" width="7" height="7" rx="1" />
+    </>
+  ),
+  /** A tag with its hole: a game's tags. */
+  tag: (
+    <>
+      <path d="M4 12.6V5.5A1.5 1.5 0 0 1 5.5 4h7.1a1.5 1.5 0 0 1 1 .4l6.1 6.1a1.5 1.5 0 0 1 0 2.1l-7.1 7.1a1.5 1.5 0 0 1-2.1 0l-6.1-6.1a1.5 1.5 0 0 1-.4-1z" />
+      <circle cx="8.5" cy="8.5" r="1.3" {...DOT} />
+    </>
+  ),
+  /** An eye struck through: taken out of sight. */
+  "eye-off": (
+    <>
+      <path d="M2.5 12s3.5-6.5 9.5-6.5c1.6 0 3 .5 4.2 1.2M21.5 12s-3.5 6.5-9.5 6.5c-1.6 0-3-.5-4.2-1.2" />
+      <path d="M4 20L20 4" />
+    </>
+  ),
+  /** A closed padlock. */
+  lock: (
+    <>
+      <rect x="5" y="10.5" width="14" height="9.5" rx="2.5" />
+      <path d="M8.5 10.5V8a3.5 3.5 0 0 1 7 0v2.5" />
     </>
   ),
   /** A small triangle up or down: a number that rose or fell. */

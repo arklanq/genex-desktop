@@ -7,6 +7,7 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { setImmediate } from "node:timers/promises";
 import {
   FIXTURE_ACCOUNT_TOKEN,
   FixtureAccount,
@@ -38,7 +39,7 @@ function rig(
   answers: (call: Call) => GalleryAnswer,
   options: { token?: string | undefined; upload?: number; web?: string } = {},
 ) {
-  const token = "token" in options ? options.token : TOKEN;
+  let token = "token" in options ? options.token : TOKEN;
   const calls: Call[] = [];
   const refused: string[] = [];
   const uploads: Array<{ url: string; bytes: number; type: string }> = [];
@@ -59,7 +60,16 @@ function rig(
     refused: (value) => refused.push(value),
     web: options.web ?? PLAY_ORIGIN.web,
   });
-  return { people, calls, uploads, refused, advance: (ms: number) => (clock += ms) };
+  return {
+    people,
+    calls,
+    uploads,
+    refused,
+    advance: (ms: number) => (clock += ms),
+    signIn: (value: string | undefined) => {
+      token = value;
+    },
+  };
 }
 
 /** The account as `/api/me` and the public profile answer it. */
@@ -109,6 +119,7 @@ describe("the Genex account Play is signed in as", () => {
       photoUrl: null,
       avatarVariantKept: false,
       handleChosen: null,
+      isAdmin: false,
     });
     assert.ok(!JSON.stringify(me).includes("example.com"), "no email crosses");
     await people.me();
@@ -116,6 +127,22 @@ describe("the Genex account Play is signed in as", () => {
     advance(60_000);
     await people.me();
     assert.equal(calls.filter((c) => c.route === PeopleRoute.Me).length, 2, "read again later");
+  });
+
+  it("is an admin only when genex.games says so outright", async () => {
+    const answer = (isAdmin: unknown) => (call: Call) => {
+      const kept = accountApi(call);
+      return call.route === PeopleRoute.Me ? ok({ ...(kept.body as object), isAdmin }) : kept;
+    };
+    const cases: Array<[unknown, boolean]> = [
+      [true, true],
+      [false, false],
+      ["true", false],
+      [1, false],
+      [undefined, false],
+    ];
+    for (const [isAdmin, expected] of cases)
+      assert.equal((await rig(answer(isAdmin)).people.me())?.isAdmin, expected, JSON.stringify(isAdmin));
   });
 
   it("shows its photo only when it chose the photo, and keeps the photo it uploaded either way", async () => {
@@ -318,6 +345,33 @@ describe("profiles", () => {
     assert.equal((await people.profile("u1")).status, FriendStatus.Self);
   });
 
+  it("keeps nothing of a profile read under way when a game on it changed", async () => {
+    const held: Array<() => void> = [];
+    let holding = true;
+    let reads = 0;
+    const people = playPeople({
+      request: async (route, init) => {
+        if (route === PeopleRoute.user("u2")) {
+          reads += 1;
+          if (holding) await new Promise<void>((resolve) => held.push(resolve));
+        }
+        return api({ route, method: init.method ?? "GET", ...init });
+      },
+      token: async () => TOKEN,
+      now: () => 0,
+      upload: async () => 200,
+      web: PLAY_ORIGIN.web,
+    });
+    const reading = people.profile("u2");
+    await setImmediate();
+    people.forgetProfiles();
+    holding = false;
+    for (const answer of held.splice(0)) answer();
+    await reading;
+    await people.profile("u2");
+    assert.equal(reads, 2, "read again: the one under way began before the change");
+  });
+
   it("lists their friends, people the viewer knows first, each with their game, games and since when", async () => {
     const { people } = rig(api);
     const { friends } = await people.profile("u2");
@@ -353,6 +407,22 @@ describe("profiles", () => {
     assert.deepEqual(
       (await people.profile("u1")).friends?.map((f) => [f.id, f.games, f.mutual]),
       [["u5", 1, false]],
+    );
+  });
+
+  it("never shows one viewer's read of a profile to the next one signed in", async () => {
+    const { people, calls, signIn } = rig(api);
+    await people.profile("u2");
+    signIn("token-of-someone-else");
+    await people.profile("u2");
+    const reads = calls.filter((c) => c.route === PeopleRoute.user("u2")).map((c) => c.token);
+    assert.deepEqual(reads, [TOKEN, "token-of-someone-else"], "the profile is read again for the new viewer");
+    signIn(undefined);
+    await people.profile("u2");
+    assert.equal(
+      calls.filter((c) => c.route === PeopleRoute.user("u2")).at(-1)?.token,
+      undefined,
+      "and once signed out",
     );
   });
 

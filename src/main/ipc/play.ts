@@ -3,9 +3,11 @@ import { isAvatarVariant } from "../../shared/avatar-recipe.ts";
 import { isPlayShelf, isPlaySlug, PlayShelf, type PlayPoint, readPlayPoint } from "../../shared/play.ts";
 import { isAccountId, isAvatarStyle, isFriendAction, isPresenceVisibility } from "../../shared/play-people.ts";
 import { isStatsPeriod } from "../../shared/play-stats.ts";
+import { isPlayCoverType, isPlayGameChange, isPlayGameId } from "../../shared/play-manage.ts";
 import type { CreatorStats } from "../play/creator-stats.ts";
 import type { GenexCredits } from "../play/credits.ts";
 import type { PlayGallery, PlayWorld } from "../play/gallery.ts";
+import type { PlayManage } from "../play/manage.ts";
 import { onWebsite } from "../play/origins.ts";
 import type { PlayPeople } from "../play/people.ts";
 import type { PlayViewer } from "../play/viewer.ts";
@@ -22,6 +24,9 @@ const MESSAGE = {
   badVariant: "not an avatar variant",
   badPeriod: "not a stats period",
   badShare: "not a page of the website Play links to",
+  badGame: "not a published game",
+  badChange: "not a change the card menu makes",
+  badCoverType: "not a cover picture type",
 } as const;
 
 /** What Play's channels answer from. */
@@ -34,6 +39,8 @@ export interface PlayIpcDeps {
   people: PlayPeople;
   creators: CreatorStats;
   credits: GenexCredits;
+  /** A published game's card menu: the owner's items, and the mobile flag and tags an admin sets. */
+  manage: PlayManage;
   /** The website Play links to: only its pages (an invite, a profile) go to the share menu. */
   web: string;
   /** Pop the Mac's share menu for `url` in the studio window, by `at` when it is known. */
@@ -44,6 +51,7 @@ export interface PlayIpcDeps {
 export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   const { gallery, remix, viewer, people, creators, credits, web, share } = deps;
   registerPeopleIpc(handle, people);
+  registerManageIpc(handle, deps.manage);
   // Share… hands the Mac's share menu a page of Play's website and nothing else.
   handle("studio:play.share", async (payload) => {
     const url = String(payload?.url ?? "");
@@ -57,15 +65,25 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   handle("studio:play.creators", () => creators.topCreators());
   handle("studio:play.credits", () => credits.credits());
   handle("studio:play.feed", (payload) => gallery.feed({ category: payload?.category, cursor: payload?.cursor }));
-  handle("studio:play.shelves", () => gallery.shelves());
+  // Play's dashboard asks first: the viewer's bar gets ready for the game it may open.
+  handle("studio:play.shelves", () => {
+    viewer()?.warm();
+    return gallery.shelves();
+  });
   handle("studio:play.catalog", () => gallery.mentionItems());
   handle("studio:play.search", (payload) =>
     gallery.search(String(payload?.query ?? ""), isPlayShelf(payload?.shelf) ? payload.shelf : PlayShelf.Games),
   );
   // A card's Remix: main reads the game's own page for its source, never an address from the renderer.
+  // While one is made, the viewer's Remix waits.
   handle("studio:play.remix", async (payload) => {
     if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
-    return remix(await gallery.world(payload.slug));
+    viewer()?.remixing(true);
+    try {
+      return await remix(await gallery.world(payload.slug));
+    } finally {
+      viewer()?.remixing(false);
+    }
   });
   handle("studio:play.online", (payload) => gallery.online(Array.isArray(payload?.slugs) ? payload.slugs : []));
   // The renderer names a game by its slug; main builds every address from it.
@@ -73,11 +91,40 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
     if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
     const shown = viewer();
     if (!shown) throw new Error(MESSAGE.noWindow);
-    shown.open(payload.slug);
+    shown.open(payload.slug, payload.title);
   });
   handle("studio:play.close", async () => viewer()?.close());
-  // The header names a control (and where it is, for a menu); the viewer acts only on one it knows.
+  // The bar names a control (and where it is, for a menu); the viewer acts only on one it knows.
   handle("studio:play.control", async (payload) => viewer()?.control(payload?.control, readPlayPoint(payload?.at)));
+  handle("studio:play.bar", async (payload) => viewer()?.hold(payload));
+  registerCommentsIpc(handle, viewer);
+}
+
+/** The viewed game's comments: always the game on screen, never one the renderer names. */
+function registerCommentsIpc(handle: IpcHandle, viewer: PlayIpcDeps["viewer"]): void {
+  const shown = (): PlayViewer => {
+    const open = viewer();
+    if (!open) throw new Error(MESSAGE.noWindow);
+    return open;
+  };
+  handle("studio:play.comments", (payload) => shown().comments(payload?.cursor));
+  handle("studio:play.comment", (payload) => shown().comment(payload?.body));
+  handle("studio:play.uncomment", (payload) => shown().uncomment(payload?.commentId));
+}
+
+/** A game's card menu: every id, change and picture type is checked here, a picture's bytes again in `manage`. */
+function registerManageIpc(handle: IpcHandle, manage: PlayManage): void {
+  handle("studio:play.manage", (payload) => {
+    if (!isPlayGameId(payload?.gameId)) throw new Error(MESSAGE.badGame);
+    if (!isPlayGameChange(payload.change)) throw new Error(MESSAGE.badChange);
+    return manage.change(payload.gameId, payload.change);
+  });
+  handle("studio:play.cover", (payload) => {
+    if (!isPlayGameId(payload?.gameId)) throw new Error(MESSAGE.badGame);
+    if (!(payload.image instanceof Uint8Array)) throw new Error(MESSAGE.badPicture);
+    if (!isPlayCoverType(payload.contentType)) throw new Error(MESSAGE.badCoverType);
+    return manage.cover(payload.gameId, payload.image, payload.contentType);
+  });
 }
 
 /** Play's people: the account, profiles and friends. Every id and choice is checked here, names and pictures in `people`. */

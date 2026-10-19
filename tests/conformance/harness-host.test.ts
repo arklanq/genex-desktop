@@ -269,6 +269,16 @@ describe("harness host: self-modification", () => {
     await rebuilt.stop();
   });
 
+  it("a boot that exits says why, with the harness's own last words", async () => {
+    // Rab's Windows PC: the dialog said only "harness exited during boot (code 1, signal null)".
+    const r = await rig("says-why");
+    await writeFile(path.join(r.workspace, "loop", "main.mjs"), "throw new Error('I broke myself');\n");
+    await assert.rejects(
+      () => r.host.start(undefined, { callerRecovers: true }),
+      (err: Error) => /exited during boot/.test(err.message) && /I broke myself/.test(err.message),
+    );
+  });
+
   it("a boot whose caller recovers it is not raced by a background crash restart", async () => {
     // PROD-1: the cold start and the watchdog rewind a self that cannot boot themselves; a
     // background restart of that same self would race the rewind and burn the crash budget.

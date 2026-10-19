@@ -11,6 +11,7 @@ import { sameSnapshot, shareRecords } from "./snapshot-equality.ts";
  */
 import { createStore, type StoreApi } from "zustand/vanilla";
 import { ThreadKind } from "../../shared/event-log.ts";
+import { isPermissionMode } from "../../shared/permissions.ts";
 import type { ThreadStatusMap, UiEvent, UiEventMap } from "../../shared/ui-events.ts";
 import type { ConversationRecord, GameProject, StudioApi } from "../../shared/studio-api.ts";
 import type { ThreadMeta } from "../types.ts";
@@ -92,6 +93,7 @@ export function threadMeta(thread: ConversationRecord | null | undefined): Threa
   if (text(raw.lastEngine)) meta.lastEngine = text(raw.lastEngine);
   if (text(raw.lastModel) !== undefined) meta.lastModel = text(raw.lastModel);
   if (text(raw.lastEffort) !== undefined) meta.lastEffort = text(raw.lastEffort);
+  if (isPermissionMode(raw.permissionMode)) meta.permissionMode = raw.permissionMode;
   if (thread) META_CACHE.set(thread, meta);
   return meta;
 }

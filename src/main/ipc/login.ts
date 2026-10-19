@@ -154,20 +154,22 @@ function registerAccountIpc(
   },
 ): void {
   // A subscription's accounts, each with its email once its CLI told it. Each account's CLI is
-  // asked once a run; a list asked for meanwhile waits for that same answer.
+  // asked once a run; a list asked for meanwhile waits for that same answer. An email found for one
+  // of Studio's own accounts is kept with the account instead, so forgetting the account forgets it.
   const emails = new Map<string, Promise<string | null>>();
+  const emailKey = (engine: string, account: string) => `${engine}:${account}`;
   handle("studio:subscription.accounts", async (payload) => {
     const engine = subscription(String(payload?.engine ?? ""));
     if (!engine) throw new Error(MESSAGE.unknownEngine(String(payload?.engine ?? "")));
     const entries = await engine.accounts.list();
     for (const entry of entries) {
       if (entry.email || !entry.signedIn) continue;
-      const key = `${payload.engine}:${entry.id}`;
+      const key = emailKey(payload.engine, entry.id);
       const asked = emails.get(key) ?? engine.accountEmail(entry.home).catch(() => null);
       if (!emails.has(key)) {
         emails.set(key, asked);
         // The Terminal login is the CLI's to change, so its email is kept for this run only.
-        void asked.then((email) => (email ? engine.accounts.remember(entry.id, { email }) : undefined)).catch(() => {});
+        void asked.then((email) => keepEmail(engine, entry, key, asked, email)).catch(() => {});
       }
       entry.email = await asked;
     }
@@ -199,7 +201,8 @@ function registerAccountIpc(
   // Forget one of the studio's own accounts and run on another. Deletes only studio-owned homes
   // under userData — never the user's own ~/.claude or ~/.codex.
   handle("studio:subscription.forget-studio-login", async (payload) => {
-    const engine = subscription(payload?.engine ?? EngineId.ClaudeCode);
+    const engineId = payload?.engine ?? EngineId.ClaudeCode;
+    const engine = subscription(engineId);
     if (!engine) return true;
     const account = payload?.account ?? AccountId.Studio;
     if (account === AccountId.Terminal) throw new Error(MESSAGE.terminalSignOut);
@@ -218,17 +221,35 @@ function registerAccountIpc(
         // Studio's first profile keeps its folder and native session history: deleting a directory
         // does not remove keychain credentials. An added account goes whole.
         if (account !== AccountId.Studio) await fs.rm(home, { recursive: true, force: true });
-        await forgetAccount(engine, account);
+        await forgetAccount(engine, engineId, account);
         return true;
       });
     }
     await fs.rm(home, { recursive: true, force: true });
-    await forgetAccount(engine, account);
+    await forgetAccount(engine, engineId, account);
     return true;
   });
 
+  /**
+   * Keep the email an account's CLI told with that account, unless the account was forgotten while
+   * its CLI was asked; the Terminal login's stays in `emails` for this run.
+   */
+  async function keepEmail(
+    engine: SubscriptionEngine,
+    entry: { id: string; terminal: boolean },
+    key: string,
+    asked: Promise<string | null>,
+    email: string | null,
+  ): Promise<void> {
+    const ownAnswer = email !== null && !entry.terminal && emails.get(key) === asked;
+    if (!ownAnswer) return;
+    await engine.accounts.remember(entry.id, { email });
+    emails.delete(key);
+  }
+
   /** The account leaves the list; while it was in use, the first account still signed in runs instead. */
-  async function forgetAccount(engine: SubscriptionEngine, account: string): Promise<void> {
+  async function forgetAccount(engine: SubscriptionEngine, engineId: string, account: string): Promise<void> {
+    emails.delete(emailKey(engineId, account));
     const wasChosen = (await engine.accounts.chosen()) === account;
     await engine.accounts.forget(account);
     const next = wasChosen ? (await engine.accounts.list()).find((entry) => entry.signedIn) : undefined;

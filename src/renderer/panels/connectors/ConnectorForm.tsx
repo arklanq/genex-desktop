@@ -23,6 +23,7 @@ import {
   isLocal,
   type SecretRow,
   toolAllowed,
+  withTransport,
 } from "./draft.ts";
 
 /** Where a server runs, as the window's switch names it. */
@@ -214,7 +215,7 @@ function transportFor(place: ServerPlace, connector: McpConnectorDraft): McpTran
 }
 
 /** On this Mac or From a URL. */
-function PlaceSwitch({ draft, patch }: FormProps): JSX.Element {
+function PlaceSwitch({ draft, update }: FormProps): JSX.Element {
   const place = isLocal(draft.connector) ? ServerPlace.Mac : ServerPlace.Url;
   const items = [ServerPlace.Mac, ServerPlace.Url].map((key) => ({ key, label: MESSAGE.places[key] }));
   return (
@@ -225,7 +226,7 @@ function PlaceSwitch({ draft, patch }: FormProps): JSX.Element {
       fullWidth
       label={MESSAGE.place}
       dataAttribute="data-server-place"
-      onSelect={(next) => patch({ transport: transportFor(next, draft.connector) })}
+      onSelect={(next) => update((d) => withTransport(d, transportFor(next, d.connector)))}
     />
   );
 }

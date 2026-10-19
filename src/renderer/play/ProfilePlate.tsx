@@ -1,11 +1,13 @@
 /**
  * The Genex account at the foot of the sidebar, in Play and in Create, always in the same place.
- * Signed in: its avatar, its name (and Pro), and beside it the credits, which open Credits (the
- * friends are listed under the games). The name opens a menu: Profile, Friends, Credits, Account
- * settings and Sign out. Offline it shows the account as last time, the Offline mark where the
- * credits were. Signed out it signs in in the browser; while that waits it says so,
- * with a way to cancel; and once genex.games ends a sign-in it shows the account dimmed, to sign in
- * again. The account is the app's: the Genex plugin being on or off changes nothing here.
+ * Signed in: its avatar, its name, and beside it the credits, which open Credits (the friends are
+ * listed under the games); a Pro's name has a PRO tag, and under the pointer their row lights up
+ * with their nameplate: the moving art behind the name and sparkles on the face (`nameplate/`).
+ * The name opens a menu: Profile, Friends, Credits, Nameplate (Pro), Account settings and Sign
+ * out. Offline it shows the account as last time, the Offline mark where the credits were. Signed
+ * out it signs in in the browser; while that waits it says so, with a way to cancel; and once
+ * genex.games ends a sign-in it shows the account dimmed, to sign in again. The account is the
+ * app's: the Genex plugin being on or off changes nothing here.
  */
 import type { JSX } from "react";
 import { useEffect, useState } from "react";
@@ -26,11 +28,12 @@ import {
 import { Icon } from "../ui/icons.tsx";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../ui/tooltip.tsx";
 import { useOnline } from "../ui/use-online.ts";
-import { PLAY_WORDS } from "../words.ts";
+import { ACCOUNT_WORDS, PLAY_WORDS } from "../words.ts";
 import { CreditsShard, ScrambleNumber } from "./CreditsShard.tsx";
 import { formatCount, PlateState, plateState } from "./play-model.ts";
 import { avatarRecipe } from "../../shared/avatar-recipe.ts";
 import { GeneratedAvatar } from "../avatars/GeneratedAvatar.tsx";
+import { Nameplate, useNameplate } from "../nameplate/Nameplate.tsx";
 import { PersonAvatar } from "./PersonAvatar.tsx";
 import { OfflineMark } from "./PlayOffline.tsx";
 import { SignOutDialog } from "./SignOutDialog.tsx";
@@ -102,6 +105,12 @@ function PlateMenu({
         {waiting > 0 && <span className="sidebar-badge">{waiting}</span>}
       </DropdownMenuItem>
       <Credits />
+      {me.pro && (
+        <DropdownMenuItem data-profile-menu="nameplate" onSelect={openAccountSettings}>
+          <Icon name="sparkle" />
+          {ACCOUNT_WORDS.nameplate}
+        </DropdownMenuItem>
+      )}
       <DropdownMenuSeparator />
       <DropdownMenuItem data-profile-menu="account" onSelect={openAccountSettings}>
         <Icon name="settings" />
@@ -162,7 +171,7 @@ function FaceSlot({ waiting = false }: { waiting?: boolean }): JSX.Element {
   );
 }
 
-/** Signed in (or offline, as last time): the account, its menu, and the friends or the Offline mark. */
+/** Signed in (or offline, as last time): the account, its menu, the credits or the Offline mark; a Pro's on their plate. */
 function AccountPlate({
   me,
   offline,
@@ -174,20 +183,23 @@ function AccountPlate({
 }): JSX.Element {
   const waiting = usePeople(waitingRequests);
   const [signingOut, setSigningOut] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   // The balance beside the name reads with the account, and again whenever the menu opens.
   // biome-ignore lint/correctness/useExhaustiveDependencies: another account reads its own balance
   useEffect(() => {
     void studio().people.loadCredits();
   }, [me.id]);
+  const plate = useNameplate(me.id, me.avatarVariant);
   const open = (page: typeof PlayPage.Profile | typeof PlayPage.Friends): void => {
     onPlayMode(true);
     if (page === PlayPage.Friends) studio().play.showFriends();
     else studio().play.showProfile(me.id);
   };
-  return (
+  const row = (
     <>
       <DropdownMenu
         onOpenChange={(opened) => {
+          setMenuOpen(opened);
           if (opened) void studio().people.loadCredits();
         }}
       >
@@ -196,7 +208,7 @@ function AccountPlate({
             <PersonAvatar person={me} size={PLATE_FACE} />
             <span className="profile-plate-name">
               <span className="profile-plate-name-text">{me.name}</span>
-              {me.pro && <span className="profile-plate-plan"> · {WORDS.pro}</span>}
+              {me.pro && <span className="people-pro profile-plate-pro">{WORDS.proTag}</span>}
             </span>
             <Icon name="chevrons" size={14} className="profile-plate-chevrons" />
           </button>
@@ -204,6 +216,17 @@ function AccountPlate({
         <PlateMenu me={me} waiting={waiting} onOpen={open} onSignOut={() => setSigningOut(true)} />
       </DropdownMenu>
       {offline ? <OfflineSlot /> : <PlateCredits />}
+    </>
+  );
+  return (
+    <>
+      {me.pro ? (
+        <Nameplate recipe={plate} hover dim={menuOpen}>
+          {row}
+        </Nameplate>
+      ) : (
+        row
+      )}
       {signingOut && <SignOutDialog onDismiss={() => setSigningOut(false)} />}
     </>
   );

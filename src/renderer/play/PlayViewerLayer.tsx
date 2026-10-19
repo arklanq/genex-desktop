@@ -1,9 +1,9 @@
 /**
- * Play's game viewer in the app: the header across the window's top (`PlayViewerBar.tsx`), and under
- * it, while the game's page loads, its cover developing as an ordered dither (`dither.ts`) under its
- * title and a thin dot rail; when it cannot load, what went wrong (offline, or the page itself)
- * with Try again and Back to Play.
- * The game itself is a native view main lays under the header once it has loaded.
+ * Play's game viewer in the app: across the whole window, while the game's page loads, its cover
+ * developing as an ordered dither (`dither.ts`) under its title and a thin dot rail; when it cannot
+ * load, what went wrong (offline, or the page itself) with Try again and Back to Play.
+ * The game itself is a native view main lays over all of it once it has loaded, and the bar lies
+ * over its top edge in a layer of its own (`PlayBarPage.tsx`).
  */
 import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
@@ -17,7 +17,6 @@ import { PLAY_WORDS } from "../words.ts";
 import { DEVELOP_DONE_MS, DITHER_CELL, type DitherSource, ditherSource, drawDevelop } from "./dither.ts";
 import { escapeLeaves } from "./play-model.ts";
 import { OfflineMark } from "./PlayOffline.tsx";
-import { PlayViewerBar, sendPlayControl } from "./PlayViewerBar.tsx";
 
 const WORDS = PLAY_WORDS.viewer;
 
@@ -156,16 +155,20 @@ export function PlayViewerLayer(): JSX.Element | null {
   const onScreen = useRef(false);
   onScreen.current = playing;
   // While the game is not on screen Esc is the app's: it leaves. Once it plays, an Esc in the app
-  // (the header has the keyboard) gives the keyboard back to the game. Focus goes back where it was
-  // (the card or the Recent row that opened the game) once the viewer closes.
+  // gives the keyboard back to the game. Focus goes back where it was (the card or the Recent row
+  // that opened the game) once the viewer closes.
   useEffect(() => {
     if (!slug) return;
     const before = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     layer.current?.focus();
     const leave = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
+      // A key held down repeats: only a fresh press acts.
+      if (event.key !== "Escape" || event.repeat) return;
       if (leaves.current) void studio().play.close();
-      else if (onScreen.current) sendPlayControl(PlayControl.Resume);
+      else if (onScreen.current)
+        void studio()
+          .api.playControl(PlayControl.Resume)
+          .catch(() => undefined);
     };
     window.addEventListener("keydown", leave);
     return () => {
@@ -184,7 +187,6 @@ export function PlayViewerLayer(): JSX.Element | null {
       className="play-viewer"
       data-play-viewer={viewer.phase}
     >
-      <PlayViewerBar viewer={viewer} />
       <div className="play-viewer-stage">
         {/* Once the game plays over it, nothing here draws: every frame goes to the game. Another
             game starts the develop over. */}

@@ -5,6 +5,7 @@
  * re-briefed from the last line alone, and a chat never guesses a different game folder.
  */
 import { launchRules, RESUME_LOOP_CHAT, type LaunchGrant } from "./launch-prompts.ts";
+import { autoLoopRule } from "./auto-loop-prompts.ts";
 import { UNTIL_DONE_WORDS } from "./until-done-prompts.ts";
 import { type EngineId, GameEngine } from "./game-engine.ts";
 import { handoverSection } from "./session-compact-prompts.ts";
@@ -460,7 +461,7 @@ function contractorRules(engine: string | undefined, game: GameBuild): string[] 
     workspaceRule(game),
     "When your shell is sandboxed, it rejects commands it cannot statically analyze — avoid $-expansions, escaped whitespace, heredocs and long && chains; run one simple command at a time, and put multi-step logic in a script file you then run with node.",
     `When a sandbox blocks a step only the user's own Mac can do (an install or download that needs the network, such as brew or pip, a system tool, a sign-in), do not work around it: end your reply with that one command on a single line in a \`\`\`${USER_COMMAND_FENCE} block and one plain sentence on why. The chat shows it with a Run button; how it went comes back as the user's next message. Never offer a command you can run yourself, sudo, or anything piped into a shell.`,
-    "When the user named a tool, app or plugin to use (Blender, an engine, a package) and its status or a call says it can't run here, never carry on without it in silence: say so in your reply, in plain words, with the fix its answer names, before a long build starts. A plugin's own install tool (named like blender__install) asks the user on a card: call it when its status says to.",
+    "When the user named a tool, app or plugin to use (Blender, an engine, a package) and its status or a call says it can't run here, never carry on without it in silence: say so in your reply, in plain words, with the fix its answer names, before a long build starts. A plugin's own install tool (its name ends in __install) asks the user on a card: call it when its status says to.",
     // The Reload a checkpoint lights is the web preview's: any other kind is seen in its own app.
     ...(servedAsWeb(game)
       ? [
@@ -542,6 +543,8 @@ export function buildContractorBrief({
   engineProject = null,
   /** Loop is on: this chat may also launch a build. */
   launch = null,
+  /** Loop is off: the launch tool this chat may call for a Loop the user asks for in words. */
+  autoLoop = null,
   /** The build this chat's session led is over: what it is told of it (after-loop-run-prompts.ts). */
   afterLoopRun = null,
   /** A new game while the Unreal plugin is on: the user picks the web or Unreal first (unreal-prompts.ts). */
@@ -574,6 +577,7 @@ export function buildContractorBrief({
   gameEngine?: EngineId;
   engineProject?: string | null;
   launch?: LaunchGrant | null;
+  autoLoop?: string | null;
   afterLoopRun?: string | null;
   engineChoice?: boolean;
   /** Read no more, kept for a caller kept from before: each kind's readiness comes with the kinds (`ready`, `note`). */
@@ -590,7 +594,10 @@ export function buildContractorBrief({
   const identity = appIdentity({ folderLabel, facts: game.facts, holds: game.holds });
   const workHere = workHereLine(game, folderLabel);
   const stills = stillsBlock(extraReads);
-  const launchBlock = launch?.toolName ? launchRules(engine, launch, ...loopOfGame(game)) : [];
+  const launchBlock = [
+    ...(launch?.toolName ? launchRules(engine, launch, ...loopOfGame(game)) : []),
+    ...(autoLoop ? [autoLoopRule(engine, autoLoop)] : []),
+  ];
   const workersLine = workers ? WORKERS_BRIEF_LINE : "";
 
   if (resume)

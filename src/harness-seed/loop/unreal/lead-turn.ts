@@ -11,6 +11,7 @@
  * pauses the run.
  */
 import type { DelegateResult, HookReport } from "../../types/host-api.d.ts";
+import { durationCommission } from "../director/commission.ts";
 import { isResumeFailure } from "../chat-session.ts";
 import { MIN_DELEGATE_TIMEOUT_MS } from "../config.ts";
 import type { LeadLine } from "../director/lead-line.ts";
@@ -69,8 +70,9 @@ export type RunEnd = { status: ExecutionStatus; reason: LeadEndReason; why: stri
 
 /** The run's ends that come from outside its turns: the user's stop, the user's finish, Unreal gone for good. */
 export const RUN_ENDS = {
+  // The person's Stop pauses the run, as it does every Loop: Resume goes on from where it stopped.
   stopped: (): RunEnd => ({
-    status: ExecutionStatus.Cancelled,
+    status: ExecutionStatus.Paused,
     reason: LeadEndReason.Stopped,
     why: MESSAGE.StoppedByUser,
   }),
@@ -449,6 +451,7 @@ async function briefFor(lead: LeadRun): Promise<string> {
     template: lead.template,
     templateKind: lead.templateKind,
     minutes: minutes(Math.max(0, totalMs)),
+    untilFinish: !durationCommission(run),
     cpp: lead.cpp.available,
     offers: lead.offers,
     references: lead.references,

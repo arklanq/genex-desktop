@@ -5,8 +5,11 @@ share, is in [architecture](agent/architecture.md#processes-and-trust-boundaries
 
 [`src/substrate/windows-sandbox.ts`](../src/substrate/windows-sandbox.ts)
 drives sandbox-runtime's srt-win backend (vendored `srt-win.exe` from `app.asar.unpacked`):
-commands run as the local `srt-sandbox` user under Git Bash (no Git for Windows opens the setup
-screen on `git-missing`). What differs from macOS:
+commands run as the local `srt-sandbox` user under Git Bash. The packaged app brings its own Git
+for Windows as `resources\git` and uses it only when the PC has no Git of its own (`findGitBash`);
+a development build uses the installed Git. The host runs git itself too, so the core settles which Git before
+anything else at startup (`ensureHostGit`, which puts its `cmd` folder first on PATH); with none,
+the setup screen opens on `git-missing`. What differs from macOS:
 
 - Grants are NTFS ACL entries set at `initialize()` for the whole process. One
   `WindowsSandboxSession` holds the union of every `ProcessSandbox`'s roots. A folder opened later,
@@ -15,14 +18,23 @@ screen on `git-missing`). What differs from macOS:
   session's roots is refused (`not-granted`); network changes stay live (`updateConfig`).
   `initialize()` is tried up to three times only when srt-win's egress check (`wfp`) times out; a
   timed-out ACL step fails at once, since a retry would repeat its walk under the denied path's parent.
+- That egress check starts srt-win as the sandbox user before any grant, and Windows opens its
+  program and working folder as that user. A per-user install lives in the profile, so the session
+  grants the install folder (and srt-win's, when apart) for reading first
+  (`grantLauncherFolders`), and a packaged app works from its install folder (`installedWorkingDir`).
 - The sandbox user reads nothing in the profile unless granted, so each folder between
-  `USERPROFILE` and a root gets `(RA)` (read attributes, no listing) after every apply, since
-  srt-win's deny stamps replace the entry. The entry is set on that folder alone
+  `USERPROFILE` and a root gets `(S,RA)` (read attributes and synchronize, no listing) after every
+  apply, since srt-win's deny stamps replace the entry. Synchronize matters before Windows 11
+  24H2: Node's stat opens each folder there, and every synchronous open asks for it. The entry names the `sandbox-runtime-users` group
+  (`srtAncestorGrantee`; the user itself outside it): every srt host, Claude Code's own shell
+  sandbox among them, stamps and cleans up the user's entries, and its cleanup took Genex's on
+  `AppData`. The entry is set on that folder alone
   ([`windows-folder-ace.ts`](../src/substrate/windows-folder-ace.ts): `SetFileSecurityW` from one
   Windows PowerShell run per batch); `icacls`, the fallback where PowerShell is locked down,
   rewrites everything under the folder as well. Each Genex records its folders in
   `%LOCALAPPDATA%\genex-sandbox-grants\<pid>.json` and revokes only those no other running Genex
-  records.
+  records. The SID is asked of srt-win up to three times; without it the apply fails. The harness gets the entries set again just before it starts, and one that exits during
+  boot logs `icacls` for each folder from the profile down to its files.
 - Neither `spawn()`'s environment nor stdin reaches the child: each run's variables
   (`windowsRunEnv`) go to an env file in scratch and its stdin to a file, each deleted by the
   command as it reads it. The host sends nothing down the stdin pipe the command swaps away. The harness hears the host over a loopback inbox
@@ -36,6 +48,22 @@ screen on `git-missing`). What differs from macOS:
 - `killChild` kills the srt-win broker, whose job ends the tree; `HarnessHost.stop()` sends
   `shutdown` and kills only after the grace.
 
+## Bundled Git
+
+[`scripts/vendor-git-for-windows.ts`](../scripts/vendor-git-for-windows.ts) downloads the portable
+edition pinned by version and SHA-256 during a Windows release build (`build.mjs --release`, or
+`GENEX_VENDOR_GIT=1`), unpacks it with 7-Zip and leaves out what Genex never reaches: the
+documentation, gitk and git gui with Tcl/Tk, Vim (a git command that wants an editor fails at once
+instead of waiting) and Git Credential Manager, with the `[credential]` section of `etc\gitconfig`
+that names it (host git never prompts; sandboxed commands have the credential helper off). Forge
+copies it beside the archive
+([`scripts/package-git.cjs`](../scripts/package-git.cjs)). It sits in the install folder, which
+the session already grants for reading, so it needs no grant of its own. The Squirrel install check
+runs its Git Bash and `cmd\git.exe` with no other Git on PATH, and the package job's chat turn
+sets `STUDIO_WINDOWS_BUNDLED_GIT_ONLY=1`, so the sandbox user runs this Git Bash. To move to a newer Git, change the
+pin; the build refuses a release that lacks a path the trim list names, so the list is reviewed.
+The terminal panel still opens an installed Git Bash, else PowerShell.
+
 ## Denied reads
 
 `ProcessSandbox`'s base deny list (`baseDenyRead` in `spawn.ts`) is macOS and Linux's. Windows has its own list
@@ -46,8 +74,8 @@ CLI and gcloud, and the Chrome, Edge, Brave, Firefox and Opera profiles.
 ## Residual risks
 
 srt-win is alpha. Every srt host on the machine shares the
-`srt-sandbox` SID and so each other's grants and denies; revoking an `(RA)` grant also removes
-one another host made there (fail closed). DNS still resolves; the proxy token is on the
+`srt-sandbox` SID and so each other's grants and denies. Claude Code's tool-less sessions (usage,
+model list, judge) run without its own sandbox on Windows (`toollessSandbox`). DNS still resolves; the proxy token is on the
 runner's command line. A folder opened while the harness runs is writable only after it next
 stops. srt-win's own entries are inheritable, so each apply and reset re-propagates them through
 everything under the folder they are on, holding each folder open meanwhile; its deny stamp on a

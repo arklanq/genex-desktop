@@ -10,7 +10,7 @@ import { MessageImages } from "./MessageImages.tsx";
 /** The words with their @ tags painted as on the composer; the rest keeps its file links. */
 function TaggedText({ text, tags }: { text: string; tags: readonly string[] | undefined }) {
   const known = useMemo(() => new Set(tags ?? []), [tags]);
-  if (!known.size) return <FileText text={text} />;
+  if (!known.size) return <FileText text={text} chips />;
   return (
     <>
       {splitMentions(text, known).map((run, index) =>
@@ -21,7 +21,7 @@ function TaggedText({ text, tags }: { text: string; tags: readonly string[] | un
           </span>
         ) : (
           // biome-ignore lint/suspicious/noArrayIndexKey: runs are positional and rebuilt with the text.
-          <FileText key={index} text={run.text} />
+          <FileText key={index} text={run.text} chips />
         ),
       )}
     </>
@@ -110,6 +110,16 @@ export const UserMessage = memo(function UserMessage({
   about?: string;
 }) {
   const rewind = rewindId && onRewind ? rewindId : null;
+  const rewindButton = (bottom: string) =>
+    rewind && onRewind ? (
+      <IconButton
+        icon="rewind"
+        label="Rewind to before this message"
+        size={14}
+        className={`chat-user-action absolute right-full ${bottom} me-1`}
+        onClick={() => onRewind(rewind)}
+      />
+    ) : null;
   // Rewind sits beside the bubble, outside it: it takes no height, and the bubble's own button
   // stays its toggle. The wrapper is always there, so the action coming and going between
   // answers never rebuilds the bubble (a selection or focus in it survives). Its 24px centres on
@@ -117,15 +127,7 @@ export const UserMessage = memo(function UserMessage({
   const placed = (
     <div className="relative ms-auto w-fit max-w-[88%]">
       <UserBubble text={text} pending={pending} tags={tags} />
-      {rewind && onRewind && (
-        <IconButton
-          icon="rewind"
-          label="Rewind to before this message"
-          size={14}
-          className="chat-user-action absolute right-full bottom-[7px] me-1"
-          onClick={() => onRewind(rewind)}
-        />
-      )}
+      {rewindButton("bottom-[7px]")}
     </div>
   );
   if (about)
@@ -140,14 +142,27 @@ export const UserMessage = memo(function UserMessage({
     );
   const hasFrames = Boolean(frames?.length);
   if (!hasFrames && (!threadId || !imagesOf)) return placed;
+  const pictures = (alone: boolean) => (
+    <MessageImages
+      threadId={threadId}
+      messageId={imagesOf}
+      count={imageCount}
+      frames={hasFrames ? frames : undefined}
+      placed={alone}
+    />
+  );
+  // Pictures sent with no words are the whole message: no empty bubble under them, and Rewind
+  // centres on the 84px tiles instead.
+  if (!text.trim())
+    return (
+      <div className="relative ms-auto w-fit max-w-[88%]">
+        {pictures(true)}
+        {rewindButton("bottom-[30px]")}
+      </div>
+    );
   return (
     <div className="flex min-w-0 flex-col gap-1.5">
-      <MessageImages
-        threadId={threadId}
-        messageId={imagesOf}
-        count={imageCount}
-        frames={hasFrames ? frames : undefined}
-      />
+      {pictures(false)}
       {placed}
     </div>
   );

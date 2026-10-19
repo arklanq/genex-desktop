@@ -1,12 +1,12 @@
 /**
- * The Play viewer's game view in the studio window (`viewer.ts` decides what it does): a fresh
- * sandboxed view per game in Play's own session, under the app's own header (drawn by the renderer
- * above it). The game's page may move between Genex games' addresses and Genex's sign-in hop; any
- * other link opens in the browser. Play's session grants only mouse lock, full screen and clipboard
- * writes, and the microphone to a game's own page just after the viewer told it to open it (the
- * header's mic switch, `mic.ts`). Its one preload (`preload/play-mic.ts`) gives the page the app's
- * microphone and carries the mic's word between the page and main; the menu of microphones is a
- * native one, since the game's view covers anything the renderer draws under the header.
+ * The Play viewer's views in the studio window (`viewer.ts` decides what they do): a fresh sandboxed
+ * view per game in Play's own session, across the whole window, and above it the bar's layer, a
+ * transparent view of the studio's own page (`renderer/play-bar.html`) made once and kept. The game's
+ * page may move between Genex games' addresses and Genex's sign-in hop; any other link opens in the
+ * browser. Play's session grants only mouse lock, full screen and clipboard writes, and the microphone
+ * to a game's own page just after the viewer told it to open it (the bar's mic switch, `mic.ts`). Its
+ * one preload (`preload/play-mic.ts`) gives the page the app's microphone and carries the mic's word
+ * between the page and main; the menu of microphones is a native one.
  */
 import {
   type BrowserWindow,
@@ -20,17 +20,25 @@ import {
   type WebContents,
   WebContentsView,
 } from "electron";
-import { PLAY_BAR_HEIGHT, type PlayPoint, type PlayViewerEvent } from "../../shared/play.ts";
+import { StudioPlatform } from "../../shared/boot.ts";
+import type { PlayPoint, PlayViewerEvent } from "../../shared/play.ts";
+import { UiEvent } from "../../shared/ui-events.ts";
 import { type PlayMicCommand, PlayMicChannel, type PlayMicReport, readMicReport } from "../../shared/play-mic.ts";
 import type { FullScreenKey, Rect } from "../game-full-screen.ts";
 import { GAME_DISABLED_BLINK_FEATURES } from "../game-view.ts";
+import { createReloadPolicy, ReloadDecision } from "../app-lifecycle.ts";
+import { pushToRenderer } from "../ipc-handle.ts";
+import type { PlayComments } from "./comments.ts";
 import { linkGate, playAddress, playNavigationAllowed } from "./game-address.ts";
 import type { PlayGallery } from "./gallery.ts";
 import { playPermissionShown, playPermitted } from "./game-permissions.ts";
 import { type MicGate, micGate, micGateFor } from "./mic.ts";
+import { closePage, dropGameView } from "./view-drop.ts";
 import type { PlayMicStore } from "./mic-store.ts";
 import { playViewer, type PlayViewer } from "./viewer.ts";
 
+/** Each studio window's Play views, for the development control (`dev/runtime.ts`). */
+const viewsOf = new WeakMap<BrowserWindow, PlayViews>();
 /** Sessions already given Play's rules: a window made again shares the session and its handlers. */
 const prepared = new WeakSet<Session>();
 /** Each game view's microphone gate: the session's handlers find a view's by its contents. */
@@ -39,6 +47,8 @@ const micGates = new WeakMap<WebContents, MicGate>();
 export const PLAY_PARTITION = "persist:genex-play";
 /** What a game's page shows before it paints. */
 const GAME_BACKGROUND = "#000000";
+/** The bar's layer is see-through: only the bar (and Comments over the dimmed game) is drawn. */
+const TRANSPARENT = "#00000000";
 /** A navigation the browser itself aborted (a new one replaced it): not a failure. */
 const ERR_ABORTED = -3;
 /** HTTP answers that mean the game is not there to play. */
@@ -77,6 +87,11 @@ export interface PlayViewDeps {
   micPreload: string;
   /** The games whose mic is on and the chosen microphone. */
   micStore: PlayMicStore;
+  /** The bar's layer: its page (`dist/renderer/play-bar.html`) and its preload (`dist/preload/play-bar.cjs`). */
+  barPage: string;
+  barPreload: string;
+  /** The game's comments on genex.games. */
+  comments: PlayComments;
 }
 
 /**
@@ -101,9 +116,19 @@ function playSession(): Session {
   return play;
 }
 
-/** What the game's view reports to the viewer: its keys, how its page loads, and its microphone. */
+/** The viewer's views in a window: its bar's layer once made, and the game's view while a game is open. */
+export interface PlayViews {
+  bar(): WebContentsView | null;
+  game(): WebContentsView | null;
+}
+
+/** `win`'s Play views, for the development control; null before the viewer is wired. */
+export const playViewsOf = (win: BrowserWindow): PlayViews | null => viewsOf.get(win) ?? null;
+
+/** What the game's view reports to the viewer: its keys and pointer, how its page loads, and its microphone. */
 interface ViewerEvents {
   key(input: FullScreenKey): void;
+  pointer(x: number, y: number): void;
   loaded(): void;
   failed(): void;
   mic(report: PlayMicReport): void;
@@ -178,6 +203,18 @@ function guardNavigation(contents: WebContents, offline: boolean, openExternal: 
   });
 }
 
+/**
+ * Where the pointer is over the game, from the mouse moves the view is sent. A game holding the mouse
+ * (pointer lock) is still sent moves, all at the point where the lock began.
+ */
+function hearPointer(contents: WebContents, mine: () => boolean, hear: (x: number, y: number) => void): void {
+  contents.on("input-event", (_event, input) => {
+    if (!mine() || input.type !== "mouseMove") return;
+    const { x, y } = input as Electron.MouseInputEvent;
+    if (typeof x === "number" && typeof y === "number") hear(x, y);
+  });
+}
+
 /** The page's word on its microphone, from its own top frame only, as main accepts it. */
 function hearMic(contents: WebContents, mine: () => boolean, hear: (report: PlayMicReport) => void): void {
   contents.ipc.on(PlayMicChannel.Report, (event, raw: unknown) => {
@@ -188,22 +225,80 @@ function hearMic(contents: WebContents, mine: () => boolean, hear: (report: Play
 }
 
 /**
- * The game's view: a fresh one per game in Play's session, under the app's header, reporting how its
- * page loads and how its microphone is, with the embed SDK's guest popover hidden on every page it
- * shows.
+ * The bar's layer over the game: the studio's own page in a transparent view, made ahead of the first
+ * game (`warm`) and kept, drawn over each new game's view. It hears the viewer's news as the studio's
+ * page does; a page that loads late says so once it has mounted (`PlayBarHold.ready`) and is drawn
+ * the bar again. A layer whose page went away loads it again.
  */
-function gameView(win: BrowserWindow, deps: PlayViewDeps, events: ViewerEvents) {
+function barLayer(win: BrowserWindow, deps: PlayViewDeps, lost: () => void) {
+  let view: WebContentsView | null = null;
+  // A page that dies on load does not spin: past a couple of reloads a minute the viewer closes, since
+  // a game with no bar has no way out but a held Esc.
+  const reloads = createReloadPolicy();
+  const made = (): WebContentsView => {
+    if (view && !view.webContents.isDestroyed()) return view;
+    const layer = new WebContentsView({
+      webPreferences: { preload: deps.barPreload, sandbox: true, contextIsolation: true, nodeIntegration: false },
+    });
+    layer.setBackgroundColor(TRANSPARENT);
+    layer.setVisible(false);
+    const contents = layer.webContents;
+    contents.on("will-navigate", (event) => event.preventDefault());
+    contents.setWindowOpenHandler(() => ({ action: "deny" }));
+    contents.on("render-process-gone", (_event, details) => {
+      const decision = reloads.decide(details.reason);
+      if (decision === ReloadDecision.GiveUp) lost();
+      else if (decision === ReloadDecision.Reload && !contents.isDestroyed()) contents.reload();
+    });
+    void contents.loadFile(deps.barPage, { query: { platform: process.platform } }).catch(() => {});
+    win.contentView.addChildView(layer);
+    view = layer;
+    return layer;
+  };
+  return {
+    view: (): WebContentsView | null => view,
+    /** Over everything again: a game's view added since lies under it. */
+    raise: (): void => {
+      if (!win.isDestroyed()) win.contentView.addChildView(made());
+    },
+    show: (bounds: Rect): void => {
+      const layer = made();
+      layer.setBounds(bounds);
+      layer.setVisible(true);
+    },
+    hide: (): void => view?.setVisible(false),
+    focus: (): void => made().webContents.focus(),
+    /** Whether the layer's page has the keyboard. */
+    focused: (): boolean => Boolean(view && !view.webContents.isDestroyed() && view.webContents.isFocused()),
+    /** The window is gone: the layer's page closes with it. */
+    destroy: (): void => {
+      closePage(view?.webContents);
+      view = null;
+    },
+    warm: (): void => {
+      if (!win.isDestroyed()) made();
+    },
+    /** The viewer's news, for the bar's page. */
+    tell: (event: PlayViewerEvent): void => {
+      const contents = view?.webContents;
+      if (contents && !contents.isDestroyed())
+        pushToRenderer(contents, "studio:event", { type: UiEvent.PlayViewer, payload: event });
+    },
+  };
+}
+
+/**
+ * The game's view: a fresh one per game in Play's session, across the window under the bar's layer,
+ * reporting how its page loads, where the pointer is and how its microphone is, with the embed SDK's
+ * guest popover hidden on every page it shows.
+ */
+function gameView(win: BrowserWindow, deps: PlayViewDeps, events: ViewerEvents, raiseBar: () => void) {
   const play = playSession();
   let current: WebContentsView | null = null;
   const close = (): void => {
     const view = current;
     current = null;
-    if (!view) return;
-    if (!view.webContents.isDestroyed()) view.webContents.close();
-    if (win.isDestroyed()) return;
-    win.contentView.removeChildView(view);
-    // The keyboard comes back to the app the game took it from.
-    win.webContents.focus();
+    dropGameView<WebContentsView>(win, view);
   };
   const open = (url: string): void => {
     close();
@@ -221,15 +316,17 @@ function gameView(win: BrowserWindow, deps: PlayViewDeps, events: ViewerEvents) 
     });
     view.setBackgroundColor(GAME_BACKGROUND);
     view.setVisible(false);
-    // The page boots at the size it plays at, under the header, so a game that sizes its canvas once starts right.
+    // The page boots at the size it plays at, the whole window, so a game that sizes its canvas once starts right.
     const [width = 0, height = 0] = win.getContentSize();
-    view.setBounds({ x: 0, y: PLAY_BAR_HEIGHT, width, height: Math.max(0, height - PLAY_BAR_HEIGHT) });
+    view.setBounds({ x: 0, y: 0, width, height });
     win.contentView.addChildView(view);
+    raiseBar();
     current = view;
     const contents = view.webContents;
     const mine = () => current === view;
     micGates.set(contents, micGate());
     hearMic(contents, mine, events.mic);
+    hearPointer(contents, mine, events.pointer);
     guardNavigation(contents, deps.offline !== null, deps.openExternal);
     contents.on("did-finish-load", () => mine() && events.loaded());
     contents.on("did-fail-load", (_event, code, _description, _url, isMainFrame) => {
@@ -249,6 +346,7 @@ function gameView(win: BrowserWindow, deps: PlayViewDeps, events: ViewerEvents) 
     void contents.loadURL(url).catch(() => {});
   };
   return {
+    view: (): WebContentsView | null => current,
     open,
     show: (bounds: Rect): void => {
       current?.setBounds(bounds);
@@ -274,11 +372,14 @@ export function wirePlayViewer(deps: PlayViewDeps): PlayViewer {
   let viewer: PlayViewer | null = null;
   const events: ViewerEvents = {
     key: (input) => viewer?.key(input),
+    pointer: (x, y) => viewer?.pointer(x, y),
     loaded: () => viewer?.loaded(),
     failed: () => viewer?.failed(),
     mic: (report) => viewer?.mic(report),
   };
-  const game = gameView(win, deps, events);
+  const bar = barLayer(win, deps, () => viewer?.close());
+  const game = gameView(win, deps, events, bar.raise);
+  viewsOf.set(win, { bar: bar.view, game: game.view });
   const made = playViewer({
     gallery: deps.gallery,
     gameUrl: (slug, ticket) => (offline ? offline.gamePage(slug) : playAddress(slug, ticket)),
@@ -288,15 +389,22 @@ export function wirePlayViewer(deps: PlayViewDeps): PlayViewer {
         const [width = 0, height = 0] = win.getContentSize();
         return { width, height };
       },
+      buttons: (visible) => {
+        if (process.platform === StudioPlatform.Mac && !win.isDestroyed()) win.setWindowButtonVisibility(visible);
+      },
+      // Windows and Linux draw their window controls over the bar's corner and cannot hide them with it.
+      barFades: process.platform === StudioPlatform.Mac,
     },
     game,
-    // The game's view loses the keyboard, and with it any mouse lock it held.
-    focusApp: () => {
-      if (!win.isDestroyed()) win.webContents.focus();
-    },
+    // The game's view loses the keyboard to the bar, and with it any mouse lock it held.
+    bar,
+    comments: deps.comments,
     clipboard: (text) => clipboard.writeText(text),
     web: deps.web,
-    emit: deps.emit,
+    emit: (event) => {
+      deps.emit(event);
+      bar.tell(event);
+    },
     clock: {
       setTimeout: (run, ms) => setTimeout(run, ms),
       clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
@@ -316,6 +424,9 @@ export function wirePlayViewer(deps: PlayViewDeps): PlayViewer {
   win.on("resize", () => made.resized());
   // A hidden or closed window takes its game with it: no sound, no timers on a window that is gone.
   win.on("hide", () => made.close());
-  win.on("closed", () => made.close());
+  win.on("closed", () => {
+    made.close();
+    bar.destroy();
+  });
   return made;
 }

@@ -591,7 +591,7 @@
   transition: box-shadow var(--duration-fast) var(--ease-smooth-out);
   pointer-events: none;
 }
-.play-card-cover:hover::after {
+.play-card-frame:hover .play-card-cover::after {
   box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink) 30%, var(--line));
 }
 .play-card-cover:focus-visible {
@@ -612,7 +612,7 @@
 .play-card-image[data-shown] {
   opacity: 1;
 }
-.play-card-cover:hover .play-card-image {
+.play-card-frame:hover .play-card-image {
   scale: 1.03;
 }
 /* The cover's clip lies over the still and fades in on its first frame, as genex.games plays it. */
@@ -693,6 +693,194 @@
   flex: none;
 }
 
+/* ── A card's ⋯ menu (`card-menu/`): on the cover's corner, shown while the card is hovered or focused ── */
+.play-card-frame {
+  position: relative;
+}
+/* genex.games' trigger: a translucent dark circle over the cover art, the same on light and dark. */
+.play-card-menu {
+  position: absolute;
+  inset-block-start: 8px;
+  inset-inline-end: 8px;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  opacity: 0;
+  transition:
+    opacity var(--duration-quick) var(--ease-smooth-out),
+    background-color var(--duration-quick) var(--ease-smooth-out);
+}
+.play-card-menu:hover {
+  background: rgb(0 0 0 / 0.7);
+}
+.play-card-menu:focus-visible {
+  outline: 2px solid rgb(255 255 255 / 0.8);
+  outline-offset: 2px;
+}
+.play-card:hover .play-card-menu,
+.play-card:focus-within .play-card-menu,
+.play-card[data-menu-open] .play-card-menu {
+  opacity: 1;
+}
+@media (hover: none) {
+  .play-card-menu {
+    opacity: 1;
+  }
+}
+.play-card-menu-row[data-tone="danger"] {
+  color: var(--red);
+}
+.play-card-menu-state {
+  flex: none;
+  color: var(--ink-3);
+  font: 12px / 16px var(--font-family-mono);
+  letter-spacing: -0.02em;
+}
+.play-card-menu-label {
+  padding-block: 6px 4px;
+  font: 500 11px / 14px var(--font-family-mono);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+/* ── Its dialogs: one surface each, the footer under the content, its one problem in orange ── */
+.play-dialog-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding-block-start: 4px;
+}
+.play-dialog-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.play-dialog-problem {
+  color: var(--orange);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.play-dialog-note {
+  color: var(--ink-3);
+  font-size: 12.5px;
+  line-height: 18px;
+}
+
+/* Mobile support: three rows to pick one from, the picked one lit. */
+.play-dialog-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.play-dialog-choice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  text-align: start;
+  cursor: pointer;
+}
+.play-dialog-choice:hover {
+  background: var(--control-hover);
+}
+.play-dialog-choice[aria-checked="true"] {
+  background: color-mix(in srgb, var(--play-blue) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--play-blue) 40%, transparent);
+}
+.play-dialog-radio {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--line-strong);
+}
+.play-dialog-choice[aria-checked="true"] .play-dialog-radio {
+  background: #fff;
+  box-shadow: inset 0 0 0 5px var(--play-blue);
+}
+.play-dialog-choice-name {
+  display: block;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 500;
+}
+.play-dialog-choice-hint {
+  display: block;
+  color: var(--ink-3);
+  font-size: 12.5px;
+}
+
+/* Edit tags: the shelf as a segmented choice, then that shelf's tags as chips. */
+.play-tags-shelves {
+  display: inline-flex;
+  justify-self: start;
+  width: fit-content;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 11px;
+  background: var(--play-track);
+  box-shadow: inset 0 0 0 1px var(--play-track-edge);
+}
+.play-tags-shelf {
+  padding: 5px 12px;
+  border-radius: 8px;
+  color: var(--ink-3);
+  font: 13px / 18px var(--font-family-mono);
+  cursor: pointer;
+}
+.play-tags-shelf[aria-checked="true"] {
+  background: color-mix(in srgb, var(--play-blue) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--play-blue) 40%, transparent);
+  color: var(--ink);
+}
+.play-tags-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.play-tags-chip {
+  padding: 5px 11px;
+  border-radius: 9px;
+  background: var(--control-quiet, var(--field));
+  color: var(--ink-2);
+  font-size: 13px;
+  cursor: pointer;
+}
+.play-tags-chip:hover {
+  background: var(--control-hover);
+}
+.play-tags-chip[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--play-blue) 12%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--play-blue) 40%, transparent);
+  color: var(--ink);
+}
+
+/* Change cover: the picture as genex.games will store it, 16:9. */
+.play-cover-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--play-placeholder);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.play-cover-frame img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
 /* A card on its way: the same shape, shimmering; it appears only if the wait is not over at once. */
 .play-card-placeholder {
   animation: play-fade-in 200ms 120ms ease-out both;
@@ -740,15 +928,15 @@
   }
 }
 
-/* While the game (a native view) lies under the header, the window's drag regions would still take
-   the pointer over it: the OS gathers them for the whole window, under child views too. None drag
-   meanwhile, but the header's own empty space, which stays the window's to drag. */
+/* While a game is open its views lie over the window (the bar's layer from the cover on, the game
+   once it plays), and the window's drag regions would still take the pointer over them: the OS
+   gathers them for the whole window, under child views too. None drag meanwhile; the bar's own
+   empty space, in its layer, is the window's to drag. */
 .studio-shell[data-play-native] * {
   -webkit-app-region: no-drag;
 }
 
-/* The viewer: the header across the top, and under it the game, or its cover while it loads and
-   what went wrong when it cannot. */
+/* The viewer under the game's view: its cover while it loads, and what went wrong when it cannot. */
 .play-viewer {
   position: fixed;
   inset: 0;
@@ -770,28 +958,52 @@
   overflow: hidden;
 }
 
-/* The header: the app's own 48px bar in the sidebar's colours over a hairline. Back and the game's
-   name with its facts, then a note, the guest's offer and the actions as rounded pills; Remix wears
-   Play's blue secondary. Its empty space drags the window. */
+/* The bar's layer (`play-bar.html`) is see-through: only the bar, and Comments over the dimmed
+   game, are drawn on it. */
+:root[data-surface="play-bar"],
+:root[data-surface="play-bar"] body {
+  background: transparent;
+}
+
+/* The bar: the app's own 48px strip of glass over the game's top edge, the popover's colour let
+   through over a soft hairline. Back and the game's name with its facts, then a note, the guest's
+   offer and the actions as rounded pills; Remix wears Play's blue secondary. Its empty space drags
+   the window. When main says it is down it fades up and out, and gives the pointer back. */
 .play-viewer-bar {
+  position: fixed;
+  inset: 0 0 auto;
   display: flex;
-  flex: none;
   align-items: center;
   gap: 8px;
   height: 48px;
   padding: 0 12px 0 16px;
-  background: var(--sidebar);
-  box-shadow: inset 0 -1px 0 var(--line);
+  background: color-mix(in srgb, var(--popover) 86%, transparent);
+  box-shadow: inset 0 -1px 0 var(--line-soft);
   color: var(--ink);
   font-family: var(--font-family-sans);
   -webkit-app-region: drag;
+  transition:
+    opacity 240ms var(--ease-smooth-out),
+    translate 240ms var(--ease-smooth-out);
 }
-.studio-shell[data-play-native] .play-viewer-bar {
-  -webkit-app-region: drag;
+.play-viewer-bar[data-down] {
+  opacity: 0;
+  translate: 0 -8px;
+  pointer-events: none;
+  -webkit-app-region: no-drag;
 }
-/* Clear of macOS's traffic lights, on one line with them. */
+/* Comments covers the window: the bar under its dimmed backdrop drags nothing. */
+.play-bar-layer[data-comments] .play-viewer-bar {
+  -webkit-app-region: no-drag;
+}
+/* Clear of macOS's traffic lights, on one line with them; on Windows and Linux, clear of the window
+   controls the system draws over the trailing corner (theme.css's `--window-controls-end`). */
 :root[data-platform="darwin"] .play-viewer-bar {
   padding-inline-start: 80px;
+}
+:root[data-platform="win32"] .play-viewer-bar,
+:root[data-platform="linux"] .play-viewer-bar {
+  padding-inline-end: calc(var(--window-controls-end) + 8px);
 }
 .play-viewer-bar button {
   -webkit-app-region: no-drag;
@@ -882,8 +1094,12 @@
   opacity: 0.55;
   cursor: default;
 }
-.play-viewer-bar-exit {
+.play-viewer-bar-exit,
+.play-viewer-bar-pill[data-icon-only] {
   padding-inline: 8px;
+}
+.play-viewer-bar-pill[data-icon-only] .play-bar-icon {
+  margin-inline-end: 0;
 }
 .play-bar-icon {
   position: relative;
@@ -1261,8 +1477,299 @@
   margin-block-start: 10px;
 }
 
+/* The viewer's Comments: the app's dialog over the game, dimmed. A 480px card at least 520px tall,
+   its title the count, its list scrolling inside with a soft fade at its foot, and a footer pinned
+   under it: one line and Sign in, or the comment field with Post inside its right end. */
+.play-comments-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 210;
+  background: rgb(0 0 0 / 0.5);
+  animation: play-fade-in 150ms ease-out both;
+}
+.play-comments-scrim[data-state="closed"] {
+  animation: play-fade-out 150ms ease-in both;
+}
+.play-comments {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  z-index: 211;
+  display: flex;
+  flex-direction: column;
+  width: min(480px, calc(100vw - 32px));
+  height: min(560px, calc(100vh - 96px));
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--popover);
+  box-shadow: 0 10px 30px rgb(0 0 0 / 0.45);
+  color: var(--ink);
+  translate: -50% -50%;
+  outline: none;
+  animation: play-comments-in 200ms var(--ease-smooth-out) both;
+}
+.play-comments[data-state="closed"] {
+  animation: play-comments-out 150ms ease-in both;
+}
+@keyframes play-comments-in {
+  from {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+@keyframes play-comments-out {
+  to {
+    opacity: 0;
+    scale: 0.96;
+  }
+}
+@keyframes play-fade-out {
+  to {
+    opacity: 0;
+  }
+}
+.play-comments-head {
+  position: relative;
+  flex: none;
+  padding: 20px 56px 14px 20px;
+}
+.play-comments-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 500;
+  line-height: 28px;
+}
+.play-comments-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--ink) 6%, transparent);
+  color: var(--ink-3);
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick),
+    color var(--duration-quick);
+}
+.play-comments-close:hover {
+  background: color-mix(in oklab, var(--ink) 11%, transparent);
+  color: var(--ink);
+}
+.play-comments-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 4px 20px 16px;
+}
+/* Soft fades at both of the list's edges: its foot while more lies below (`.scroll-fade`), its top
+   once anything has scrolled under the title. */
+.play-comments-list.scroll-fade {
+  --play-fade-top: 0px;
+  mask-image: linear-gradient(
+    to bottom,
+    transparent,
+    #000 var(--play-fade-top),
+    #000 calc(100% - var(--scroll-fade)),
+    transparent
+  );
+}
+.play-comments-list[data-above] {
+  --play-fade-top: 24px;
+}
+.play-comments-items {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.play-comment {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+.play-comment > :first-child {
+  flex: none;
+}
+.play-comment-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.play-comment-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  font: 13px / 18px var(--font-family-mono);
+}
+.play-comment-name {
+  overflow: hidden;
+  color: var(--play-icon);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.play-comment-when {
+  flex: none;
+  color: var(--ink-3);
+}
+.play-comment-delete {
+  flex: none;
+  color: var(--ink-3);
+  font: inherit;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.play-comment-delete:hover {
+  color: var(--ink);
+}
+.play-comment-body {
+  margin: 0;
+  font-size: 14px;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+.play-comment[data-skeleton] .play-comment-main {
+  flex: 1;
+  gap: 6px;
+  padding-block-start: 2px;
+}
+.play-comment-skeleton-avatar,
+.play-comment-skeleton-line {
+  position: relative;
+  display: block;
+  overflow: hidden;
+  background: var(--play-placeholder);
+}
+.play-comment-skeleton-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+}
+.play-comment-skeleton-line {
+  width: 72%;
+  height: 12px;
+  border-radius: 6px;
+}
+.play-comment-skeleton-line[data-short] {
+  width: 32%;
+}
+.play-comment-skeleton-avatar::before,
+.play-comment-skeleton-line::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--play-placeholder), transparent);
+  translate: -100% 0;
+  animation: play-shimmer 1.4s ease-in-out infinite;
+}
+.play-comments-note {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  color: var(--ink-3);
+  font-size: 14px;
+  line-height: 20px;
+}
+.play-comments-note[data-problem],
+.play-comments-problem {
+  color: var(--orange);
+}
+.play-comments-problem {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 18px;
+}
+.play-comments-foot {
+  flex: none;
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--line-soft);
+}
+.play-comments-signin {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 36px;
+}
+.play-comments-signin > span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 18px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.play-comments-action,
+.play-comments-post {
+  flex: none;
+  height: 32px;
+  padding-inline: 12px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 12%, transparent);
+  box-shadow: inset 0 0 0 1px
+    var(--play-selected-edge, color-mix(in srgb, var(--play-selected, var(--play-blue)) 40%, transparent));
+  color: var(--play-selected-text, var(--ink));
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color var(--duration-quick);
+}
+.play-comments-action:hover,
+.play-comments-post:hover {
+  background: color-mix(in srgb, var(--play-selected, var(--play-blue)) 22%, transparent);
+}
+.play-comments-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 6px 0 14px;
+  border-radius: 12px;
+  background: color-mix(in oklab, var(--ink) 4%, transparent);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+  transition: box-shadow var(--duration-quick);
+}
+.play-comments-field:focus-within {
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--ink) 18%, transparent);
+}
+.play-comments-field input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+.play-comments-field input::placeholder {
+  color: var(--ink-3);
+}
+.play-comments :is(button, input):focus-visible {
+  outline: 2px solid var(--focus-edge);
+  outline-offset: 2px;
+}
+.play-comments-field input:focus-visible {
+  outline: none;
+}
+
 /* Reduce Motion: things change in place; Play's shimmer and slides hold still. */
 @media (prefers-reduced-motion: reduce) {
+  .play-viewer-bar[data-down] {
+    translate: none;
+  }
   .play-switch-pill,
   .sidebar-fold,
   .sidebar-lists > .sidebar-scroll,
@@ -1279,6 +1786,10 @@
   }
   .play-promo,
   .play-card-placeholder,
+  .play-comments,
+  .play-comments-scrim,
+  .play-comment-skeleton-avatar::before,
+  .play-comment-skeleton-line::before,
   .play-viewer,
   .play-loader-status,
   .play-loader-line::after,
@@ -1310,7 +1821,7 @@
     animation: none;
     display: none;
   }
-  .play-card-cover:hover .play-card-image {
+  .play-card-frame:hover .play-card-image {
     scale: none;
   }
 }

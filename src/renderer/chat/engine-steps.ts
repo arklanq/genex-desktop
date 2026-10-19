@@ -7,6 +7,7 @@
 import { CustomEvent, customEvent } from "../../shared/custom-events.ts";
 import type { PluginInfo } from "../../shared/plugins.ts";
 import { runPluginAction } from "../plugin-actions.ts";
+import { type PollTimers, startStatusPoll } from "../status-poll.ts";
 import type { EventEnvelope } from "../types.ts";
 import { STEPS_WORDS } from "../words.ts";
 
@@ -130,6 +131,54 @@ export function finishedSays(previous: StepsCard | null, next: StepsCard | null)
 export function stuckSays(previous: StepsCard | null, next: StepsCard | null): string | null {
   if (!previous || !next?.stuckSays || next.stuckSays === previous.stuckSays) return null;
   return next.stuckSays;
+}
+
+/** A card as last read, with the offer it was read for. */
+export type KeptSteps = { offer: StepsOffer; card: StepsCard | null };
+
+/**
+ * The kept card while the chat's offer is still for the same plugin and game, else nothing: a card
+ * read for one game never shows, or runs its buttons, in another game's chat.
+ */
+export function stepsCardFor(kept: KeptSteps | null, offer: StepsOffer | null): StepsCard | null {
+  const same = kept !== null && offer !== null && kept.offer.pluginId === offer.pluginId;
+  return same && kept.offer.project === offer.project ? kept.card : null;
+}
+
+/** What `watchSteps` asks with and tells. */
+export type StepsWatch = {
+  /** The plugin's rows, read now; null when the read failed or isn't a card. */
+  ask: () => Promise<StepsCard | null>;
+  onCard: (card: StepsCard | null) => void;
+  /** What the agent is told: a finish (at most once) or a step that stopped. */
+  onFinished: (says: string) => void;
+  everyMs: number;
+  timers?: PollTimers;
+};
+
+/**
+ * The card's rows, asked now and every `everyMs` (one ask at a time) while a step is open: a card
+ * with nothing left open is asked no more, and its finish is told once. A failed read shows nothing
+ * and is asked again. Returns the stop, after which no answer lands.
+ */
+export function watchSteps({ ask, onCard, onFinished, everyMs, timers }: StepsWatch): () => void {
+  let previous: StepsCard | null = null;
+  let toldDone = false;
+  const poll = startStatusPoll(
+    ask,
+    (next) => {
+      const done = toldDone ? null : finishedSays(previous, next);
+      const says = done ?? stuckSays(previous, next);
+      if (done) toldDone = true;
+      previous = next;
+      if (next && !next.open) poll.stop();
+      onCard(next);
+      if (says) onFinished(says);
+    },
+    everyMs,
+    timers,
+  );
+  return poll.stop;
 }
 
 /**

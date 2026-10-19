@@ -19,18 +19,20 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   signed out: the last account and balance are remembered on this Mac (`studio.genex.me`,
   `studio.genex.credits`); signing out, which Studio asks first, forgets them.
 - The sidebar plate: signed out (a quiet generated face, Sign in to Genex), finishing in the
-  browser (× cancels), signed in (avatar, name, Pro, credits opening Credits), offline (the last
-  account with the offline mark), ended (dimmed, Sign in again). Its menu: Profile, Friends, Credits (the
-  Genex plugin page's Credits tab), Account settings, Sign out.
+  browser (× cancels), signed in (avatar, name, credits opening Credits; a Pro's name has a PRO tag
+  and their row lights up with their nameplate under the pointer), offline (the last account with the offline mark), ended (dimmed, Sign in again). Its
+  menu: Profile, Friends, Credits (the Genex plugin page's Credits tab), Nameplate (Pro), Account
+  settings, Sign out.
 - The sidebar's friends, signed in, in Play and Create: right under the games, the word Friends
   (the Friends page, with the requests waiting) and each friend in the API's order, their game on
-  one green line while they play (no online or offline). A row opens the profile; hovering a friend
+  one green line while they play (no online or offline); a Pro friend's row lights up with their first nameplate under the pointer. A row opens the profile; hovering a friend
   in a game offers Join. About 4½ rows show, then they scroll; the page is read every 20 seconds,
   as genex.games polls. Offline nobody is playing.
-- Settings › Genex account: avatar (generated or photo, Regenerate), name, nickname (`@handle` and
+- Settings › Genex account: avatar (generated or photo, Regenerate), a Pro's nameplate (New one), name, nickname (`@handle` and
   Edit, once genex.games knows nicknames), credits with Buy credits, Sign out by the title. Signed
   out it is the sign-in stage, with the account-card drawing.
-- Publish needs only the account: signed out it asks to sign in. Multiplayer needs the Genex plugin
+- Publish needs only the account: signed out it asks to sign in. Its "Share its N assets on Play"
+  switch (off; shown while some Genex asset is not on Play) shares them when the game goes live. Multiplayer needs the Genex plugin
   on, since the agent builds it with Genex's tools.
 
 ## The dashboard
@@ -38,11 +40,34 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
 - Games, Tools and Assets, each with tabs and search; Recent once something was played; Top
   creators (the last 30 days) above Games' tabs. The promo card shows until the first sign-in or
   its ×.
+- Assets are square tiles under two switchers: kind (All · 3D · Images · Sounds · Videos, a kind
+  read from the whole catalog) and Everyone · Mine (the account's library, Saved/Shared tags, signed
+  out a sign-in line). A tile with no thumbnail shows the file the library keeps, by what that file
+  is (its content type, else its `ext`, else its address's extension): a picture an `<img>` shows,
+  loaded as its tile nears the screen, or a model drawn by the Assets tab's viewer. Main reads the
+  file (`studio:assets.file`: https on genex.games' asset hosts, no redirects, 32 MiB, one minute)
+  and answers a refusal as a code; tiles on screen draw two at a time, and each picture is kept for
+  the session. Main also says the file's format (`fbx`, `gltf`), which picks the 3D loader. A file
+  that is too large, redirected, refused (a 4xx other than 408 or 429) or unreadable as a model is
+  not tried again; one that failed otherwise (a 5xx, a 408 or 429, offline, a timeout, a lost
+  graphics context) is tried when its tile is next on screen, 30 s on, three tries in all. Until
+  then, and for sounds, the kind's glyph stays.
+  Sounds with a known file play on the tile; Use (on hover) adds the asset to one of the person's
+  games (`studio:assets.add`). No Remix or plays on assets.
 - A card's five-second clip plays while hovered (after a short dwell). The first row of Games' feed
   plays up to four clips by itself, as genex.games' Featured grid does: after its covers and an
   idle moment, staggered, only while half in view and the window shows (none under the viewer);
   out of view for 10 s a clip lets its decoder go. One pause after the tabs stops every clip and is
   remembered; Reduce Motion, a failed clip or a refused play stops them for the session.
+- A card's ⋯ (on the cover's corner while hovered or focused, or a right-click on the card) is
+  genex.games' card menu (`src/renderer/play/card-menu/`). The game's owner gets Copy link,
+  remixing off or on, Change cover, Unpublish and Delete game; an account `/api/me` names
+  `isAdmin` also gets, on any game, an Admin block with Mobile support and Edit tags. Anyone else
+  gets no ⋯, and neither does a search's card. Featuring stays on genex.games. Its server checks
+  every call against its own admin list, so the app only decides what shows
+  (`src/shared/play-manage.ts`). A change shows on every card at once. Change cover crops the
+  picture to 1536×864 in the renderer and sends it through main (presigned PUT, then commit);
+  genex.games may keep the old cover and says why.
 - Friends: requests, playing now (Join), friends, sent, people search, the invite card and whether
   friends see the game the account is in. The invite link (`/api/referrals/me`, on the website
   only) opens genex.games' download page with a card from the account; the card has Copy, Post on
@@ -59,17 +84,35 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   without handles gets the avatar-only welcome once per account on this Mac.
 - Generated avatars come from the account's id (`src/shared/avatar-recipe.ts`, the same recipe
   genex.games draws): a WebGPU body with a 2D fallback, eyes and gear in 2D, 25 frames a second,
-  at most 28 avatars a frame, still under Reduce Motion, while idle and under a modal.
+  at most 28 avatars a frame, still under Reduce Motion, while idle and under a modal. The
+  avatar welcome builds the account's under a beam and offers Regenerate beside Continue.
+- Pro nameplates: moving art behind a Pro's name (`src/shared/plate-recipe.ts`): 20 abstract
+  pieces, each with its own takes and eight shared dials (zoom, speed, warp, mirror, hue, glow,
+  grain, colour steps). The first plate is one of the avatar body's pieces in its colours; New one
+  rolls any piece (`studio.genex.plateVariant.<id>`, this Mac only). A light theme draws the piece
+  on paper (its lightness turned over: a pale ground, deep colour). A sidebar plate is lit only under
+  the pointer, never while its menu is open (always in Settings' preview); WebGPU, a 2D still without it, 30
+  frames a second only while lit and on screen, held while idle, under a modal or Reduce Motion.
 
 ## Playing a game
 
-- A game plays full window in a sandboxed view (`persist:genex-play`) under the app's header: Like,
-  Share, Invite, Remix, Exit; a held Esc gives the header the keyboard. A single-use ticket in the
-  address's fragment signs the player in; a guest is offered sign-in. The rest of the app is inert
-  until the game closes.
+- A game plays across the whole window in a sandboxed view (`persist:genex-play`). The app's bar
+  lies over its top edge as glass, in a transparent view of its own above the game's
+  (`renderer/play-bar.html`, `main/play/bar-reveal.ts`): back, the name and facts, Like, Comments,
+  Share (its icon), Invite a friend (multiplayer games), Remix, Exit. It is up while the game loads, for 3 seconds
+  after play starts and again when the pointer reaches the top edge or Esc is pressed in the game;
+  then it fades up and out, and macOS's window buttons go with it (on Windows and Linux it stays up,
+  since their window controls can't). A game holding the mouse doesn't bring it back. A held Esc
+  gives the bar the keyboard. Only Studio's own page and the bar's may post or delete a comment. A single-use ticket in the address's fragment signs the player in; a guest is offered
+  sign-in. The rest of the app is inert until the game closes.
+- Comments (the count, or the icon alone) opens a modal over the dimmed game: its count as the
+  title, genex.games' comments newest first in pages of 20, a footer pinned under the list (Sign in
+  signed out, else the field with Post inside it once something is typed; at most 500 characters).
+  The account's own comments can be deleted. Main reads and writes them for the game on screen
+  (`main/play/comments.ts`); Esc, ✕ or a click outside closes it and the game gets the keyboard back.
 - The page stays on Genex games' addresses; a link it opens goes to the browser, at most one every
   few seconds.
-- Voice chat: a game that asks for a microphone gets the header's mic switch, remembered per game.
+- Voice chat: a game that asks for a microphone gets the bar's mic switch, remembered per game.
   Main lets the page open the microphone only right after it asked it to, and only on the game's
   own origin.
 - Remix clones the game's public source from Genex's git (https only, no hooks or filters, its Git
@@ -89,9 +132,10 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
 
 `src/renderer/play/`, `src/renderer/state/play.ts` and `people.ts`, `src/renderer/avatars/`,
 `src/main/play/`, `src/main/core/genex-account.ts`; selectors in the
-[feature map](agent/feature-map.md). Fixtures: `STUDIO_FIXTURE_GENEX_ACCOUNT=1|new|quiet|fresh|nickname|terms`
-signs a fixture launch in (`new` and `nickname` have not chosen a nickname; a few names, such as
-`rab`, read as taken), `ended` gives it a refused one. Tests: `tests/conformance/play-*`,
+[feature map](agent/feature-map.md). Fixtures: `STUDIO_FIXTURE_GENEX_ACCOUNT=1|admin|new|quiet|fresh|nickname|terms`
+signs a fixture launch in (the full account owns Snowball, and `admin` is it as a genex.games
+admin; `new` and `nickname` have not chosen a nickname; a few names, such as `rab`, read as taken),
+`ended` gives it a refused one. Tests: `tests/conformance/play-*`,
 `genex-account`, `app-account-plugin`.
 
 A live `studio:dev` profile can point Play at a local or test genex.games with
@@ -100,3 +144,28 @@ Mac; `src/main/play/origins.ts`). A packaged app or a fixture launch ignores the
 API the account signs in on that server's own device sign-in, for the launch only
 (`src/main/dev/dev-stand-account.ts`); Publish, the Genex plugin, games' pages and their
 pictures stay on genex.games.
+
+## Asset library and sharing
+
+Every Genex generation is in the account's genex.games library already (`GET /api/generations?scope=library`).
+In a game's Assets tab, signed in, cards wear **Saved** or **Shared**; the opened file adds Save
+(bookmark) and Share (Play's tint) beside Reveal, and Cmd/Shift-click picks several for a bar (Save,
+Share, Clear). Save marks a generation Saved, or sends a file Genex did not make (GLB, PNG/JPEG/WebP,
+MP3/WAV/OGG, MP4) to the library through genex.games' import; such a file can be saved but not
+shared. Share opens one window (a name per asset, one line of what sharing means), then each card shows
+a step line (Send · Check · Live), a bare ✓ On Play, or an orange refusal with Try again or Send a
+report; a shared one offers Open on Play and Stop sharing. genex.games keeps one page per asset: a
+second share answers the page it has and puts back one taken off Play.
+
+The Assets tab's search answers from the game, My library and Community; Add copies a library asset
+into `assets/library/<id>/` and a shared one into `assets/community/<id>/` (a code-only asset into
+`src/assets/`). Which generation a saved or added file became is kept in the game's
+`.studio/library-links.json` (ignored by git, builds and Publish). The @ panel tags library assets the
+same way (copied into `assets/library/`). Signed out, Save and Share are hidden and nothing errs.
+
+Code: `main/play/asset-library.ts` (the calls), `main/core/library-sharing.ts` (a game's files, Save,
+Share, Add), `ipc/asset-library.ts` (`studio:assets.*`), `renderer/state/sharing.ts`,
+`renderer/panels/assets/`, Play's tiles in `renderer/play/` (`asset-tiles.ts`, `tile-pictures.ts`,
+`use-tile-picture.ts`); fixtures answer from `dev/fixture-asset-library.ts` (fixture `asset-library`,
+whose window also gets the library's files from the fixture).
+

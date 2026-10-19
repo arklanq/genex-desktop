@@ -1775,9 +1775,9 @@ async function checkMorningCardAndHistory(buildSmoke: BuildSmoke): Promise<void>
   );
   await wc.executeJavaScript(openBuildScript(runId));
   check(
-    "opening the earlier build restores its facet graph",
+    "opening the earlier build restores its facet graph and opens its tab beside the newer one",
     await waitFor(
-      `document.body.innerText.includes('River and bridge') && document.querySelector('[data-stage-view]')?.dataset.selectedRun === ${JSON.stringify(runId)} && Array.from(document.querySelectorAll('[data-testid="build-status"] button')).some(b => b.textContent === 'Show latest')`,
+      `document.body.innerText.includes('River and bridge') && document.querySelector('[data-stage-view]')?.dataset.selectedRun === ${JSON.stringify(runId)} && document.querySelector('[data-testid="build-status"] [data-build-tab][aria-selected="true"]')?.dataset.buildTab === ${JSON.stringify(runId)} && document.querySelectorAll('[data-testid="build-status"] [data-build-tab]').length >= 2`,
     ),
   );
 }
@@ -1886,7 +1886,7 @@ async function checkRunTimeAndLead(buildSmoke: BuildSmoke, { followRun, followEv
   check(
     "the build's time is told against the time it was given on the stage, and as its cap in the chat",
     await waitFor(
-      `document.querySelector('[data-testid="build-status"]')?.textContent.includes(' of 30 min')&&!!document.querySelector('[data-build-progress]')&&!!document.querySelector('[data-build-status]')?.textContent.includes('up to 30m')&&!document.querySelector('[data-build-activity],[data-worker-state]')`,
+      `document.querySelector('[data-testid="build-status"]')?.textContent.includes(' of 30 min')&&!!document.querySelector('[data-build-status]')?.textContent.includes('up to 30m')&&!document.querySelector('[data-build-activity],[data-worker-state]')`,
     ),
   );
   // Every part judged and done, nothing merged yet: the lead has the run, and the graph says so.

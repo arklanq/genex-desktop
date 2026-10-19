@@ -5,7 +5,7 @@
  * reaches the network or runs a program: the download, programs and folders are the test's.
  */
 import assert from "node:assert/strict";
-import { mkdir, readdir } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
 import {
@@ -105,10 +105,13 @@ describe("choosing Godot to install", () => {
 async function installMac(team = GODOT_TEAM_ID) {
   const root = await tmpDir("godot-install-");
   const applications = path.join(root, "Applications");
+  const trash = path.join(root, "home", ".Trash");
   await mkdir(applications, { recursive: true });
+  await mkdir(trash, { recursive: true });
   const ran: string[][] = [];
   const deps: GodotInstallDeps = {
     applications,
+    trash,
     fetch: (async (url: string) =>
       url.includes("api.github.com")
         ? new Response(JSON.stringify(RELEASE))
@@ -123,7 +126,7 @@ async function installMac(team = GODOT_TEAM_ID) {
   };
   const storage = path.join(root, "storage");
   await mkdir(storage, { recursive: true });
-  return { applications, ran, installer: createGodotInstaller(deps, async () => storage), deps };
+  return { applications, trash, storage, ran, installer: createGodotInstaller(deps, async () => storage), deps };
 }
 
 describe("installing Godot for the person", () => {
@@ -133,19 +136,55 @@ describe("installing Godot for the person", () => {
     await mac.installer.running();
     assert.deepEqual(
       mac.ran.map((call) => call[0]),
-      ["ditto", "codesign", "codesign", "ditto"],
-      "unpack, check the signature, copy",
+      ["ditto", "codesign", "codesign", "spctl", "ditto"],
+      "unpack, check the signature and Gatekeeper's verdict, copy",
     );
     assert.deepEqual(await readdir(mac.applications), ["Godot.app"]);
     assert.equal(mac.installer.job(), null);
   });
 
-  it("copies nothing another team signed, and says so", async () => {
+  it("copies nothing another team signed, says so, and leaves no download behind", async () => {
     const mac = await installMac("ABCDE12345");
     mac.installer.install();
     await mac.installer.running();
     assert.deepEqual(await readdir(mac.applications), []);
     assert.match(String(mac.installer.job()?.why), /isn't signed by the Godot team/);
+    assert.deepEqual(await readdir(mac.storage), [], "the download and its unpacked copy are gone");
+  });
+
+  it("replaces an older Godot.app in Applications, moving the older one to the Trash", async () => {
+    const mac = await installMac();
+    const older = path.join(mac.applications, "Godot.app");
+    await mkdir(older);
+    await writeFile(path.join(older, "version"), "4.2");
+    mac.installer.install();
+    await mac.installer.running();
+    assert.equal(mac.installer.job(), null, "installed");
+    assert.deepEqual(await readdir(mac.applications), ["Godot.app"]);
+    assert.deepEqual(await readdir(older), [], "the new Godot is in place");
+    assert.equal(await readFile(path.join(mac.trash, "Godot.app", "version"), "utf8"), "4.2", "the older one is kept");
+  });
+
+  it("stops while Godot unpacks: nothing is checked or copied after, and the download is gone", async () => {
+    const mac = await installMac();
+    const run = mac.deps.run;
+    let stopping: Promise<void> | undefined;
+    mac.deps.run = async (command, args, timeoutMs, signal) => {
+      const answer = await run(command, args, timeoutMs, signal);
+      if (args[0] === "-x") stopping ??= mac.installer.stop();
+      return answer;
+    };
+    mac.installer.install();
+    await mac.installer.running();
+    await stopping;
+    assert.deepEqual(
+      mac.ran.map((call) => call[0]),
+      ["ditto"],
+      "only the unpacking ran",
+    );
+    assert.deepEqual(await readdir(mac.applications), []);
+    assert.deepEqual(await readdir(mac.storage), []);
+    assert.equal(mac.installer.job()?.stopped, true);
   });
 });
 

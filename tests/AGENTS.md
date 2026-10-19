@@ -17,6 +17,10 @@ hooks fails by name, instead of never exiting and holding a runner slot. Stop wh
 a core's `stop()` (or core-lite's `close()`), a `ProcessSandbox`'s `dispose()`. On Linux,
 sandbox-runtime's socat bridges run until the last sandbox is disposed.
 
+Each batch also runs with `TMPDIR`, `TMP` and `TEMP` set to a folder of its own (`/tmp/gt-…` off
+Windows, or in the inherited temp folder where `/tmp` is not writable), removed when the batch
+ends, so what a test leaves in the temp folder does not pile up.
+
 CI partitions literal test groups with direct callbacks. Ordinary groups stay whole; the large
 `harness incidents` suite is split into direct test subtrees, with each test's runtime descendants
 and per-case hooks intact. It may not gain once-only parent hooks or dynamic direct registration.

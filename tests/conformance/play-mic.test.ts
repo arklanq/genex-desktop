@@ -46,6 +46,7 @@ const WORLD: PlayWorld = {
   authorId: null,
   plays: 10,
   online: 2,
+  comments: 2,
 };
 const MINTED: PlayTicket = { status: TicketStatus.Minted, ticket: "T1" };
 
@@ -93,9 +94,16 @@ function rig(options: { access?: boolean; on?: string[]; device?: string | null 
       inviteCode: async () => undefined,
     },
     gameUrl: (slug) => `game:${slug}`,
-    window: { contentSize: () => ({ width: 1200, height: 800 }) },
+    window: { contentSize: () => ({ width: 1200, height: 800 }), buttons: () => {}, barFades: true },
     game: { open: () => {}, show: () => {}, hide: () => {}, focus: () => {}, close: () => {} },
-    focusApp: () => {},
+    bar: { show: () => {}, hide: () => {}, focus: () => {}, focused: () => false, warm: () => {} },
+    comments: {
+      list: async () => ({ items: [], nextCursor: null }),
+      post: async () => {
+        throw new Error("no comments here");
+      },
+      remove: async () => {},
+    },
     clipboard: () => {},
     web: "https://genex.games",
     emit: (event) => events.push(event),

@@ -2,7 +2,9 @@
  * Which Unity editor processes have a game's project open, read from the computer's own process
  * list: an editor is started with `-projectPath <folder>` (Unity Hub spells it `-projectpath`), so
  * its arguments name its project. Unity's lock file says nothing by itself: a killed or crashed
- * editor leaves it behind, and so does its Pipeline descriptor.
+ * editor leaves it behind, and so does its Pipeline descriptor, whose process id another app may
+ * have by now. So the process a descriptor names counts only while the list shows it as a Unity
+ * editor that names this project or none (Windows' task list names no command line).
  *
  * Ending an editor is for one Genex is about to restore files under, or one whose main thread no
  * longer answers: a signal to that project's own editor processes, never to another project's.
@@ -10,6 +12,7 @@
  * touched: a stalled editor is ended without being asked only when nobody is.
  */
 import { execFile } from "node:child_process";
+import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import { SECOND_MS } from "../../shared/duration.ts";
@@ -36,6 +39,13 @@ const PS_MS = 10 * SECOND_MS;
 const PS_MAX_BYTES = 8 * 1024 * 1024;
 /** The end of a Mac editor's program path; `Unity Hub` and its helpers end otherwise. */
 const MAC_EDITOR = "/Unity.app/Contents/MacOS/Unity";
+/** A Windows editor's program, as Windows' task list names it (Unity Hub's is `Unity Hub.exe`). */
+const WINDOWS_EDITOR = "unity.exe";
+/** Windows' own folder when SystemRoot names none, and its task list within it. */
+const WINDOWS_ROOT = "C:\\Windows";
+const TASKLIST = ["System32", "tasklist.exe"] as const;
+/** One row of the task list's CSV: the program's name and its process id, first. */
+const TASK_ROW = /^"([^"]*)","(\d+)"/;
 /** The editor's flag naming its project, in either spelling. */
 const PROJECT_FLAG = /-projectpath /i;
 /** How long an editor asked to end is given before it is killed, and how often Genex looks. */
@@ -64,10 +74,36 @@ async function macProcesses(): Promise<ProcessRow[]> {
   });
 }
 
-/** This computer's processes: listed on a Mac, none elsewhere; signals by `process.kill`. */
+/** The Unity editors in the task list's CSV answer: each one's id and program, with no command line. */
+export function tasklistEditors(csv: string): ProcessRow[] {
+  return csv.split(/\r?\n/).flatMap((line) => {
+    const match = TASK_ROW.exec(line.trim());
+    if (!match?.[1] || !match[2] || match[1].toLowerCase() !== WINDOWS_EDITOR) return [];
+    return [{ pid: Number(match[2]), exec: match[1], args: "" }];
+  });
+}
+
+/** Windows' own task list by its full path under SystemRoot, so neither PATH nor the current folder stands in. */
+function tasklistPath(): string {
+  const root = process.env.SystemRoot;
+  return path.win32.join(root && path.win32.isAbsolute(root) ? root : WINDOWS_ROOT, ...TASKLIST);
+}
+
+/** This Windows computer's Unity editors, by its task list. */
+async function windowsEditors(): Promise<ProcessRow[]> {
+  const args = ["/FI", `IMAGENAME eq ${WINDOWS_EDITOR}`, "/FO", "CSV", "/NH"];
+  const { stdout } = await run(tasklistPath(), args, { timeout: PS_MS, maxBuffer: PS_MAX_BYTES, windowsHide: true });
+  return tasklistEditors(stdout);
+}
+
+/** This computer's processes: all of them on a Mac, the Unity editors on Windows, none elsewhere; signals by `process.kill`. */
 export function systemProcesses(platform: NodeJS.Platform = process.platform): ProcessEnv {
+  const listed: Partial<Record<NodeJS.Platform, () => Promise<ProcessRow[]>>> = {
+    darwin: macProcesses,
+    win32: windowsEditors,
+  };
   return {
-    list: async () => (platform === "darwin" ? macProcesses().catch(() => []) : []),
+    list: async () => (await listed[platform]?.().catch(() => [])) ?? [],
     signal: (pid, signal) => {
       process.kill(pid, signal);
     },
@@ -75,9 +111,13 @@ export function systemProcesses(platform: NodeJS.Platform = process.platform): P
   };
 }
 
+/** Whether a process is a Unity editor: a Mac editor's program, or Windows' `Unity.exe`. */
+const isEditor = (row: ProcessRow): boolean =>
+  row.exec.endsWith(MAC_EDITOR) || path.win32.basename(row.exec).toLowerCase() === WINDOWS_EDITOR;
+
 /** Whether a process is a Unity editor whose command line names the project at `root`. */
 function hasProject(row: ProcessRow, root: string): boolean {
-  if (!row.exec.endsWith(MAC_EDITOR)) return false;
+  if (!isEditor(row)) return false;
   const flag = PROJECT_FLAG.exec(row.args);
   if (!flag) return false;
   const named = row.args.slice(flag.index + flag[0].length);
@@ -85,9 +125,25 @@ function hasProject(row: ProcessRow, root: string): boolean {
   return named === root || named.startsWith(`${root} -`);
 }
 
+/** Whether a process may be the editor a descriptor in the project at `root` names: a Unity editor of this project or of none. */
+const mayServe = (row: ProcessRow, root: string): boolean =>
+  isEditor(row) && (!PROJECT_FLAG.test(row.args) || hasProject(row, root));
+
 /** The ids of the editor processes that have the project at `root` (its real path) open. */
 export async function editorPids(env: ProcessEnv, root: string): Promise<number[]> {
   return (await env.list()).filter((row) => hasProject(row, root)).map((row) => row.pid);
+}
+
+/**
+ * The ids of the processes that have the project at `root` open: the editors whose command line
+ * names it, and the process its Pipeline descriptor names (`named`) while the list shows that one
+ * as a Unity editor of this project or of none, never another app that got its id.
+ */
+export async function projectPids(env: ProcessEnv, root: string, named?: number): Promise<number[]> {
+  const rows = await env.list();
+  const listed = rows.filter((row) => hasProject(row, root)).map((row) => row.pid);
+  const served = rows.filter((row) => row.pid === named && mayServe(row, root)).map((row) => row.pid);
+  return [...new Set([...listed, ...served])];
 }
 
 /** Sends a signal to each process, passing over one that is already gone. */

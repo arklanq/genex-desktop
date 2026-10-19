@@ -319,11 +319,12 @@ const SIGN_IN_FIRST = 401;
 
 /**
  * A URL server of the person's own, with no sign-in and no key header, that answered "sign in
- * first": its next Connect signs in through the browser.
+ * first": its next Connect signs in through the browser. Every header is a secret value, so any
+ * header at all (`Authorization`, `X-API-Key`, …) is its own sign-in.
  */
 const asksForSignIn = (entry: Entry, error: unknown): boolean => {
   const c = entry.connector;
-  const keyed = c.headers?.some((name) => name.toLowerCase() === "authorization") === true;
+  const keyed = (c.headers?.length ?? 0) > 0;
   const remote = c.transport !== McpTransport.Stdio && c.authentication === undefined;
   return remote && !keyed && !entry.plugin && error instanceof McpConnectFailed && error.status === SIGN_IN_FIRST;
 };
@@ -1372,8 +1373,13 @@ export class McpRegistry {
       return { ok: true, tools: tools.map((t) => this.#summary(entry, t)), durationMs: Date.now() - started };
     } catch (error) {
       if (openBrowser && entry && asksForSignIn(entry, error)) {
-        await this.save({ ...entry.connector, authentication: "oauth" });
-        return this.connect(id, project, openBrowser);
+        // A switch that cannot be kept is this connect's failure, never a throw past it.
+        const switched = await this.save({ ...entry.connector, authentication: "oauth" }).then(
+          () => null,
+          (saveError: unknown) => saveError,
+        );
+        if (switched === null) return this.connect(id, project, openBrowser);
+        return { ok: false, tools: [], error: errorMessage(switched), durationMs: Date.now() - started };
       }
       const message = errorMessage(error);
       this.#oauth.get(id)?.ready();

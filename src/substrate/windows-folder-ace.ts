@@ -1,5 +1,8 @@
 /**
  * The sandbox user's read-attributes entry on one folder, set or taken back on that folder alone.
+ * It allows SYNCHRONIZE too: CreateFileW adds it to every synchronous open, and Node's stat opens
+ * the folder that way on Windows before 11 24H2 (no GetFileInformationByName), so an entry with
+ * read attributes alone refused the harness's realpath with EPERM on `AppData`.
  *
  * `icacls`, like every call that sets a folder's DACL by name or handle (SetNamedSecurityInfo,
  * SetSecurityInfo, PowerShell's Set-Acl), re-propagates the folder's inheritable entries to
@@ -21,7 +24,7 @@ const run = promisify(execFile);
 
 /** What one edit does to the sandbox user's entry on its folder. */
 export const FolderAceOp = {
-  /** Allow FILE_READ_ATTRIBUTES, without inheritance: merged into an explicit allow it already has. */
+  /** Allow FILE_READ_ATTRIBUTES and SYNCHRONIZE, without inheritance: merged into an explicit allow it already has. */
   Grant: "grant",
   /** Remove every explicit allow for the SID, as `icacls /remove:g` does; its denies stay. */
   Remove: "remove",
@@ -75,7 +78,8 @@ foreach ($native in @(
 }
 $api = $type.CreateType()
 $DACL = 4
-$READ_ATTRIBUTES = 0x80
+# FILE_READ_ATTRIBUTES | SYNCHRONIZE
+$READ_ATTRIBUTES = 0x100080
 # Read the call's error before anything else runs: a function call or a variable lookup in
 # between makes PowerShell's own calls, which overwrite it.
 function Refused($code) { New-Object ComponentModel.Win32Exception ([int]$code) }
@@ -87,7 +91,7 @@ function Grant($acl, $sid) {
   for ($i = 0; $i -lt $acl.Count; $i++) {
     $ace = $acl[$i]
     if ((ExplicitAllow $ace $sid) -and $ace.AceFlags -eq [Security.AccessControl.AceFlags]::None) {
-      if (($ace.AccessMask -band $READ_ATTRIBUTES) -ne 0) { return $false }
+      if (($ace.AccessMask -band $READ_ATTRIBUTES) -eq $READ_ATTRIBUTES) { return $false }
       $ace.AccessMask = $ace.AccessMask -bor $READ_ATTRIBUTES
       $acl[$i] = $ace
       return $true
@@ -169,7 +173,7 @@ export function folderAceOutcomes(stdout: string, count: number): FolderAceOutco
 /** The `icacls` arguments that make the same change, walking everything under the folder. */
 export function icaclsArgs(edit: FolderAceEdit): string[] {
   return edit.op === FolderAceOp.Grant
-    ? [edit.dir, "/grant", `*${edit.sid}:(RA)`]
+    ? [edit.dir, "/grant", `*${edit.sid}:(S,RA)`]
     : [edit.dir, "/remove:g", `*${edit.sid}`];
 }
 

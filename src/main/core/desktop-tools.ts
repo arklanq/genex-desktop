@@ -97,12 +97,18 @@ function appAllowance(deps: DesktopToolsDeps) {
   };
 }
 
-/** The desktop as the session's target source: asked for, then connected, on the first call. */
+/**
+ * The desktop as the session's target source: asked for, then connected, on the first call. A stop
+ * while the card waits or the driver starts cancels that call: a late yes connects nothing, and a
+ * driver that arrives after the stop is closed unused.
+ */
 function desktopSource(deps: DesktopToolsDeps): TargetSource<DesktopTarget> & { release(): Promise<void> } {
   let driver: DesktopDriver | null = null;
   let target: DesktopTarget | null = null;
   // The session question is asked once: a yes stands while a connection fails and is retried.
   let session: boolean | null = null;
+  // Counts stops, so a call that waited across one knows it was stopped.
+  let stops = 0;
   const allowApp = appAllowance(deps);
   const unusable = (problem: string) => ({
     target: desktopTarget({ driver: deadDriver(problem), allowApp: async () => false }),
@@ -110,16 +116,27 @@ function desktopSource(deps: DesktopToolsDeps): TargetSource<DesktopTarget> & { 
     note: null,
     fresh: true,
   });
+  /** The driver, or why there is none; one that arrives after a stop is closed unused. */
+  const connect = async (ticket: number): Promise<DesktopDriver | string> => {
+    const connected = await deps.connect().catch((error: unknown) => errorMessage(error));
+    if (stops === ticket) return typeof connected === "string" ? MESSAGE.noDriver(connected) : connected;
+    if (typeof connected !== "string") await connected.close().catch(() => {});
+    return MESSAGE.stopped;
+  };
   return {
     caps: desktopTarget({ driver: deadDriver(""), allowApp: async () => false, vm: deps.vm === true }).caps,
     load: async () => {
       if (target) return { target, problem: null, note: null, fresh: false };
-      session ??= await deps.ask(DesktopQuestion.Session);
+      const ticket = stops;
+      const answer = session ?? (await deps.ask(DesktopQuestion.Session));
+      // Stopped while the card waited: that yes ends with the stop, and the next call asks again.
+      if (stops !== ticket) return unusable(MESSAGE.stopped);
+      session = answer;
       if (!session) return unusable(MESSAGE.declined);
       // Turned off while the card waited: the yes connects nothing.
       if (turnedOff(deps)) return unusable(MESSAGE.off);
-      const connected = await deps.connect().catch((error: unknown) => errorMessage(error));
-      if (typeof connected === "string") return unusable(MESSAGE.noDriver(connected));
+      const connected = await connect(ticket);
+      if (typeof connected === "string") return unusable(connected);
       driver = connected;
       target = desktopTarget({
         driver,
@@ -133,6 +150,7 @@ function desktopSource(deps: DesktopToolsDeps): TargetSource<DesktopTarget> & { 
     },
     frame: (shown, jpeg, caption, act) => deps.frame?.(shown, jpeg, caption, act) ?? Promise.resolve(),
     release: async () => {
+      stops += 1;
       const open = driver;
       driver = null;
       target = null;

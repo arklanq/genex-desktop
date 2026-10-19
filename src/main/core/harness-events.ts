@@ -27,6 +27,8 @@ const HOST_CUSTOM_EVENTS: ReadonlySet<unknown> = new Set([
   CustomEvent.JobEnded,
   // What macOS access `app_look` still needs is the app's own finding.
   CustomEvent.AppLookAccess,
+  // That an agent went ahead of the person is the lock table's finding, from the plugin's probe.
+  CustomEvent.AgentWentAhead,
   // A chat's judge reads "verified by the studio" only where the host saw the goal reached
   // (`judge-play-tool.ts`): the harness, which plays it, may not write the line itself.
   CustomEvent.ChatJudgeResult,

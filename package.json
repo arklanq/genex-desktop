@@ -1,7 +1,7 @@
 {
   "name": "ai-game-studio",
   "productName": "Genex",
-  "version": "0.1.8",
+  "version": "0.1.9",
   "private": true,
   "license": "MIT",
   "description": "Self-improving AI game studio for macOS on Apple Silicon",
@@ -27,6 +27,7 @@
     "check:static": "node scripts/check-node.mjs && npm run --silent verify:context && npm run --silent verify:architecture && node scripts/tsc.ts --noEmit --incremental --tsBuildInfoFile .studio-dev/tsc.tsbuildinfo && node scripts/affected-tests.mjs --check-syntax && node scripts/affected-tests.mjs --lint && node scripts/check-test-style.ts && node scripts/check-vocabulary.ts && node scripts/check-plugin-versions.ts && node scripts/evals/check-isolation.ts",
     "check:isolation": "node scripts/check-node.mjs && node scripts/evals/check-isolation.ts",
     "check": "npm run --silent check:static && node scripts/affected-tests.mjs --tier L1 --run",
+    "deps": "node scripts/worktree-deps.ts",
     "test": "node scripts/test.mjs",
     "test:affected": "node scripts/affected-tests.mjs",
     "test:area": "node scripts/affected-tests.mjs --tier L1 --run --area",

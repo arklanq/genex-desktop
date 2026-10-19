@@ -34,6 +34,7 @@ import {
   ROBLOX_ENGINE,
   readPlaceLinks,
   readPlaceRecord,
+  restorePlaceRecord,
   writePlaceRecord,
 } from "./studio-binding.ts";
 import type { StudioClient, StudioEntry } from "./studio-client.ts";
@@ -538,6 +539,7 @@ async function linkChosen(deps: PlaceDeps, context: PluginContext, chosen: Chose
     ...(chosen.remote ?? {}),
   };
   // Recorded before the link: the helper link finds this game's Studio by it as soon as the link exists.
+  const before = await readPlaceRecord(storage, game);
   await writePlaceRecord(storage, game, record);
   try {
     await context.host(PluginService.GameEngineLink, {
@@ -547,6 +549,8 @@ async function linkChosen(deps: PlaceDeps, context: PluginContext, chosen: Chose
       ...(chosen.throughProject ? { name: chosen.name } : {}),
     });
   } catch (error) {
+    // Refused: the record goes back to the link the game still has.
+    await restorePlaceRecord(storage, game, before);
     throw new PlaceError(PlaceRefusal.Refused, error instanceof Error ? error.message : String(error));
   }
   const message = chosen.key.name ? MESSAGE.Places.LinkedByName(chosen.name) : MESSAGE.Places.Linked(chosen.name);

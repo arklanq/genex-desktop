@@ -53,6 +53,17 @@ export const isLocal = (connector: McpConnectorDraft): boolean => connector.tran
 const secretNamesOf = (connector: McpConnectorDraft): string[] =>
   (isLocal(connector) ? connector.env : connector.headers) ?? [];
 
+/**
+ * The draft moved to `transport`. A move between this Mac and a URL leaves the secret rows behind:
+ * a variable typed for a program here is never sent as a header to a URL (nor a header the other
+ * way). HTTP and SSE are the same place, so their headers stay.
+ */
+export function withTransport(draft: Draft, transport: McpTransport): Draft {
+  const connector = { ...draft.connector, transport };
+  const moved = isLocal(connector) !== isLocal(draft.connector);
+  return { ...draft, connector, secretRows: moved ? [] : draft.secretRows };
+}
+
 /** The command line a connector's program and arguments read as. */
 const commandLineOf = (connector: McpConnectorDraft): string =>
   connector.command ? joinCommandLine([connector.command, ...(connector.args ?? [])]) : "";

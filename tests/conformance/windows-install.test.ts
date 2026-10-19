@@ -10,6 +10,7 @@ import { test } from "node:test";
 import {
   APP_USER_MODEL_ID,
   appUserModelId,
+  installedWorkingDir,
   runSquirrelStep,
   SquirrelEvent,
   squirrelStartup,
@@ -79,4 +80,10 @@ test("a Squirrel step runs Update.exe and settles whether it exits, fails to sta
   const none = fakeSpawn("exit");
   await runSquirrelStep({ updateExe: UPDATE_EXE, args: [] }, none.spawn, 5);
   assert.deepEqual(none.calls, [], "an obsolete copy only exits");
+});
+
+test("a packaged Windows app works from its install folder, wherever it was started; elsewhere the launch's folder stays", () => {
+  assert.equal(installedWorkingDir("win32", EXE, true), "C:\\Users\\ada\\AppData\\Local\\genex\\app-0.1.0");
+  assert.equal(installedWorkingDir("win32", EXE, false), null, "a development build keeps its checkout");
+  assert.equal(installedWorkingDir("darwin", "/Applications/Genex.app/Contents/MacOS/genex", true), null);
 });

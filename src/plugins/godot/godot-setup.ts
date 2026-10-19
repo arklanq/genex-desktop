@@ -2,8 +2,10 @@
  * Godot's setup card in a game's chat while this Mac has no Godot Genex builds with, and Genex
  * installing it for the person: the newest stable Godot 4 from Godot's own releases, its zip
  * unpacked into the plugin's storage, and `Godot.app` copied into Applications only once
- * `codesign` accepts it and names Godot's team. One step, with Do it for me; Don't use Godot (or
- * Stop while it works) in Hide's place; the agent is told once Godot is found.
+ * `codesign` accepts it as Godot's team's Developer ID and Gatekeeper does (an older `Godot.app`
+ * there goes to the Trash). One step, with Do it for me; Don't use Godot (or Stop while it works,
+ * which ends the download, the unpacking or the copy) in Hide's place; the agent is told once Godot
+ * is found. The download is removed whether the install ends well or not.
  */
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
@@ -142,11 +144,13 @@ export function godotAsset(release: unknown): { version: string; url: string } |
   return undefined;
 }
 
-/** What installing Godot reaches: the network, programs, Applications and the plugin's storage. */
+/** What installing Godot reaches: the network, programs, Applications, the person's Trash and the plugin's storage. */
 export interface GodotInstallDeps {
   fetch: typeof fetch;
   run: AppRunner;
   applications: string;
+  /** Where an older `Godot.app` in Applications goes (`~/.Trash`). */
+  trash: string;
 }
 
 /** The installer: one install at a time, kept in memory; Stop ends it. */
@@ -161,20 +165,11 @@ export function createGodotInstaller(deps: GodotInstallDeps, storage: () => Prom
       : { state: GodotJobState.Failed, why };
   };
 
-  /** Finds the release, downloads it with progress, unpacks it and copies the checked app into Applications. */
-  async function install(): Promise<void> {
-    job = { state: GodotJobState.Running };
-    const release = await deps.fetch(GODOT_RELEASES, { signal: stop.signal }).then((r) => r.json());
-    const asset = godotAsset(release);
-    if (!asset) throw new Error(WORDS.NoRelease);
-    const current: GodotJob = { state: GodotJobState.Running, version: asset.version };
-    job = current;
-    const folder = path.join(await storage(), SETUP_FOLDER);
-    await rm(folder, { recursive: true, force: true });
-    await mkdir(folder, { recursive: true });
+  /** Downloads the asset into `folder` with progress, unpacks it and copies the checked app into Applications; a Stop ends it between steps. */
+  async function fetchAndPlace(asset: { url: string }, current: GodotJob, folder: string, signal: AbortSignal) {
     const zip = path.join(folder, "godot.zip");
     await downloadFile(deps.fetch, asset.url, zip, {
-      signal: stop.signal,
+      signal,
       onBytes: (done, total) => {
         current.done = done;
         if (total) current.total = total;
@@ -184,13 +179,31 @@ export function createGodotInstaller(deps: GodotInstallDeps, storage: () => Prom
     });
     current.unpacking = true;
     const unpacked = path.join(folder, "unpacked");
-    await deps.run("/usr/bin/ditto", ["-x", "-k", zip, unpacked], APP_COPY_MS);
-    const place = { applications: deps.applications, name: GODOT_APP, team: GODOT_TEAM_ID };
-    await placeApp(deps.run, path.join(unpacked, GODOT_APP), place).catch((error: unknown) => {
+    await deps.run("/usr/bin/ditto", ["-x", "-k", zip, unpacked], APP_COPY_MS, signal);
+    signal.throwIfAborted();
+    const place = { applications: deps.applications, name: GODOT_APP, team: GODOT_TEAM_ID, trash: deps.trash };
+    await placeApp(deps.run, path.join(unpacked, GODOT_APP), place, signal).catch((error: unknown) => {
       const notSigned = error instanceof AppInstallError && error.problem === AppInstallProblem.NotSigned;
       throw new Error(notSigned ? WORDS.NotGodot : WORDS.Copy(errorMessage(error)));
     });
+  }
+
+  /** Finds the release, then downloads, unpacks and places it; its download is gone afterwards either way. */
+  async function install(signal: AbortSignal): Promise<void> {
+    job = { state: GodotJobState.Running };
+    const release = await deps.fetch(GODOT_RELEASES, { signal }).then((r) => r.json());
+    const asset = godotAsset(release);
+    if (!asset) throw new Error(WORDS.NoRelease);
+    const current: GodotJob = { state: GodotJobState.Running, version: asset.version };
+    job = current;
+    const folder = path.join(await storage(), SETUP_FOLDER);
     await rm(folder, { recursive: true, force: true });
+    await mkdir(folder, { recursive: true });
+    try {
+      await fetchAndPlace(asset, current, folder, signal);
+    } finally {
+      await rm(folder, { recursive: true, force: true }).catch(() => undefined);
+    }
     job = null;
   }
 
@@ -200,7 +213,7 @@ export function createGodotInstaller(deps: GodotInstallDeps, storage: () => Prom
     install: (): void => {
       if (running) return;
       stop = new AbortController();
-      running = install()
+      running = install(stop.signal)
         .catch((error: unknown) => fail(errorMessage(error)))
         .finally(() => {
           running = null;

@@ -3,18 +3,23 @@
  *
  * A first publish turns the place Studio has open into a new game on Roblox, and Studio may reopen
  * it under the game's name ("<name> (placeId: N)"), which the game's link (its place file, or its
- * name in Studio) no longer matches. So when Genex hands a first publish to the chat, or shows the
- * person Studio's own clicks for it where it can't click, it notes it (`publish/<game>.json` in the
- * plugin's storage: the name, the linked project, the Studio the game was bound to, and the places
- * already published in the open Studios then). Until that note is {@link PUBLISH_NOTE_MS} old, each
- * look (the panel's status, Genex's moments, a publish call) asks the Studios that could be the
- * game's whether Roblox has their place now: the Studio the note names or the game is bound to, and,
- * once no open Studio still holds the game's own unpublished place, one whose place carries the
- * published name. With no note, it asks the Studio the game's helper was last connected from: within
- * {@link LOST_STUDIO_MS} once that connection is lost, if its place carries the game's own name or
- * title, and while it still holds only when a publish call asks (`askBound`). Exactly one published
- * place, published after the note and held by no other game, is linked with its ids, keeping the
- * link's project; the chat shows the link with Undo. Two candidates, or none, link nothing.
+ * name in Studio) no longer matches. So when the chat starts a first publish Genex handed it, or
+ * Genex shows the person Studio's own clicks for it where it can't click, it notes it
+ * (`publish/<game>.json` in the plugin's storage: the name, the linked project, the Studio holding
+ * the game then, and the places already published in the open Studios then). A publish the chat
+ * didn't start is not noted, nor one with no Studio holding the game (the game's bound Studio, else
+ * one with its own place open): there is nothing to publish from. Studio's clicks are noted once per
+ * Studio holding the game, never again as the panel keeps looking. Until that note is
+ * {@link PUBLISH_NOTE_MS} old, each look (the panel's status, Genex's moments, a publish call) asks
+ * the Studios that could be the game's whether Roblox has their place now: the Studio the note names
+ * or the game is bound to, and, once no open Studio still holds the game's own unpublished place, one
+ * whose place carries the published name (only for a note naming a Studio). With no note, it asks
+ * the Studio the game's helper was last connected from: within {@link LOST_STUDIO_MS} once that
+ * connection is lost, if its place carries the game's own name or title, and while it still holds
+ * only when a publish call asks (`askBound`). Exactly one published place, published after the note
+ * and held by no other game, is linked with its ids, keeping the link's project; the chat shows the
+ * link with Undo. Two candidates, or none, link nothing; a link the host refuses puts the place
+ * record back.
  */
 import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
@@ -33,6 +38,7 @@ import {
   readLastBinding,
   readPlaceLink,
   readPlaceRecord,
+  restorePlaceRecord,
   writePlaceRecord,
 } from "./studio-binding.ts";
 import type { StudioEntry } from "./studio-client.ts";
@@ -96,14 +102,31 @@ async function publishedNow(deps: PlaceDeps, storage: string): Promise<string[]>
 }
 
 /**
- * Notes a first publish for `game`, with the places the open Studios have published already, so the
- * next looks link it to the place published after it and never to one of those.
+ * The Studio that holds `game` now: the one its helper is bound to, else an open Studio showing its
+ * own place (as its link names it); undefined when no Studio has it open.
+ */
+export async function studioHolding(
+  deps: PlaceDeps,
+  storage: string,
+  game: string,
+  bound: string | undefined,
+): Promise<string | undefined> {
+  if (bound) return bound;
+  const link = await readPlaceLink(storage, game);
+  if (!link) return undefined;
+  return (await listedStudios(deps)).find(placeMatcher(link))?.id;
+}
+
+/**
+ * Notes a first publish for `game` from the Studio holding it, with the places the open Studios
+ * have published already, so the next looks link it to the place published after it and never to
+ * one of those.
  */
 export async function notePublish(
   deps: PlaceDeps,
   storage: string,
   game: string,
-  note: Omit<PublishNote, "before">,
+  note: Omit<PublishNote, "before" | "studioId"> & { studioId: string },
 ): Promise<void> {
   if (!isGameId(game)) return;
   const before = await publishedNow(deps, storage);
@@ -111,15 +134,14 @@ export async function notePublish(
   await atomicWriteJson(noteFile(storage, game), { ...note, before });
 }
 
-/** The game's note while it is fresh at `now`; undefined when there is none, it is old, or it isn't one. */
-export async function readPublishNote(storage: string, game: string, now: number): Promise<PublishNote | undefined> {
+/** The game's note of any age; undefined when there is none or it isn't one. */
+async function readAnyNote(storage: string, game: string): Promise<PublishNote | undefined> {
   if (!isGameId(game)) return undefined;
   const value = await readRegularFile(noteFile(storage, game), MAX_NOTE_BYTES)
     .then((bytes) => JSON.parse(bytes.toString("utf8")) as unknown)
     .catch(() => undefined);
   if (!isJsonObject(value) || typeof value.project !== "string" || !Number.isSafeInteger(value.at)) return undefined;
   const at = value.at as number;
-  if (now - at > PUBLISH_NOTE_MS || at - now > PUBLISH_NOTE_MS) return undefined;
   const before = Array.isArray(value.before) ? value.before.filter(isPlaceId).slice(0, MAX_NOTED_PLACES) : [];
   return {
     at,
@@ -134,9 +156,21 @@ const isPlaceId = (value: unknown): value is string => typeof value === "string"
 
 const clearNote = (storage: string, game: string) => rm(noteFile(storage, game), { force: true });
 
-/** Whether `game` has a fresh note for `project` at `now`: a later note would forget the places published meanwhile. */
-export async function hasPublishNote(storage: string, game: string, project: string, now: number): Promise<boolean> {
-  return (await readPublishNote(storage, game, now))?.project === project;
+/** The game's note while it is fresh at `now`; undefined when there is none, it is old, or it isn't one. */
+export async function readPublishNote(storage: string, game: string, now: number): Promise<PublishNote | undefined> {
+  const note = await readAnyNote(storage, game);
+  if (!note || now - note.at > PUBLISH_NOTE_MS || note.at - now > PUBLISH_NOTE_MS) return undefined;
+  return note;
+}
+
+/**
+ * Whether `game` was noted for `project` from `studioId` already, fresh or old: Studio's clicks shown
+ * again in the same Studio are not a new publish, and a later note would forget the places
+ * published meanwhile.
+ */
+export async function notedFrom(storage: string, game: string, project: string, studioId: string): Promise<boolean> {
+  const note = await readAnyNote(storage, game);
+  return note?.project === project && note.studioId === studioId;
 }
 
 /** A Studio's place name as Studio shows it before its published id. */
@@ -197,7 +231,9 @@ async function notedStudios(deps: RelinkDeps, look: Look, note: PublishNote, lis
   const own = await look.own();
   const ownStillOpen = listed.some((entry) => ids.has(entry.id) || own?.matches(entry));
   const name = note.name;
-  const reopened = (entry: StudioEntry) => !ownStillOpen && name !== undefined && bareName(entry) === name;
+  // Only a note that saw the game's own Studio follows a reopening by name: anything else may be the person's own place.
+  const followsName = note.studioId !== undefined && !ownStillOpen && name !== undefined;
+  const reopened = (entry: StudioEntry) => followsName && bareName(entry) === name;
   return listed.filter((entry) => ids.has(entry.id) || reopened(entry));
 }
 
@@ -259,7 +295,13 @@ export async function relinkPublished(
   const folder = record?.folder ?? context.directory;
   // Recorded before the link: the helper link finds this game's Studio by its ids as soon as the link has them.
   if (folder) await writePlaceRecord(storage, game, { folder, project: link.project, name: published, ...found.ids });
-  await context.host(PluginService.GameEngineLink, { project: link.project, remote: found.ids, name: published });
+  try {
+    await context.host(PluginService.GameEngineLink, { project: link.project, remote: found.ids, name: published });
+  } catch (error) {
+    // Refused: the record goes back to the link the game still has.
+    if (folder) await restorePlaceRecord(storage, game, record);
+    throw error;
+  }
   await clearNote(storage, game);
   return { name: published, ...found.ids };
 }

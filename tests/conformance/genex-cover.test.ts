@@ -1363,4 +1363,28 @@ describe("the cover clip", () => {
       await fx.close();
     }
   });
+
+  it("stays home on genex__cover-set: the approved send carries only the picture", async (t) => {
+    if (!hasGit) return t.skip("git is not installed on this machine; the Genex publish path requires it");
+    const fx = await coverFixture();
+    try {
+      await fx.genex.coverClip(PROJECT, { ...camera(() => still("x")), record: async () => recording("ride") });
+      await fx.publish(
+        "gallery",
+        camera(() => still("first")),
+      );
+      await fx.genex.coverClip(PROJECT, { ...camera(() => still("x")), record: async () => recording("later") });
+      await fx.genex.coverShoot(
+        PROJECT,
+        camera(() => still("second")),
+      );
+      const sent = await fx.genex.coverSet(PROJECT);
+      assert.equal(sent.kind, GenexCoverOutcome.Applied, "the picture went");
+      const after = await fx.genex.publishWait(PROJECT);
+      assert.equal(after.cover?.clip?.sha256, sha256(webm("later")), "the newer clip is kept");
+      assert.equal(after.cover?.clipLast?.sha256, sha256(webm("ride")), "and no send of it was attempted");
+    } finally {
+      await fx.close();
+    }
+  });
 });

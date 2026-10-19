@@ -43,7 +43,7 @@ const unsubscribe = boot.store.subscribe(({ platform }) => {
   document.documentElement.dataset.platform = platform;
   syncWindowControls(window.studio, platform);
 });
-void boot.load();
+void boot.start();
 
 const container = document.getElementById("root");
 if (!container) throw new Error("missing #root");

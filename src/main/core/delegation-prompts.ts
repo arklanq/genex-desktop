@@ -50,6 +50,8 @@ const MESSAGE = {
     [CallCutOff.HarnessEnded]: "the studio's loop ended while it ran",
     [CallCutOff.PluginEnded]: "its plugin stopped while it ran",
     [CallCutOff.AppLost]: "the app it drives went away while it ran",
+    [CallCutOff.TurnEnded]:
+      "made after the session's turn had ended, so Genex could not answer it: a \"user doesn't want to take this action\" answer to it meant only that, and the person declined nothing",
   } satisfies Record<CallCutOff, string>,
 } as const;
 

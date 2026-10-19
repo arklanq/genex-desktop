@@ -73,6 +73,11 @@ export const FixtureName = {
   PausedBuild: "paused-build",
   /** A Loop still going, for the chat's Building card and its parts: added, working, restarted, waiting. */
   BuildingCard: "building-card",
+  /**
+   * The Assets tab with the account's library: Genex files linked to the fixture library's
+   * generations (one not saved, one saved, one shared, a saved sound) and a picture dropped in.
+   */
+  AssetLibrary: "asset-library",
 } as const;
 export type FixtureName = (typeof FixtureName)[keyof typeof FixtureName];
 

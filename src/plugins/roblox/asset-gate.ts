@@ -498,20 +498,53 @@ function accessorSpan(model: Model, shape: ReturnType<typeof accessorShape>) {
   return { buffer, start, stride };
 }
 
-/** One accessor's values, normalized integers scaled to 0–1 (or −1–1), as glTF reads them. */
-function accessorValues(model: Model, at: unknown, want?: number): Float64Array {
+/** Reads an accessor's items one at a time, normalized integers scaled to 0–1 (or −1–1), as glTF reads them. */
+interface AccessorReader {
+  count: number;
+  size: number;
+  /** Item `item`'s values into `into` from `offset` (zeros for an accessor with no buffer view). */
+  read(item: number, into: Float64Array, offset: number): void;
+}
+
+function accessorReader(model: Model, at: unknown, want?: number): AccessorReader {
   const shape = accessorShape(model, at, want);
   const { accessor, type, component, size, count } = shape;
-  const values = new Float64Array(count * size);
   const span = accessorSpan(model, shape);
-  if (!span) return values;
   const normalized = accessor.normalized === true;
   const scale = normalized ? component.max : 1;
-  for (let item = 0; item < count; item++)
+  const read = (item: number, into: Float64Array, offset: number) => {
+    if (!span) return;
     for (let part = 0; part < size; part++) {
       const value = readComponent(span.buffer, span.start + item * span.stride + part * component.bytes, type) / scale;
-      values[item * size + part] = normalized ? Math.max(value, -1) : value;
+      into[offset + part] = normalized ? Math.max(value, -1) : value;
     }
+  };
+  return { count, size, read };
+}
+
+/** One accessor's values, normalized integers scaled to 0–1 (or −1–1), as glTF reads them. */
+function accessorValues(model: Model, at: unknown, want?: number): Float64Array {
+  const reader = accessorReader(model, at, want);
+  const values = new Float64Array(reader.count * reader.size);
+  for (let item = 0; item < reader.count; item++) reader.read(item, values, item * reader.size);
+  return values;
+}
+
+/** A vertex attribute's reader, refused when it has fewer items than the primitive's `vertices`. */
+function attributeReader(model: Model, at: unknown, want: number, vertices: number): AccessorReader {
+  const reader = accessorReader(model, at, want);
+  if (reader.count < vertices)
+    refuse(
+      ModelRefusal.Malformed,
+      MESSAGE.notGltf(model.name, "a mesh's attribute has fewer values than its vertices"),
+    );
+  return reader;
+}
+
+/** The items of `reader` at `items`, in that order: only what a primitive's triangles use is read. */
+function itemsAt(reader: AccessorReader, items: readonly number[]): Float64Array {
+  const values = new Float64Array(items.length * reader.size);
+  items.forEach((item, at) => reader.read(item, values, at * reader.size));
   return values;
 }
 
@@ -631,13 +664,13 @@ function countTriangles(model: Model, drawn: Array<{ mesh: Json }>): number {
   return triangles;
 }
 
-/** How many of the vertices more than {@link MAX_BONE_INFLUENCES} bones move. */
-function overInfluenced(model: Model, attributes: Json, vertices: number): number {
+/** How many of the vertices `used` more than {@link MAX_BONE_INFLUENCES} bones move. */
+function overInfluenced(model: Model, attributes: Json, used: readonly number[], vertices: number): number {
   const sets = Object.keys(attributes).filter((name) => /^WEIGHTS_\d+$/.test(name));
   if (sets.length <= 1) return 0;
-  const counts = new Uint8Array(vertices);
+  const counts = new Uint8Array(used.length);
   for (const set of sets) {
-    const weights = accessorValues(model, attributes[set], 4);
+    const weights = itemsAt(attributeReader(model, attributes[set], 4, vertices), used);
     weights.forEach((weight, at) => {
       if (weight > 0) counts[Math.floor(at / 4)] = (counts[Math.floor(at / 4)] ?? 0) + 1;
     });
@@ -698,27 +731,46 @@ const append = (to: number[], values: ArrayLike<number>) => {
   for (let at = 0; at < values.length; at++) to.push(values[at] ?? 0);
 };
 
-/** Adds one primitive drawn at `world`. */
-function addPrimitive(model: Model, into: Gathered, raw: unknown, world: Matrix): void {
-  const { primitive, attributes } = primitiveShape(model, raw);
-  const points = accessorValues(model, attributes.POSITION, 3);
-  const vertices = points.length / 3;
-  const base = into.positions.length / 3;
-  into.materials.add(index(primitive.material) ?? -1);
-  into.influenced += overInfluenced(model, attributes, vertices);
+/**
+ * The vertices a primitive's triangles use, in first-use order, and each corner's place among
+ * them: a vertex buffer the primitives share is read for what each draws, never whole.
+ */
+function usedVertices(model: Model, primitive: Json, vertices: number) {
   const order =
     primitive.indices === undefined
       ? Float64Array.from({ length: vertices }, (_, at) => at)
       : accessorValues(model, primitive.indices, 1);
   if (order.some((at) => at >= vertices))
     refuse(ModelRefusal.Malformed, MESSAGE.notGltf(model.name, "a triangle names a vertex the mesh doesn't have"));
-  append(into.positions, transformed(points, world, false));
+  const places = new Map<number, number>();
+  const corners = Array.from(order, (vertex) => {
+    const known = places.get(vertex);
+    if (known !== undefined) return known;
+    places.set(vertex, places.size);
+    return places.size - 1;
+  });
+  return { used: [...places.keys()], corners };
+}
+
+/** Adds one primitive drawn at `world`. */
+function addPrimitive(model: Model, into: Gathered, raw: unknown, world: Matrix): void {
+  const { primitive, attributes } = primitiveShape(model, raw);
+  const position = accessorReader(model, attributes.POSITION, 3);
+  const { used, corners } = usedVertices(model, primitive, position.count);
+  const base = into.positions.length / 3;
+  into.materials.add(index(primitive.material) ?? -1);
+  into.influenced += overInfluenced(model, attributes, used, position.count);
+  append(into.positions, transformed(itemsAt(position, used), world, false));
   into.allNormals &&= attributes.NORMAL !== undefined;
   into.allUvs &&= attributes.TEXCOORD_0 !== undefined;
   if (attributes.NORMAL !== undefined)
-    append(into.normals, transformed(accessorValues(model, attributes.NORMAL, 3), world, true));
-  if (attributes.TEXCOORD_0 !== undefined) append(into.uvs, accessorValues(model, attributes.TEXCOORD_0, 2));
-  for (const at of order) into.indices.push(base + at);
+    append(
+      into.normals,
+      transformed(itemsAt(attributeReader(model, attributes.NORMAL, 3, position.count), used), world, true),
+    );
+  if (attributes.TEXCOORD_0 !== undefined)
+    append(into.uvs, itemsAt(attributeReader(model, attributes.TEXCOORD_0, 2, position.count), used));
+  for (const at of corners) into.indices.push(base + at);
 }
 
 /** The drawn triangles gathered into one mesh in world space, materials and influences counted on the way. */

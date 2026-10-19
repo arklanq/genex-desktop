@@ -12,8 +12,9 @@
  *   drives only the apps it was granted;
  * - nothing is ever typed into a secure (password) field.
  *
- * A click is checked against the app under the point when the driver can say, else the app in
- * front; keys and text against the app in front. A refusal ends the plan and is reported with its
+ * A click is checked against the app whose window is under the point when the driver can say (a
+ * point no window covers is refused), else the app in front; a drag against the apps under both
+ * its ends; keys and text against the app in front. A refusal ends the plan and is reported with its
  * reason (`refusals()`), so the model reads why, never a silent no-op. The model's coordinates are
  * pixels of the last screenshot, scaled here to the driver's screen space.
  */
@@ -78,6 +79,7 @@ const MESSAGE = {
   declined: (app: string) => `the person did not allow ${app} — ask them in words, or use an app they allowed`,
   secureField: "the focused field is a password field: the studio never types into one",
   noApp: "no app could be found under that point or in front",
+  noWindow: "no app's window is under that point — click inside the window of an app the person allowed",
   engineApp: (app: string) =>
     `${app} is a game engine's editor: computer use never builds or play-tests there — use the engine's own tools. A setup click or a publish there goes through its plugin's tool (such as Do it for me or Publish), and only the turn that answers the task it posts may click it`,
   playerApp: (app: string) =>
@@ -216,35 +218,41 @@ function comboKeys(combo: string): DesktopKeys {
   return [...modifiers.map((k) => driverKey(k.code)), driverKey(key.code)];
 }
 
-/** What each action touches: a point on screen, or the keyboard of the app in front. */
-type Aim = { at: { x: number; y: number } } | { keyboard: true; text: boolean } | null;
+/** What an action touches: a point on screen, or the keyboard of the app in front. */
+type Aim = { at: { x: number; y: number } } | { keyboard: true; text: boolean };
 
-/** The point or keyboard an action aims at, in view pixels; null for an action that touches nothing. */
-function aimOf(state: DesktopState, action: PreviewInputAction): Aim {
-  const at = (x: unknown, y: unknown, px?: boolean) => {
+/**
+ * The points or keyboard an action aims at, in view pixels; none for an action that touches
+ * nothing. A drag aims at both ends: where it is picked up and where it is dropped.
+ */
+function aimsOf(state: DesktopState, action: PreviewInputAction): Aim[] {
+  const at = (x: unknown, y: unknown, px?: boolean, from = state.pointer) => {
     const unset = x === undefined || y === undefined;
-    if (unset && state.pointer) return state.pointer;
+    if (unset && from) return from;
     return pointInView(x, y, state.view.width, state.view.height, { exact: px === true });
   };
   switch (action.type) {
     case "click":
-      return { at: at(action.x, action.y, action.px) };
+      return [{ at: at(action.x, action.y, action.px) }];
     case "move":
-      return null;
-    case "drag":
-      return { at: at(action.fromX, action.fromY, action.px) };
+      return [];
+    case "drag": {
+      // An unset drop is the pick-up point, as the drag handler places it.
+      const start = at(action.fromX, action.fromY, action.px);
+      return [{ at: start }, { at: at(action.x, action.y, action.px, start) }];
+    }
     case "scroll":
-      return { at: at(action.x, action.y, true) };
+      return [{ at: at(action.x, action.y, true) }];
     case "mousedown":
     case "mouseup":
-      return { at: at(undefined, undefined, true) };
+      return [{ at: at(undefined, undefined, true) }];
     case "type":
-      return { keyboard: true, text: true };
+      return [{ keyboard: true, text: true }];
     case "wait":
     case "look":
-      return null;
+      return [];
     default:
-      return { keyboard: true, text: false };
+      return [{ keyboard: true, text: false }];
   }
 }
 
@@ -363,33 +371,34 @@ export function desktopTarget(options: DesktopTargetOptions): DesktopTarget {
   };
   const neverDriven = (app: DesktopApp) =>
     (app.bundleId !== null && NEVER_DRIVEN_BUNDLES.has(app.bundleId)) || options.ownApp?.(app) === true;
-  /** The app under a view point, where the driver can say. */
-  const appUnder = async (at: { x: number; y: number }): Promise<DesktopApp | null> => {
-    if (!driver.appAt) return null;
-    const point = screenPoint(state, at.x, at.y);
-    return driver.appAt(point.x, point.y);
-  };
-  /** Whether this action may go ahead: the app it lands in is allowed, and no secret is typed. */
   /**
-   * The app an aim lands in, and whether it would type into a password field: a click is checked
-   * against the app under it, keys and text against the app in front and its focused field.
+   * The app an aim lands in, what to say when there is none, and whether it would type into a
+   * password field: a point is checked against the app whose window is under it where the driver
+   * can say (none there is refused, never put down to the app in front); keys and text, and a point
+   * on a driver that can't say, against the app in front and its focused field.
    */
-  const landing = async (aim: NonNullable<Aim>): Promise<{ app: DesktopApp | null; secret: boolean }> => {
-    const under = "at" in aim ? await appUnder(aim.at) : null;
-    if (under) return { app: under, secret: false };
+  const landing = async (aim: Aim): Promise<{ app: DesktopApp | null; secret: boolean; none: string }> => {
+    if ("at" in aim && driver.appAt) {
+      const point = screenPoint(state, aim.at.x, aim.at.y);
+      return { app: await driver.appAt(point.x, point.y), secret: false, none: MESSAGE.noWindow };
+    }
     const focus = await driver.focus();
-    return { app: focus.app, secret: focus.secure && "keyboard" in aim };
+    return { app: focus.app, secret: focus.secure && "keyboard" in aim, none: MESSAGE.noApp };
   };
-  const cleared = async (action: PreviewInputAction): Promise<boolean> => {
-    const aim = aimOf(state, action);
-    if (!aim) return true;
-    const { app, secret } = await landing(aim);
-    if (secret) return refuse(action.type, MESSAGE.secureField);
-    if (!app) return refuse(action.type, MESSAGE.noApp);
-    if (neverDriven(app)) return refuse(action.type, MESSAGE.neverDriven(appName(app)));
+  /** Whether one aim may go ahead: the app it lands in is allowed, and no secret is typed. */
+  const aimCleared = async (op: string, aim: Aim): Promise<boolean> => {
+    const { app, secret, none } = await landing(aim);
+    if (secret) return refuse(op, MESSAGE.secureField);
+    if (!app) return refuse(op, none);
+    if (neverDriven(app)) return refuse(op, MESSAGE.neverDriven(appName(app)));
     const engine = options.engineApps?.(app);
-    if (engine) return refuse(action.type, engine);
-    if (!(await options.allowApp(app))) return refuse(action.type, MESSAGE.declined(appName(app)));
+    if (engine) return refuse(op, engine);
+    if (!(await options.allowApp(app))) return refuse(op, MESSAGE.declined(appName(app)));
+    return true;
+  };
+  /** Whether an action may go ahead: every point and keyboard it aims at is cleared, before any input. */
+  const cleared = async (action: PreviewInputAction): Promise<boolean> => {
+    for (const aim of aimsOf(state, action)) if (!(await aimCleared(action.type, aim))) return false;
     return true;
   };
   const picture = async (): Promise<TargetShot> => {

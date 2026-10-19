@@ -178,7 +178,7 @@ function sceneOf(spec: ModelSpec): Record<string, unknown> {
 }
 
 /** A GLB 2 file of a glTF document and its one buffer. */
-function glbFile(json: Record<string, unknown>, bin: Buffer): Buffer {
+export function glbFile(json: Record<string, unknown>, bin: Buffer): Buffer {
   const jsonChunk = pad4(Buffer.from(JSON.stringify(json)), 0x20);
   const chunkHeader = (size: number, type: number) => {
     const header = Buffer.alloc(8);

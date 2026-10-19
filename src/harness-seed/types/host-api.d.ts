@@ -60,11 +60,15 @@ export interface CapturedImage extends CapturedFile {
 export type FinishCheckStep = 'checking' | 'accepted' | 'rejected' | 'unanswered';
 // ↑ src/shared/finish-check.ts
 
-/** A finish check's round as the host answers it: the reviewer's yes or no with reasons, or no answer and why. */
+/** A finish check's round as the host answers it: the reviewer's yes or no with reasons and what isn't done, or no answer and why. */
 export interface FinishRoundAnswer {
   round: number;
   step: FinishCheckStep;
   reasons?: string[];
+  /** What the reviewer found not done, when it named any. */
+  notDone?: string[];
+  /** What the reviewer found done, in a few words each, when it named any. */
+  done?: string[];
   why?: string;
 }
 // ↑ src/shared/harness-api.ts
@@ -206,6 +210,11 @@ export interface StudioToolSpec {
     properties: Record<string, { type: string; description?: string }>;
     required?: string[];
   };
+  /**
+   * Called only when the person asks for it in words (an Auto chat's Loop start): it doesn't make the
+   * session an interview, so messages still join it mid-turn, and no nudge names it.
+   */
+  onlyWhenAsked?: boolean;
 }
 // ↑ src/shared/engine-requests.ts
 
@@ -1254,6 +1263,12 @@ export interface DelegateResult {
   compacted?: boolean;
   /** A playtest's or judge's computer trace: where it was written, and whether its goal was verified. */
   trace?: ComputerTraceSummary;
+  /**
+   * Genex tool calls the session made after its turn ended (a background task woke it), which no
+   * answer could reach: by the name the agent called it by, without the server's prefix, and its
+   * arguments as JSON.
+   */
+  cutAfterTurn?: Array<{ tool: string; args: string }>;
 }
 // ↑ src/shared/engine-requests.ts
 
@@ -2240,19 +2255,23 @@ export interface HarnessHostApi {
    * End the held round of a run: the host records its outcome and counts the no's in a row from its
    * own records (`stopped` once they reach the cap). `unanswered` turns the held answer into no
    * answer, with why (a yes that lapsed, a turn that ended); nothing turns a no or no answer into a yes.
+   * `timeLeftMs`, a timed Loop's working time left: with more than `FINISH_TIME_LEFT_MS` no row of
+   * no's stops it (`timeLeft`); an ∞ Loop names none.
    */
   "finish.settle": {
-    params: { project: string; runId: string; round: number; unanswered?: string | null };
-    result: FinishRoundAnswer & { rejections: number; stopped: boolean };
+    params: { project: string; runId: string; round: number; unanswered?: string | null; timeLeftMs?: number | null };
+    result: FinishRoundAnswer & { rejections: number; stopped: boolean; timeLeft?: boolean };
   };
   /**
    * Steer: messages the person sent while the chat's turn works, into the session answering that
    * turn (`chatTurn` is `into`). `accepted` lists what the session took; `how` is how (`SteerDelivery`
-   * in `shared/message-queue.ts`), null when it took nothing. `interrupt: false` takes them only
-   * into a session that reads them mid-turn, and never cuts one short.
+   * in `shared/message-queue.ts`), null when it took nothing. A session is cut only between tool
+   * calls, never inside one. `interrupt: false` takes them only into a session that reads them
+   * mid-turn, and never cuts one short; `native: false` never hands them to it mid-turn: the session
+   * is cut at its next step (a message that changes how the turn runs, steer-switch.ts).
    */
   "engine.steer": {
-    params: { threadId: string; into: string; messages: SteerMessage[]; interrupt?: boolean };
+    params: { threadId: string; into: string; messages: SteerMessage[]; interrupt?: boolean; native?: boolean };
     result: { how: SteerDelivery | null; accepted: string[] };
   };
   "coordinator.tool": {
@@ -2564,6 +2583,11 @@ export interface AutopilotCommission {
   roles?: RunRoles;
   /** Request host-owned explicit approval before execution (default off). */
   reviewPlan?: boolean;
+  /**
+   * The person's Keep building tap after a Loop ended with something still to fix: the finished
+   * build reopens, or the next Loop starts, with no turn deciding whether it is a contained change.
+   */
+  keepBuilding?: boolean;
 }
 // ↑ src/shared/protocol.ts
 
@@ -2689,6 +2713,8 @@ export type DispatchAction =
       pickedImages?: number;
       /** Reference files this message saved in the game (relative paths); a rewind with files removes them. */
       references?: string[];
+      /** Every file its attached pictures are saved as in the game (relative), already there or not: a run's lead reads them. */
+      pictureFiles?: string[];
       /** Composer Loop: the chat may start an unattended build when the ask needs one. */
       loop?: LoopCommission;
       /** Composer Autopilot: the chat may launch a build that decomposes into facets and runs until satisfied. */

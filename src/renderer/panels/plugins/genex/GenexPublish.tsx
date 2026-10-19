@@ -57,6 +57,8 @@ import { useGenexStatus } from "./use-genex-status.ts";
 import { CoverControls, CoverMedia, CoverTool } from "./PublishCover.tsx";
 import { CoverKind, type PublishCover, useElapsed, usePublishCover } from "./use-publish-cover.ts";
 import { Pressing, usePublishRecord } from "./use-publish-record.ts";
+import { PublishShareLine } from "./PublishShare.tsx";
+import { useShareWhenLive } from "./use-publish-share.ts";
 
 const WORDS = GENEX_WORDS.publish;
 const ACCOUNT = GENEX_WORDS.account;
@@ -725,6 +727,7 @@ function PublishBody({
   const name = title ?? offeredTitle(record.state, gameTitle, project);
   const publishing = record.pressing === Pressing.Publish || view.running;
   const celebrate = useCelebration(view, publishing);
+  const share = useShareWhenLive(project, celebrate);
   // A name changed after it went live is listed again by Publish update ("Save name" while celebrating).
   const renamed = title !== null && title.trim() !== (record.state?.title ?? "") && view.stage === PublishStage.Public;
   const failure = record.error ? { text: record.error, details: record.error } : view.failure;
@@ -756,6 +759,7 @@ function PublishBody({
         ))}
         {view.running && <Progress view={view} />}
         {failure && !publishing && <p className="genex-publish-failure">{failure.text}</p>}
+        <PublishShareLine share={share} celebrate={celebrate} />
         {(!celebrate || renamed) && (
           <Presses
             view={view}

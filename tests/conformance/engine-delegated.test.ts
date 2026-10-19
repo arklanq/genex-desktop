@@ -105,7 +105,7 @@ type Send =
     }) => boolean)
   | null;
 
-async function engineWithLogin(queryFn: never): Promise<ClaudeCodeEngine> {
+async function engineWithLogin(queryFn: never, platform?: NodeJS.Platform): Promise<ClaudeCodeEngine> {
   const root = await tmpDir("studio-engine-");
   const home = path.join(root, "claude-home");
   await mkdir(home, { recursive: true });
@@ -115,6 +115,7 @@ async function engineWithLogin(queryFn: never): Promise<ClaudeCodeEngine> {
     engineHome: home,
     systemHome: path.join(root, "no-system-login"),
     queryFn,
+    ...(platform ? { platform } : {}),
   });
 }
 
@@ -1394,6 +1395,38 @@ describe("steering a running Claude Code turn", () => {
     assert.deepEqual(result.steered, []);
   });
 
+  it("an Auto chat handed only its Loop start still takes input mid-turn: that tool makes no interview", {
+    timeout,
+  }, async () => {
+    const { fn } = steerableQuery(async function* ({ read }) {
+      await read();
+      yield steerInit();
+      yield said("Done.");
+      yield { type: "result", subtype: "success", is_error: false, result: "Done.", num_turns: 1, usage: {} };
+    });
+    const engine = await engineWithLogin(fn);
+    const readies: Array<unknown> = [];
+    await engine.delegate({
+      prompt: "auto brief",
+      cwd: "/tmp/x",
+      interviewTools: [
+        {
+          name: "start_autopilot",
+          description: "Start a Loop, only when asked.",
+          parameters: { type: "object", properties: { goal: { type: "string" } }, required: ["goal"] },
+          onlyWhenAsked: true,
+        },
+      ],
+      steer: {
+        ready: (s) => {
+          readies.push(s);
+        },
+      },
+    });
+    assert.equal(readies.length, 1);
+    assert.equal(typeof readies[0], "function", "told it takes input mid-turn");
+  });
+
   it("a message the CLI discards is not delivered, and the input still ends", { timeout }, async () => {
     const { fn } = steerableQuery(async function* ({ read }) {
       await read();
@@ -1881,6 +1914,25 @@ describe("Claude CLI model discovery", () => {
     assert.equal(turns, 0);
     assert.equal(closed, true);
     assert.equal(aborted, true);
+  });
+
+  it("asks without the CLI's own sandbox on Windows only, where it outran the deadline", async () => {
+    const sandboxes: Record<string, unknown> = {};
+    for (const platform of ["win32", "darwin", "linux"] as const) {
+      const engine = await engineWithLogin(
+        ((request: { options: { sandbox: unknown } }) => {
+          sandboxes[platform] = request.options.sandbox;
+          return { supportedModels: async () => [], close() {}, async *[Symbol.asyncIterator]() {} };
+        }) as never,
+        platform,
+      );
+      await engine.refreshModels();
+    }
+    assert.deepEqual(sandboxes, {
+      win32: { enabled: false },
+      darwin: { enabled: true },
+      linux: { enabled: true },
+    });
   });
 
   it("marks the model the CLI's default resolves to, the first one listed", async () => {

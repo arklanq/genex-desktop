@@ -139,6 +139,8 @@ app.whenReady().then(async()=>{
  await capture(${JSON.stringify(path.join(out, "plan-200.png"))});
  wc.setZoomFactor(1);await evalJS('document.querySelector("#chat-polish-specimen").scrollIntoView()');await wait(200);
  check('only overflowing user messages offer Show more',await evalJS('(()=>{const e=document.querySelector("#chat-polish-specimen");return e.querySelectorAll("[data-user-message]").length===2 && e.querySelectorAll(".chat-user-toggle").length===1 && e.querySelector(".chat-user-toggle").getAttribute("aria-expanded")==="false" && e.querySelector("[data-overflow]").scrollHeight>e.querySelector("[data-overflow]").clientHeight})()'));
+ const clockGap=await evalJS('(()=>{const t=document.querySelector("#chat-polish-specimen [data-chat-elapsed] > span").firstChild,at=t.data.search(/\\s/),r=document.createRange();r.setStart(t,at);r.setEnd(t,at+1);return {text:t.data,gap:r.getBoundingClientRect().width,size:parseFloat(getComputedStyle(t.parentElement).fontSize)}})()');
+ check('a minutes clock keeps a word space between its minutes and seconds under tabular figures',clockGap.gap>0&&clockGap.gap<0.4*clockGap.size,clockGap);
  await capture(${JSON.stringify(path.join(out, "user-folded.png"))});
  await evalJS('document.querySelector("#chat-polish-specimen .chat-user-toggle").focus()');await key('Enter');
  check('keyboard expansion reveals the complete brief',await evalJS('(()=>{const e=document.querySelector("#chat-polish-specimen [data-user-message]"),c=e.querySelector(".chat-user-content");return e.querySelector("button").getAttribute("aria-expanded")==="true" && c.clientHeight===c.scrollHeight && c.textContent.includes("10. Keep")})()'));

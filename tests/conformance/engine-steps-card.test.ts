@@ -5,14 +5,19 @@
  */
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { setImmediate as settle } from "node:timers/promises";
 import {
   finishedSays,
   parseSteps,
   runStep,
+  type StepsCard,
+  stepsCardFor,
   stepsOffer,
   stepsShown,
   stuckSays,
+  watchSteps,
 } from "../../src/renderer/chat/engine-steps.ts";
+import type { PollTimers } from "../../src/renderer/status-poll.ts";
 import type { PluginInfo } from "../../src/shared/plugins.ts";
 import type { EventData, EventEnvelope } from "../../src/shared/event-log.ts";
 
@@ -211,5 +216,110 @@ describe("a step's button", () => {
     Object.assign(globalThis, { window: { studio: studioWith(reached) } });
     await assert.rejects(runStep(null, offer, row(confirmed)), /isn't installed/);
     assert.deepEqual(reached, []);
+  });
+});
+
+/** Intervals that run only when the test ticks them. */
+function manualIntervals(): PollTimers & { tick(): void; running(): number } {
+  const runs = new Map<number, () => void>();
+  let next = 0;
+  return {
+    setInterval: (run) => {
+      runs.set(++next, run);
+      return next;
+    },
+    clearInterval: (handle) => void runs.delete(handle as number),
+    tick: () => {
+      for (const run of [...runs.values()]) run();
+    },
+    running: () => runs.size,
+  };
+}
+
+/** A plugin whose every `steps` answer the test gives by hand, in the order it was asked. */
+function handAnswered() {
+  const waiting: Array<(card: StepsCard | null) => void> = [];
+  return {
+    ask: () => new Promise<StepsCard | null>((resolve) => waiting.push(resolve)),
+    asked: () => waiting.length,
+    answer: async (index: number, card: StepsCard | null) => {
+      waiting[index]?.(card);
+      await settle();
+    },
+  };
+}
+
+describe("the setup card's asking", () => {
+  const card = (open: boolean, doneSays?: string) =>
+    parseSteps({ title: "Unity setup", intro: "", open, steps: [], ...(doneSays ? { doneSays } : {}) });
+
+  it("asks one at a time, and stops asking once nothing is left open, telling the agent once", async () => {
+    const timers = manualIntervals();
+    const plugin = handAnswered();
+    const shown: Array<boolean | null> = [];
+    const told: string[] = [];
+    watchSteps({
+      ask: plugin.ask,
+      onCard: (next) => shown.push(next?.open ?? null),
+      onFinished: (says) => told.push(says),
+      everyMs: 5_000,
+      timers,
+    });
+    assert.equal(plugin.asked(), 1, "asked as the card shows");
+    timers.tick();
+    assert.equal(plugin.asked(), 1, "never asked again while an answer is out");
+    await plugin.answer(0, card(true));
+    timers.tick();
+    assert.equal(plugin.asked(), 2);
+    await plugin.answer(1, card(false, "Unity 6 is ready."));
+    for (let i = 0; i < 3; i++) timers.tick();
+    assert.equal(plugin.asked(), 2, "a card with nothing open is not asked again");
+    assert.equal(timers.running(), 0);
+    assert.deepEqual(shown, [true, false]);
+    assert.deepEqual(told, ["Unity 6 is ready."]);
+  });
+
+  it("keeps asking after a failed read, which shows nothing", async () => {
+    const timers = manualIntervals();
+    const plugin = handAnswered();
+    const shown: Array<boolean | null> = [];
+    const onCard = (next: StepsCard | null) => shown.push(next?.open ?? null);
+    watchSteps({ ask: plugin.ask, onCard, onFinished: () => {}, everyMs: 5_000, timers });
+    await plugin.answer(0, null);
+    timers.tick();
+    assert.equal(plugin.asked(), 2);
+    assert.deepEqual(shown, [null]);
+  });
+
+  it("drops an answer that lands after the card stopped, and asks nothing more", async () => {
+    const timers = manualIntervals();
+    const plugin = handAnswered();
+    const shown: unknown[] = [];
+    const told: string[] = [];
+    const stop = watchSteps({
+      ask: plugin.ask,
+      onCard: (next) => shown.push(next),
+      onFinished: (says) => told.push(says),
+      everyMs: 5_000,
+      timers,
+    });
+    stop();
+    await plugin.answer(0, card(false, "Unity 6 is ready."));
+    timers.tick();
+    assert.equal(plugin.asked(), 1);
+    assert.deepEqual(shown, []);
+    assert.deepEqual(told, []);
+  });
+
+  it("shows a card only in the chat of the game and engine it was read for", () => {
+    const valley = { id: "000003", pluginId: "unity", project: "valley" };
+    const read = card(true);
+    const kept = { offer: valley, card: read };
+    assert.equal(stepsCardFor(kept, valley), read);
+    assert.equal(stepsCardFor(kept, { ...valley, id: "000009" }), read, "offered again in the same game");
+    assert.equal(stepsCardFor(kept, { ...valley, project: "harbor" }), null, "another game's chat");
+    assert.equal(stepsCardFor(kept, { ...valley, pluginId: "unreal" }), null, "another engine's card");
+    assert.equal(stepsCardFor(null, valley), null);
+    assert.equal(stepsCardFor(kept, null), null);
   });
 });

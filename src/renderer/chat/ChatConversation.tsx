@@ -235,7 +235,7 @@ const ConversationContent = memo(function ConversationContent({
             />
           )}
         </ChatScroll>
-        <JumpToLatest unseen={follow.unseen} onJump={follow.jumpToLatest} />
+        <JumpToLatest unseen={follow.unseen} working={!view.idle} onJump={follow.jumpToLatest} />
       </div>
     </PerformanceBoundary>
   );
@@ -298,9 +298,9 @@ const savedFrom = (sends: ConversationSends, clientId: string): boolean =>
   [...sends.placeholders.values()].some((placeholder) => placeholder.clientId === clientId);
 
 /**
- * Follow-ups that wait below the current work until they are delivered, then those still being
- * sent. A waiting message keeps the place of the bubble it was sent as; delivered, it closes here
- * as it opens where it was read.
+ * Follow-ups that wait below the current work until it reads them, then those still being sent;
+ * each reads Sending… either way, and one no turn has taken yet can be removed. A waiting message
+ * keeps the place of the bubble it was sent as; delivered, it closes here as it opens where it was read.
  */
 function WaitingFollowUps({
   threadId,

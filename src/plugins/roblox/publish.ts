@@ -68,8 +68,8 @@ export interface PublishDeps {
   /** Sends the script files changed and not yet in Studio, so the publish holds them. */
   flush?(): Promise<void>;
   /**
-   * Notes a first publish under this name, handed to the chat or left to the person's own clicks, so
-   * Genex links the game to the published place afterwards (`relink.ts`).
+   * Notes a first publish under this name once the chat has started it, so Genex links the game to
+   * the published place afterwards (`relink.ts`); a refused hand-over is never noted.
    */
   noted?(name: string): Promise<void>;
 }
@@ -210,10 +210,10 @@ export async function firstPublish(
   if (place.link.remote) return { started: false, message: words.AlreadyPublished, reason: PublishMiss.Published };
   const name = firstPublishName(place, requested);
   const answer = await handOver(deps, firstPublishTask(name));
-  // Followed whether the chat clicks it or the person does: either way Genex links the published place.
+  if (!answer.started) return { ...refusedAnswer(answer, words), name };
+  // Followed once the chat has it, so Genex links the place it publishes.
   await deps.noted?.(name).catch(() => undefined);
-  if (answer.started) return { started: true, message: words.FirstStarted(name), name };
-  return { ...refusedAnswer(answer, words), name };
+  return { started: true, message: words.FirstStarted(name), name };
 }
 
 /** The panel's card for a published place: its name and what publishing does; a first publish keeps the manifest's. */

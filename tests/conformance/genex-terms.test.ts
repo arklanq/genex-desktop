@@ -9,7 +9,8 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
-import { GenexTools } from "../../src/plugins/genex/adapter.ts";
+import { assetCliTimeoutMs, GenexTools } from "../../src/plugins/genex/adapter.ts";
+import { INVOCATION_BUDGET_MS } from "../../src/plugins/genex/cover.ts";
 import { createGenexAccount, type GenexAccountPort } from "../../src/main/core/genex-account.ts";
 import { finishedPayload, startedPayload } from "../../src/main/plugin-activity.ts";
 import { GenexAccountStatus } from "../../src/shared/genex-account.ts";
@@ -27,7 +28,7 @@ const TERMS_WAIT = { waitMs: 200, pollMs: 10 };
  * A Genex API whose terms answer `accepted` until `acceptAfter` status reads have passed (never,
  * when null). Every request is recorded; anything but the terms answers 404.
  */
-async function termsApi(acceptAfter: number | null) {
+async function termsApi(acceptAfter: number | null, onRead: () => void = () => {}) {
   const calls: string[] = [];
   let reads = 0;
   const server = http.createServer((req, res) => {
@@ -35,6 +36,7 @@ async function termsApi(acceptAfter: number | null) {
     res.setHeader("content-type", "application/json");
     if (req.url === "/api/legal/status") {
       reads++;
+      onRead();
       const accepted = acceptAfter !== null && reads > acceptAfter;
       res.end(JSON.stringify({ accepted, required: "2" }));
       return;
@@ -51,8 +53,12 @@ async function termsApi(acceptAfter: number | null) {
   return { api, calls, close };
 }
 
-/** Genex's tools on `api`, signed in, with the test's short terms wait. */
-async function signedInTools(root: string, api: string) {
+/** Genex's tools on `api`, signed in, with the test's short terms wait (or the given one and clock). */
+async function signedInTools(
+  root: string,
+  api: string,
+  timing: { termsWait?: typeof TERMS_WAIT; now?: () => number } = {},
+) {
   let token: string | null = "fixture-token";
   const credentials = {
     get: async () => token,
@@ -63,7 +69,11 @@ async function signedInTools(root: string, api: string) {
       token = null;
     },
   };
-  const tools = new GenexTools(path.join(root, "host"), api, { credentials, termsWait: TERMS_WAIT });
+  const tools = new GenexTools(path.join(root, "host"), api, {
+    credentials,
+    termsWait: timing.termsWait ?? TERMS_WAIT,
+    ...(timing.now ? { now: timing.now } : {}),
+  });
   await tools.init();
   const game = path.join(root, "game");
   await mkdir(game, { recursive: true });
@@ -111,6 +121,47 @@ test("terms accepted during the wait: the app hears both ends and the generation
     assert.ok(
       api.calls.some((call) => !call.endsWith("/api/legal/status")),
       `the generation reached Genex after the terms: ${api.calls.join(", ")}`,
+    );
+  } finally {
+    await api.close();
+  }
+});
+
+test("a generation's CLI never runs past the host's ceiling for its call, terms wait included", () => {
+  assert.equal(assetCliTimeoutMs(0), 180_000, "with no wait the CLI keeps its whole timeout");
+  for (const elapsed of [0, 1_000, 60_000, 100_000, 120_000, 149_999]) {
+    const timeout = assetCliTimeoutMs(elapsed);
+    assert.ok(timeout > 0, `${elapsed} ms in, there is still time to submit`);
+    assert.ok(elapsed + timeout < INVOCATION_BUDGET_MS, `${elapsed} ms in, the CLI stops before the host's ceiling`);
+  }
+  assert.equal(assetCliTimeoutMs(100_000), 80_000, "the terms wait comes out of the CLI's own time");
+  for (const elapsed of [160_000, 190_000, 400_000])
+    assert.equal(assetCliTimeoutMs(elapsed), 0, `${elapsed} ms in, too little is left to submit`);
+});
+
+test("terms accepted with too little of the call left: nothing is submitted and the job says why", async () => {
+  const root = await tmpDir("genex-terms-late-");
+  let clock = 0;
+  // Each question about the terms takes most of a minute of the call.
+  const api = await termsApi(2, () => {
+    clock += 55_000;
+  });
+  try {
+    const { tools, game } = await signedInTools(root, api.api, {
+      termsWait: { waitMs: 10 * 60_000, pollMs: 10 },
+      now: () => clock,
+    });
+    const job = (await tools.execute("game", game, { operation: "image", prompt: "a fox" })) as {
+      status: string;
+      blocked?: string;
+      error?: string;
+    };
+    assert.equal(job.status, "failed");
+    assert.equal(job.blocked, undefined, "the terms were accepted");
+    assert.match(job.error ?? "", /nothing was submitted/);
+    assert.ok(
+      api.calls.every((call) => call === "GET /api/legal/status"),
+      `nothing but the terms was asked: ${api.calls.join(", ")}`,
     );
   } finally {
     await api.close();

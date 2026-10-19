@@ -286,7 +286,7 @@ async function countingCli(relative: string, version: string) {
 }
 
 test("a new session reuses the login shell's PATH and an unchanged CLI's answers; Recheck asks again", {
-  skip: WINDOWS && "a Windows .cmd shim stays the same file when its package updates, so its answers are never reused",
+  skip: WINDOWS && "a hand-written .cmd names no package, so its answers are never reused (npm's shims are, below)",
 }, async () => {
   const settings = path.join(root, "session-reuse/settings.json");
   const binary = await countingCli("session-reuse/codex", "first version");
@@ -306,6 +306,103 @@ test("a new session reuses the login shell's PATH and an unchanged CLI's answers
   assert.equal((await requireCodingCli("codex")).status.version, "first version");
   assert.equal(shells, 2, "Recheck reads the login shell again");
   assert.equal(await binary.asked(), askedOnce * 2, "Recheck asks the CLI again");
+});
+
+/**
+ * A CLI installed the way `npm install -g` lays one out under `prefix`: its package (whose version
+ * the CLI reports) in `node_modules`, and on PATH a link to its script, or npm's `.cmd` shim on
+ * Windows. Every question it is asked is noted in `calls` beside it.
+ */
+async function npmInstalledCli(prefix: string, version: string) {
+  const modules = WINDOWS ? path.join(prefix, "node_modules") : path.join(prefix, "lib", "node_modules");
+  const pkg = path.join(modules, "fake-codex");
+  const script = path.join(pkg, "bin", "codex.js");
+  const calls = path.join(prefix, "calls");
+  await mkdir(path.dirname(script), { recursive: true });
+  await writeFile(path.join(pkg, "package.json"), JSON.stringify({ name: "fake-codex", version }));
+  await writeFile(
+    script,
+    `#!/usr/bin/env node\nconst fs = require("node:fs");\nfs.appendFileSync(${JSON.stringify(calls)}, process.argv[2] + "\\n");\nconst { version } = JSON.parse(fs.readFileSync(${JSON.stringify(path.join(pkg, "package.json"))}, "utf8"));\nconsole.log(process.argv[2] === "--version" ? "fake " + version : ${JSON.stringify(FLAGS)});\n`,
+    { mode: 0o755 },
+  );
+  let bin: string;
+  if (WINDOWS) {
+    bin = prefix;
+    const shim = [
+      "@ECHO off",
+      "GOTO start",
+      ":find_dp0",
+      "SET dp0=%~dp0",
+      "EXIT /b",
+      ":start",
+      "SETLOCAL",
+      "CALL :find_dp0",
+      'IF EXIST "%dp0%\\node.exe" (',
+      '  SET "_prog=%dp0%\\node.exe"',
+      ") ELSE (",
+      '  SET "_prog=node"',
+      ")",
+      'endLocal & goto #_undefined_# 2>NUL || title %COMSPEC% & "%_prog%"  "%dp0%\\node_modules\\fake-codex\\bin\\codex.js" %*',
+    ].join("\r\n");
+    await writeFile(path.join(prefix, "codex.cmd"), shim);
+  } else {
+    bin = path.join(prefix, "bin");
+    await mkdir(bin, { recursive: true });
+    await symlink(path.relative(bin, script), path.join(bin, "codex"));
+  }
+  const asked = async () => (await readFile(calls, "utf8").catch(() => "")).split("\n").filter(Boolean).length;
+  const update = (next: string) =>
+    writeFile(path.join(pkg, "package.json"), JSON.stringify({ name: "fake-codex", version: next }));
+  return { bin, asked, update };
+}
+
+test("a relaunch reuses an unchanged npm CLI's answers on every platform; an update or Recheck asks again", async () => {
+  const prefix = path.join(root, "npm-prefix");
+  const settings = path.join(root, "relaunch/settings.json");
+  const installed = await npmInstalledCli(prefix, "1.0.0");
+  const discovery = {
+    ...options,
+    loginPath: [installed.bin, path.dirname(process.execPath)].join(path.delimiter),
+  };
+  const launch = () => configureCodingClis(settings, [], discovery);
+  launch();
+  assert.equal((await requireCodingCli("codex")).status.version, "fake 1.0.0");
+  const askedOnce = await installed.asked();
+  assert.ok(askedOnce > 0, "the first launch asks the CLI");
+  launch();
+  assert.equal((await requireCodingCli("codex")).status.version, "fake 1.0.0");
+  assert.equal(await installed.asked(), askedOnce, "a relaunch does not ask an unchanged CLI");
+  await installed.update("2.0.0");
+  assert.equal(
+    (await requireCodingCli("codex")).status.version,
+    "fake 2.0.0",
+    "an updated package is asked again, its launcher unchanged",
+  );
+  const askedTwice = await installed.asked();
+  invalidateCodingCli("codex");
+  launch();
+  assert.equal((await requireCodingCli("codex")).status.version, "fake 2.0.0");
+  assert.ok((await installed.asked()) > askedTwice, "a Recheck is not undone by the next launch");
+  configureCodingClis(path.join(root, "settings.json"), [], options);
+});
+
+test("damaged kept answers are ignored: the CLI is asked, and discovery still works", async () => {
+  const installed = await npmInstalledCli(path.join(root, "damaged-prefix"), "1.0.0");
+  const discovery = {
+    ...options,
+    loginPath: [installed.bin, path.dirname(process.execPath)].join(path.delimiter),
+  };
+  const damaged = ["{", "[]", "null", JSON.stringify({ codex: { version: 1, help: [] } })];
+  for (const [index, text] of damaged.entries()) {
+    const settings = path.join(root, `damaged-${index}/settings.json`);
+    await mkdir(path.dirname(settings), { recursive: true });
+    await writeFile(path.join(path.dirname(settings), "coding-cli-answers.json"), text);
+    const before = await installed.asked();
+    configureCodingClis(settings, [], discovery);
+    assert.equal((await requireCodingCli("codex")).status.version, "fake 1.0.0", text);
+    assert.ok((await installed.asked()) > before, `${text}: the CLI is asked`);
+  }
+  configureCodingClis(path.join(root, "settings.json"), [], options);
 });
 
 test("a saved path that stopped working yields to a working automatic installation", async () => {

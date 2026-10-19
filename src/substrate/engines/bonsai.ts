@@ -135,6 +135,8 @@ export class BonsaiEngine implements Engine {
   readonly label = "Bonsai · on this Mac";
   readonly kind = EngineKind.Direct;
   readonly supportsSessions = true;
+  /** Its sessions run Genex's own loop (`LocalSessions`), which reads the person's messages between rounds. */
+  readonly steersMidTurn = true;
   readonly runtime: BonsaiRuntime;
   readonly sessions: LocalSessions;
   #queue = new InferenceQueue();

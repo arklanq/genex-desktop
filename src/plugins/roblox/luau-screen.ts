@@ -9,6 +9,8 @@
  * The screen reads the code as text and never runs it. It refuses the plain and the disguised
  * ways to these APIs it knows; a name built in a variable and looked up on an instance found by
  * walking the tree still passes, so the asking tools stay the line the person sees, not this screen.
+ * `require` takes a script path only (an instance reached by names, or a variable not set to a
+ * number): anything else may be an asset id.
  */
 
 /** What refused code reaches. Wire values: never rename. */
@@ -82,11 +84,56 @@ const RULES: ReadonlyArray<{ reach: LuauReach; pattern: RegExp }> = [
   { reach: LuauReach.Hidden, pattern: /\\(?:\d|x[0-9a-f]|u\{)/i },
 ];
 
+/** Each `require` and what follows it. */
+const REQUIRE = /\brequire\b\s*(\(?)/g;
+/** A string argument that is a path (`"./Util"`, `"@game/X"`); any other string may hold an asset id. */
+const PATH_STRING = /^\s*(["'])(?:\.{1,2}\/|@)[^"'\n]*\1/;
+/**
+ * A script path up to `require`'s closing parenthesis: a name, then `.Name`, `["Name"]` or
+ * `:Method("Name")` steps (`script.Parent.Util`, `game:GetService("X"):WaitForChild("Y")`).
+ */
+const SCRIPT_PATH =
+  /^\s*([A-Za-z_]\w*)((?:\s*(?:\.\s*[A-Za-z_]\w*|\[\s*(["'])[^"'\n]*\3\s*\]|:\s*[A-Za-z_]\w*\s*\(\s*(?:(["'])[^"'\n]*\4)?\s*\)))*)\s*\)/;
+
+/** Whether `name` is set to a number anywhere in `code`: `id = 4567`, `id = tonumber(...)`. */
+function setToNumber(code: string, name: string): boolean {
+  return new RegExp(`\\b${name}\\s*=\\s*(?:[-(]*\\s*\\d|tonumber\\b|math\\.)`).test(code);
+}
+
+/** Why one `require` (its text from the word on) is refused, or null when it takes a script path. */
+function requireReach(code: string, rest: string, called: boolean): LuauReach | null {
+  if (!called) return PATH_STRING.test(rest) ? null : LuauReach.Hidden;
+  const argument = rest.slice(rest.indexOf("(") + 1);
+  if (PATH_STRING.test(argument)) return null;
+  const path = SCRIPT_PATH.exec(argument);
+  if (!path) return LuauReach.Insert;
+  const bare = path[2]?.trim() === "";
+  return bare && setToNumber(code, path[1] ?? "") ? LuauReach.Insert : null;
+}
+
+/** The first `require` that may load a module by asset id, or that is passed on as a value. */
+function screenRequire(code: string): LuauRefusal | null {
+  for (const match of code.matchAll(REQUIRE)) {
+    const rest = code.slice((match.index ?? 0) + "require".length);
+    const reach = requireReach(code, rest, match[1] === "(");
+    if (reach)
+      return {
+        reach,
+        found:
+          code
+            .slice(match.index ?? 0)
+            .split("\n")[0]
+            ?.trim() ?? "require",
+      };
+  }
+  return null;
+}
+
 /** Why `code` is refused, or null when it may run. */
 export function screenLuau(code: string): LuauRefusal | null {
   for (const rule of RULES) {
     const match = rule.pattern.exec(code);
     if (match) return { reach: rule.reach, found: match[0].trim() };
   }
-  return null;
+  return screenRequire(code);
 }

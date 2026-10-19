@@ -5,6 +5,7 @@ import { assetPreviewMode } from "../../shared/asset-preview.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import type { ProjectAsset } from "../../shared/game-assets.ts";
 import { previewBytes } from "../asset-bytes.ts";
+import { type SnapshotRead, viewerSnapshot } from "../asset-snapshot.ts";
 import { assetTitle } from "../asset-names.ts";
 import { Icon } from "../ui/icons.tsx";
 
@@ -37,52 +38,10 @@ type PreviewBytes = ReturnType<typeof previewBytes>;
 
 const dataUrl = (still: { mimeType: string; data: string }): string => `data:${still.mimeType};base64,${still.data}`;
 
-/** A model or texture rendered once off screen, snapshotted, and its viewer thrown away. */
-async function viewerSnapshot(
-  project: string,
-  file: string,
-  companions: string[],
-  signal: AbortSignal,
-): Promise<string> {
-  const { createAssetViewer } = await import("../asset-model-viewer.js");
-  signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    const host = document.createElement("div");
-    host.style.cssText = `position:fixed;left:-10000px;top:0;width:${THUMB_WIDTH}px;height:${THUMB_HEIGHT}px;pointer-events:none`;
-    document.body.append(host);
-    let viewer: ReturnType<typeof createAssetViewer> | undefined;
-    let settled = false;
-    const finish = (outcome: { value: string } | { error: unknown }) => {
-      if (settled) return;
-      settled = true;
-      signal.removeEventListener("abort", abort);
-      viewer?.dispose();
-      host.remove();
-      if ("error" in outcome) reject(outcome.error);
-      else resolve(outcome.value);
-    };
-    const abort = () => finish({ error: new Error(MESSAGE.cancelled) });
-    signal.addEventListener("abort", abort, { once: true });
-    try {
-      viewer = createAssetViewer(host, {
-        file,
-        companions,
-        read: (file: string) => window.studio.previewProjectAsset({ project, file }),
-        onTime: () => {},
-        onError: (error: unknown) => finish({ error }),
-        onReady: () => {
-          try {
-            if (!viewer) throw new Error(MESSAGE.unavailable);
-            finish({ value: viewer.snapshot() });
-          } catch (error) {
-            finish({ error });
-          }
-        },
-      });
-    } catch (error) {
-      finish({ error });
-    }
-  });
+/** A model or texture drawn once off screen at the thumbnail's size, read from the game's own files. */
+function viewerThumbnail(project: string, file: string, companions: string[], signal: AbortSignal): Promise<string> {
+  const read: SnapshotRead = (name) => window.studio.previewProjectAsset({ project, file: name });
+  return viewerSnapshot({ file, companions, read, width: THUMB_WIDTH, height: THUMB_HEIGHT }, signal);
 }
 
 /** A clip's first frame, drawn onto the thumbnail's canvas. */
@@ -157,7 +116,7 @@ async function thumbnail(
     if (!image) throw new Error(MESSAGE.unavailable);
     return dataUrl(image);
   }
-  if (mode === "model" || mode === "texture") return viewerSnapshot(project, file, companions, signal);
+  if (mode === "model" || mode === "texture") return viewerThumbnail(project, file, companions, signal);
   return clipThumbnail(project, file, mode, signal);
 }
 

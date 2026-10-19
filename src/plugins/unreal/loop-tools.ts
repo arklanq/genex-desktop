@@ -27,7 +27,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { PluginContext } from "../../plugin-sdk/index.d.ts";
 import { type HookAnswer, type HookContext, HookEvent } from "../../shared/plugin-hooks.ts";
-import { agentPlaying, forgetAgentPlay } from "./agent-play.ts";
+import { agentsSetting, firstWentAhead } from "../../substrate/engine-agents.ts";
+import { agentPlaying, forgetAgentPlay, sawAgentPlay } from "./agent-play.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { OBSERVE_CALL_MS } from "../../shared/observers.ts";
@@ -638,6 +639,16 @@ function sharedQueue(deps: LoopToolsDeps): (storage: string) => EditorQueue {
 }
 
 /** The Loop's tools over one queue; `call` answers a tool by its name. */
+/**
+ * The person plays: agents wait for them, unless they may use Unreal while the person plays; then the
+ * first time for this game the answer says so (`wentAhead`), and the chat tells the person once.
+ */
+async function personPlaying(storage: string, game: string, answer: ReturnType<typeof probeAnswer>) {
+  if (!(await agentsSetting(storage)).whilePlaying) return answer;
+  const first = await firstWentAhead(storage, game);
+  return { ...answer, personActive: false, ...(first ? { wentAhead: true } : {}) };
+}
+
 export function createLoopTools(deps: LoopToolsDeps) {
   const queueFor = sharedQueue(deps);
   const game = gameOf;
@@ -876,7 +887,10 @@ function momentTools(
     const activity = await readActivity(deps, storage, game);
     // The agent's play ended some other way than its own stop: its marker would claim the next play.
     if (activity && !activity.pie) await forgetAgentPlay(storage, game, asked);
-    return probeAnswer(activity, await agentPlaying(storage, game, deps.now()), queueFor(storage).playing(game));
+    const agents = await agentPlaying(storage, game, deps.now());
+    if (activity?.pie && agents) await sawAgentPlay(storage, game, deps.now());
+    const answer = probeAnswer(activity, agents, queueFor(storage).playing(game));
+    return answer.personActive ? personPlaying(storage, game, answer) : answer;
   };
   const closed = new Set<string>();
   const ops = (context: PluginContext, storage: string): MomentOps => {
@@ -924,6 +938,9 @@ function editorOps(
     answers: () => deps.editorAnswers(storage, game).catch(() => false),
     running: () => reopen.running(storage, game),
     activity: () => readActivity(deps, storage, game, MOMENT_ASK_MS),
+    mayEndPlay: async () =>
+      (await agentPlaying(storage, game, deps.now())) ||
+      (inRun(context.hook) && (await agentsSetting(storage)).whilePlaying),
     // A checkpoint's save has its step to itself; before a restore and at a run's start the busy wait leaves it less.
     save: () =>
       saveAll(deps, storage, game, context.hook?.on === HookEvent.CheckpointBefore ? CHECKPOINT_SAVE : MOMENT_SAVE),

@@ -25,7 +25,9 @@ import {
   editorRow,
   json,
   pluginContext,
+  processRow,
   processTable,
+  refusedConnection,
   STAND_IN,
   editor as standInEditor,
   writeDescriptor,
@@ -238,6 +240,17 @@ describe("open-editor", () => {
     await writeDescriptor(root, { pid: 31337, port: 7800, evalToken: "left-behind" });
     assert.match(String(await call(UnityTool.OpenEditor)), /Opened this game's Unity project/);
     assert.equal(launches.length, 1);
+  });
+
+  it("opens a project whose stale descriptor names another app's process, and leaves that app alone", async () => {
+    // Nothing of Unity's listens on the port the stale descriptor names.
+    const { call, game, launches, table } = await backendOn(["6000.3.10f1"], [refusedConnection(), ready()]);
+    const root = await withProject(game, "6000.3.10f1", { "com.unity.pipeline": PIPELINE_VERSION });
+    await writeDescriptor(root, { pid: 31337, port: 7800, evalToken: "left-behind" });
+    table.start(processRow(31337, "/Applications/Safari.app/Contents/MacOS/Safari", ""));
+    assert.match(String(await call(UnityTool.OpenEditor)), /Opened this game's Unity project/);
+    assert.equal(launches.length, 1);
+    assert.deepEqual(table.sent, []);
   });
 
   it("sets aside the scene backups a killed editor left, so Unity opens without asking to recover them", async () => {

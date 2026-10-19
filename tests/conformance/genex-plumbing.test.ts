@@ -134,7 +134,8 @@ it("returns host inspection images through all provider tool paths without creat
   }
 });
 
-it("removed Genex leaves coding, existing assets and public export independent", async () => {
+// Genex holds the app's account, so it can only be turned off (03ea9277), never removed.
+it("turned-off Genex leaves coding, existing assets and public export independent", async () => {
   const rig = await startRig({ replies: [] });
   try {
     const project = "without-genex";
@@ -142,7 +143,7 @@ it("removed Genex leaves coding, existing assets and public export independent",
     const root = rig.core.games.dirFor(project);
     await mkdir(path.join(root, "assets"), { recursive: true });
     await writeFile(path.join(root, "assets/saved.svg"), '<svg xmlns="http://www.w3.org/2000/svg"/>');
-    await rig.core.plugins.remove("genex");
+    await rig.core.plugins.setEnabled("genex", false);
     const api = rig.core.api() as unknown as Record<string, (input: any) => Promise<any>>;
     const local = await createToolRegistry({
       workspace: rig.core.layout.harnessWs,

@@ -105,7 +105,7 @@ import { EngineId } from "../../shared/providers.ts";
 import { EngineKind, EngineStatusCode, LoginSource } from "../../shared/engine-descriptor.ts";
 import { ChatActivityPhase } from "../../shared/chat-activity.ts";
 import { ContextSource } from "../../shared/context.ts";
-import { EngineFailureKind, StopReason } from "../../shared/engine-requests.ts";
+import { EngineFailureKind, isInterview, StopReason } from "../../shared/engine-requests.ts";
 import { SessionCostLedger, sessionTotals, turnShare } from "./session-cost.ts";
 import { AccountId, accountsRoot, SubscriptionAccounts } from "./subscription-accounts.ts";
 
@@ -132,6 +132,8 @@ export interface ClaudeCodeEngineOptions {
   resolveCli?: typeof requireCodingCli;
   /** Injected in tests. */
   queryFn?: typeof import("@anthropic-ai/claude-agent-sdk").query;
+  /** The OS the CLI runs on (default: this process's); a test picks one to see its options. */
+  platform?: NodeJS.Platform;
   /**
    * Where each session's last running totals are kept across restarts (`session-cost.ts`); in
    * memory only when absent.
@@ -414,7 +416,11 @@ export class ClaudeCodeEngine implements Engine {
   /** Each session's last running totals, so a delegation reports only its own share. */
   readonly #costs: SessionCostLedger;
   #usageRead: Promise<ProviderUsage | null> | null = null;
+  /** Bumped by every login recheck: a usage read begun before it read the account before. */
+  #loginGeneration = 0;
   readonly #catalog: ModelCatalog;
+  /** The sandbox of a session that runs no tool: the usage read, model discovery, the judge. */
+  readonly #toolless: { enabled: boolean };
   #telemetryAt = new WeakMap<object, number>();
   #telemetryEpoch = new WeakMap<object, number>();
   #catalogEpoch = new WeakMap<object, number>();
@@ -515,6 +521,7 @@ export class ClaudeCodeEngine implements Engine {
     this.#executable = options.executable;
     this.#resolveCli = options.resolveCli ?? requireCodingCli;
     this.#queryFn = options.queryFn;
+    this.#toolless = toollessSandbox(options.platform);
     this.#costs = new SessionCostLedger(options.sessionCosts);
     this.#authStatusFn = options.authStatusFn;
     this.judgeCwd = options.judgeCwd ?? JUDGE_CWD;
@@ -750,6 +757,7 @@ export class ClaudeCodeEngine implements Engine {
    * arrive meanwhile join it, so a burst of them never asks the CLI more than twice.
    */
   recheckLogin(): Promise<EngineStatus> {
+    this.#forgetUsage();
     if (this.#recheckQueued) return this.#recheckQueued;
     const running = this.#authProbe;
     this.#recheckQueued = (async () => {
@@ -757,66 +765,85 @@ export class ClaudeCodeEngine implements Engine {
       this.#recheckQueued = null;
       invalidateCodingCli(EngineId.ClaudeCode);
       this.#catalog.invalidate();
-      this.#usage = null;
+      this.#forgetUsage();
       return this.probeAuth();
     })();
     return this.#recheckQueued;
   }
 
+  /** Drop the plan's limits and any read of them under way: they may be another account's. */
+  #forgetUsage(): void {
+    this.#loginGeneration += 1;
+    this.#usage = null;
+    this.#usageRead = null;
+  }
+
   /**
-   * The plan's limits for the composer. A session is opened, asked for its account usage and
-   * closed before any prompt is sent, so reading them never spends a turn. A reading from the
-   * last minute is fresh enough to reuse.
+   * The plan's limits for the composer. A reading from the last minute is fresh enough to reuse.
+   * A read that a login recheck overtook is dropped, and its callers wait for a read of the account
+   * signed in now.
    */
   async readUsage(): Promise<ProviderUsage | null> {
     if (this.#usage && Date.now() - Date.parse(this.#usage.measuredAt) < USAGE_FRESH_MS) return this.#usage;
     if (this.#usageRead) return this.#usageRead;
-    this.#usageRead = (async () => {
-      const login = await this.resolveLogin();
-      if (login.source === LoginSource.None) return null;
-      const installation = await this.#resolveCli(EngineId.ClaudeCode, this.#executable, undefined, false);
-      const query = await this.#query();
-      // The judges' empty directory: nothing of a game is in reach, and the OS may have swept it.
-      await mkdir(this.judgeCwd, { recursive: true });
-      const controller = new AbortController();
-      let release = (): void => {};
-      // A prompt that never yields: the CLI starts and answers control requests, and no turn begins.
-      const idle = (async function* () {
-        await new Promise<void>((resolve) => {
-          release = resolve;
-        });
-      })();
-      const stream = query({
-        prompt: idle,
-        options: {
-          ...claudeLaunchOptions(installation.path),
-          cwd: this.judgeCwd,
-          settingSources: [],
-          mcpServers: {},
-          strictMcpConfig: true,
-          allowedTools: [],
-          // No prompt is ever sent, so no tool can run; the judge's sandbox shape holds regardless.
-          maxTurns: 1,
-          permissionMode: "default",
-          sandbox: { enabled: true },
-          env: this.#sessionEnv(installation.env, login),
-          abortController: controller,
-        },
-      } as never);
-      try {
-        const usage = await readClaudeUsage(stream);
+    const generation = this.#loginGeneration;
+    const current = () => generation === this.#loginGeneration;
+    const read: Promise<ProviderUsage | null> = this.#askUsage()
+      .then((usage) => {
+        if (!current()) return this.readUsage();
         if (usage) this.#usage = usage;
         return usage ?? this.#usage;
-      } finally {
-        controller.abort();
-        release();
-      }
-    })()
-      .catch(() => this.#usage)
+      })
+      .catch(() => (current() ? this.#usage : this.readUsage()))
       .finally(() => {
-        this.#usageRead = null;
+        if (this.#usageRead === read) this.#usageRead = null;
       });
-    return this.#usageRead;
+    this.#usageRead = read;
+    return read;
+  }
+
+  /**
+   * Ask the signed-in account for its plan's limits. A session is opened, asked for its account
+   * usage and closed before any prompt is sent, so reading them never spends a turn.
+   */
+  async #askUsage(): Promise<ProviderUsage | null> {
+    const login = await this.resolveLogin();
+    if (login.source === LoginSource.None) return null;
+    const installation = await this.#resolveCli(EngineId.ClaudeCode, this.#executable, undefined, false);
+    const query = await this.#query();
+    // The judges' empty directory: nothing of a game is in reach, and the OS may have swept it.
+    await mkdir(this.judgeCwd, { recursive: true });
+    const controller = new AbortController();
+    let release = (): void => {};
+    // A prompt that never yields: the CLI starts and answers control requests, and no turn begins.
+    const idle = (async function* () {
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    })();
+    const stream = query({
+      prompt: idle,
+      options: {
+        ...claudeLaunchOptions(installation.path),
+        cwd: this.judgeCwd,
+        settingSources: [],
+        mcpServers: {},
+        strictMcpConfig: true,
+        allowedTools: [],
+        // No prompt is ever sent, so no tool can run; the judge's sandbox shape holds regardless.
+        maxTurns: 1,
+        permissionMode: "default",
+        sandbox: this.#toolless,
+        env: this.#sessionEnv(installation.env, login),
+        abortController: controller,
+      },
+    } as never);
+    try {
+      return await readClaudeUsage(stream);
+    } finally {
+      controller.abort();
+      release();
+    }
   }
 
   catalogSnapshot = () => this.#catalog.snapshot();
@@ -878,7 +905,7 @@ export class ClaudeCodeEngine implements Engine {
             allowedTools: [],
             maxTurns: 1,
             permissionMode: "default",
-            sandbox: { enabled: true },
+            sandbox: this.#toolless,
             env: this.#sessionEnv(installation.env, login),
             abortController,
           },
@@ -1027,7 +1054,7 @@ export class ClaudeCodeEngine implements Engine {
       allowedTools: [],
       ...(this.#skills.judge !== undefined ? { skills: this.#skills.judge } : {}),
       disallowedTools: [...JUDGE_DISALLOWED_TOOLS],
-      sandbox: { enabled: true },
+      sandbox: this.#toolless,
       ...modelOption(request.model ?? this.#model),
       ...(request.effort ? { effort: request.effort } : {}),
       ...(request.preferences ? { settings: await this.preferenceSettings(request.model, request.preferences) } : {}),
@@ -1369,7 +1396,10 @@ export class ClaudeCodeEngine implements Engine {
     if (message.parent_tool_use_id) return;
     // A reply after the input ended: a background task woke the CLI, and no tool call it makes now
     // can be answered (the host's permission answers go over the input).
-    if (run.inputClosed) run.wokeAfterEnd = true;
+    if (run.inputClosed) {
+      run.wokeAfterEnd = true;
+      recordCutAfterTurn(message, run);
+    }
     run.contextTokens = requestTokens(message) ?? run.contextTokens;
     // Whether the main thread's last word was the CLI's own API error: a later reply clears it.
     run.apiError = apiErrorOf(message);
@@ -1379,7 +1409,7 @@ export class ClaudeCodeEngine implements Engine {
   #observeSystem(message: Record<string, unknown>, run: RunState, request: DelegateRequest, stream: unknown): void {
     if (message.subtype === SdkSystemSubtype.Init) {
       readInit(message, run);
-      run.feed?.initialized(message, Boolean(request.interviewTools?.length));
+      run.feed?.initialized(message, isInterview(request.interviewTools));
     }
     // The mode the session really runs in: Auto falls back to Manual where the plan or the model
     // cannot use it, and a plan approval or a picker change moves it mid-turn.
@@ -1495,7 +1525,7 @@ export class ClaudeCodeEngine implements Engine {
       ...(run.sessionId ? { sessionId: run.sessionId } : {}),
       ...(run.studioToolCalls.length ? { studioToolCalls: run.studioToolCalls } : {}),
       ...(!run.ok && run.errorText ? { errorText: run.errorText } : {}),
-      ...(run.contextTokens ? { contextTokens: run.contextTokens } : {}),
+      ...sessionReadings(run),
     };
     return request.compact ? compactionResult(result, run) : result;
   }
@@ -1731,6 +1761,8 @@ interface RunState {
   wokeAfterEnd: boolean;
   /** What the session said at the result that closed its input, before anything woke it. */
   closedSummary: string | null;
+  /** Genex tool calls it made once woken, which no answer could reach (`DelegateResult.cutAfterTurn`). */
+  cutAfterTurn: Array<{ tool: string; args: string }>;
 }
 
 /** A delegation that has not heard anything from its contractor yet. */
@@ -1759,6 +1791,7 @@ function newRunState(usage: Usage, cliInstallation: ClaudeInstallation): RunStat
     inputClosed: false,
     wokeAfterEnd: false,
     closedSummary: null,
+    cutAfterTurn: [],
   };
 }
 
@@ -1820,6 +1853,26 @@ function recordStudioToolCalls(message: Record<string, unknown>, run: RunState, 
       name: name.slice(STUDIO_TOOL_PREFIX.length),
       args: (block.input as Record<string, unknown>) ?? {},
     });
+  }
+}
+
+/** What the session's run measured and left unanswered, for its result: only what it has. */
+const sessionReadings = (run: RunState): Pick<DelegateResult, "contextTokens" | "cutAfterTurn"> => ({
+  ...(run.contextTokens ? { contextTokens: run.contextTokens } : {}),
+  ...(run.cutAfterTurn.length ? { cutAfterTurn: run.cutAfterTurn } : {}),
+});
+
+/**
+ * The Genex tool calls in a reply the session made after its input ended: the CLI answers each
+ * with its own refusal, since Genex's answer can no longer reach it, and the next session hears
+ * which they were and why (`CallCutOff.TurnEnded`).
+ */
+function recordCutAfterTurn(message: Record<string, unknown>, run: RunState): void {
+  const blocks = (message as { message?: { content?: Array<Record<string, unknown>> } }).message?.content;
+  for (const block of Array.isArray(blocks) ? blocks : []) {
+    const name = typeof block?.name === "string" ? block.name : "";
+    if (block?.type !== SdkBlock.ToolUse || !name.startsWith(STUDIO_TOOL_PREFIX)) continue;
+    run.cutAfterTurn.push({ tool: name.slice(STUDIO_TOOL_PREFIX.length), args: JSON.stringify(block.input ?? {}) });
   }
 }
 
@@ -2228,6 +2281,17 @@ function permissionOptions(request: DelegateRequest, running: RunningSession): R
   if (request.permissions) return askingOptions(request.permissions, running);
   if (request.leadAsks) return leadAskingOptions(request.leadAsks, running);
   return { permissionMode: "acceptEdits" };
+}
+
+/**
+ * The sandbox of a session that runs no tool. On Windows the CLI's sandbox is sandbox-runtime's
+ * srt-win as the same `srt-sandbox` user Genex's own sandbox uses: starting it costs an egress
+ * check and ACL work on the profile's folders, which outran model discovery's deadline ("Couldn't
+ * load the model list"), and its cleanup touches the entries on the folders above Genex's grants.
+ * A session with no tool has nothing for it to contain, so there it stays off.
+ */
+export function toollessSandbox(platform: NodeJS.Platform = process.platform): { enabled: boolean } {
+  return { enabled: platform !== "win32" };
 }
 
 /**

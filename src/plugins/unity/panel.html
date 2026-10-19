@@ -91,7 +91,15 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
 .note{display:flex;gap:10px;padding:12px 16px;color:var(--warn);overflow-wrap:anywhere}
 .note::before{content:"";width:16px;height:16px;flex:none;margin-top:2px;background:currentColor;-webkit-mask:var(--warning) center/contain no-repeat;mask:var(--warning) center/contain no-repeat}
 .error{color:var(--err);white-space:pre-wrap;overflow-wrap:anywhere}
-@media (prefers-reduced-motion:reduce){button{transition:none}button:active:not(:disabled){scale:none}.orb,.state[data-tone="starting"]::before{animation:none}}
+@media (prefers-reduced-motion:reduce){button,.choice input{transition:none}button:active:not(:disabled){scale:none}.orb,.state[data-tone="starting"]::before{animation:none}}
+/* A choice in a block: its box, then its name and what it means, the whole row one target. */
+.choice{display:flex;align-items:flex-start;gap:12px;padding:14px 16px;cursor:pointer}
+/* Genex's own box: two points rounder than the system's, filled with the accent and ticked when on. */
+.choice input{appearance:none;-webkit-appearance:none;display:grid;place-items:center;width:18px;height:18px;flex:none;margin:1px 0 0;border:1.5px solid color-mix(in srgb,var(--fg) 32%,var(--bg));border-radius:6px;background:var(--field);cursor:pointer;transition:background 120ms,border-color 120ms}
+.choice input:checked{background:var(--accent-fill);border-color:var(--accent-fill)}
+.choice input:checked::before{content:"";width:12px;height:12px;background:var(--accent-text);-webkit-mask:var(--tick) center/contain no-repeat;mask:var(--tick) center/contain no-repeat}
+.choice input:disabled,.choice:has(input:disabled){cursor:not-allowed}
+.choice .words{display:grid;gap:4px;min-width:0}
 /* On a dialog's card the dialog holds the heading and the padding: the page keeps a thin edge for focus rings. */
 :root[data-surface="card"] body{padding:4px}
 /* Last, so it wins over every class that sets a display. */
@@ -102,7 +110,7 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
     <p id="label" class="label" hidden>This game's project</p>
     <div class="block">
       <div id="head" class="head" hidden>
-        <span class="tile" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" stroke-width="1.6" aria-hidden="true"><path d="M12 3.5l7.5 4.2v8.6L12 20.5l-7.5-4.2V7.7z"/><path d="M4.5 7.7L12 12l7.5-4.3M12 12v8.5"/></svg></span>
+        <span class="tile" aria-hidden="true"><svg width="22" height="22" viewBox="0 0 24 24" aria-hidden="true"><path transform="translate(3.6 3.6) scale(.7)" d="m12.9288 4.2939 3.7997 2.1929c.1366.077.1415.2905 0 .3675l-4.515 2.6076a.4192.4192 0 0 1-.4246 0L7.274 6.8543c-.139-.0745-.1415-.293 0-.3675l3.7972-2.193V0L1.3758 5.5977V16.793l3.7177-2.1456v-4.3858c-.0025-.1565.1813-.2682.318-.1838l4.5148 2.6076a.4252.4252 0 0 1 .2136.3676v5.2127c.0025.1565-.1813.2682-.3179.1838l-3.7996-2.1929-3.7178 2.1457L12 24l9.6954-5.5977-3.7178-2.1457-3.7996 2.1929c-.1341.082-.3229-.0248-.3179-.1838V13.053c0-.1565.087-.2956.2136-.3676l4.5149-2.6076c.134-.082.3228.0224.3179.1838v4.3858l3.7177 2.1456V5.5977L12.9288 0Z" fill="currentColor" stroke="none"/></svg></span>
         <div class="who"><h2 id="name">Unity project</h2><p id="where" class="path"></p></div>
         <span id="state" class="state"><span id="state-word"></span></span>
       </div>
@@ -118,6 +126,18 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
         <button type="button" id="primary" class="primary" hidden></button>
         <div class="end"><button type="button" id="quiet" hidden></button></div>
       </div>
+    </div>
+  </div>
+  <div id="agents" class="group" hidden>
+    <p class="label">Agents</p>
+    <div class="block">
+      <label class="choice" for="while-playing">
+        <input type="checkbox" id="while-playing">
+        <span class="words">
+          <span>Agents may use Unity while you play</span>
+          <span class="quiet small">They go ahead even in Play mode, and may stop your play. Turn off to have them wait until you stop.</span>
+        </span>
+      </label>
     </div>
   </div>
   <p id="error" class="error" role="alert"></p>
@@ -163,6 +183,9 @@ const Action = {
   UndoSetup: "undo-setup",
   RestartEditor: "restart-editor",
   GetUnity: "get-unity",
+  Agents: "agents",
+  AgentsGoAhead: "agents-go-ahead",
+  AgentsWait: "agents-wait",
 };
 /** How an opening ended (`Opened`) and where Get Unity sent the person (`UnitySource`). */
 const Opened = { Answers: "answers", SeemsOpen: "seems-open", NoEditor: "no-editor", Failed: "failed" };
@@ -273,8 +296,8 @@ const ACTIONS = {
   [Action.UndoSetup]: {},
 };
 
-/** What the panel knows: the last status, the action that runs, and what the last action left to say. */
-const ui = { status: null, running: null, done: "", note: "", error: "", statusError: "" };
+/** What the panel knows: the last status, the agents' setting, the action that runs, and what the last action left to say. */
+const ui = { status: null, agents: null, running: null, done: "", note: "", error: "", statusError: "" };
 let refreshing = false;
 let closed = false;
 
@@ -327,7 +350,15 @@ function renderComputer(status) {
   $("installed").title = status.installed.join(", ");
 }
 
+/** The Agents block: whether agents may use Unity while the person plays, for every game; gone until it is known. */
+function renderAgents() {
+  $("agents").hidden = !ui.agents;
+  if (!ui.agents) return;
+  $("while-playing").checked = ui.agents.whilePlaying;
+}
+
 function render() {
+  renderAgents();
   const status = ui.status;
   if (!status) return;
   const step = STEPS[status.step];
@@ -358,9 +389,12 @@ async function refresh() {
   if (refreshing || closed) return;
   refreshing = true;
   try {
-    const status = await api.call("action", Action.Status, {});
+    const [status, agents] = await Promise.all([
+      api.call("action", Action.Status, {}),
+      api.call("action", Action.Agents, {}).catch(() => ui.agents),
+    ]);
     if (closed) return;
-    Object.assign(ui, { status, statusError: "" });
+    Object.assign(ui, { status, agents, statusError: "" });
     render();
   } catch (error) {
     if (closed) return;
@@ -418,6 +452,22 @@ async function run(action) {
 }
 
 for (const id of ["primary", "quiet"]) $(id).addEventListener("click", (event) => void run(event.currentTarget.dataset.action));
+
+/** The person's choice for the Agents box, kept by the backend; the box shows what it kept. */
+async function chooseAgents(whilePlaying) {
+  const box = $("while-playing");
+  box.disabled = true;
+  try {
+    ui.agents = await api.call("action", whilePlaying ? Action.AgentsGoAhead : Action.AgentsWait, {});
+  } catch (error) {
+    ui.error = error instanceof Error ? error.message : String(error);
+  } finally {
+    box.disabled = false;
+    if (!closed) render();
+  }
+}
+
+$("while-playing").addEventListener("change", (event) => void chooseAgents(event.currentTarget.checked));
 
 /** A CSS colour as sRGB channels 0–255, read through a canvas so any CSS spelling works; black if unreadable. */
 function channels(colour) {

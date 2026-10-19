@@ -42,6 +42,7 @@ export function ChatPanel(props: ChatPanelProps): JSX.Element {
     <ChatFilesScope.Provider value={chat.threadId ?? null}>
       <div
         data-studio-chat={chat.isStudioThread || undefined}
+        data-file-drop-zone
         className={`${chat.isStudioThread ? "studio-view" : ""} column flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden border-r border-line bg-page`}
       >
         <ChatPanelHeader {...parts} chatExport={chatExport} />

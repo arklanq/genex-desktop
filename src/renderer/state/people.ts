@@ -11,6 +11,7 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import { isAvatarVariant } from "../../shared/avatar-recipe.ts";
 import { GenexAccountStatus, type GenexAccountView } from "../../shared/genex-account.ts";
 import { type HandleSave, HandleSaveOutcome, isHandle } from "../../shared/handle.ts";
+import type { PlayGame } from "../../shared/play.ts";
 import type { PlayCredits } from "../../shared/play-credits.ts";
 import {
   type AvatarStyle,
@@ -91,6 +92,8 @@ export interface PeopleState {
   profiles: Record<string, ProfileEntry>;
   /** People a press is changing, by id: their buttons wait. */
   busy: Record<string, true>;
+  /** A regenerated avatar is being saved: what depends on it being kept (the welcome's Continue) waits. */
+  avatarSaving: boolean;
   search: PeopleSearch;
   /** The account's stats by period, read only when a page shows them. */
   stats: Partial<Record<StatsPeriod, StatsEntry>>;
@@ -110,6 +113,7 @@ export const initialPeople = (): PeopleState => ({
   friendsStatus: LoadStatus.Idle,
   profiles: {},
   busy: {},
+  avatarSaving: false,
   search: { query: "", status: LoadStatus.Idle, result: null },
   stats: {},
   creators: { status: LoadStatus.Idle, list: null },
@@ -121,6 +125,24 @@ function sameAccount(a: PlayMe | null, b: PlayMe | null): boolean {
   if (!a || !b) return false;
   const keys = Object.keys(a) as Array<keyof PlayMe>;
   return keys.length === Object.keys(b).length && keys.every((key) => a[key] === b[key]);
+}
+
+/** A game changed from a card's menu: every profile showing it shows `next`, or drops it (null). */
+export function profileGameChanged(state: PeopleState, gameId: string, next: PlayGame | null): PeopleState {
+  let changed = false;
+  const profiles: PeopleState["profiles"] = {};
+  for (const [id, entry] of Object.entries(state.profiles)) {
+    const games = entry.profile?.games;
+    const at = games?.findIndex((game) => game.id === gameId) ?? -1;
+    if (!entry.profile || !games || at === -1) {
+      profiles[id] = entry;
+      continue;
+    }
+    changed = true;
+    const kept = next ? games.with(at, next) : games.filter((game) => game.id !== gameId);
+    profiles[id] = { ...entry, profile: { ...entry.profile, games: kept } };
+  }
+  return changed ? { ...state, profiles } : state;
 }
 
 /** The account was read: a different account (or none) forgets the last one's friends. */
@@ -308,6 +330,8 @@ export interface PeopleStore extends StoreApi<PeopleState> {
   loadFriends(): Promise<void>;
   /** Read someone's profile; `force` reads again one already read. */
   loadProfile(userId: string, options?: { force?: boolean }): Promise<void>;
+  /** A game changed from a card's menu: the profiles showing it show the change. */
+  gameChanged(gameId: string, next: PlayGame | null): void;
   /** Add, accept, withdraw or remove; throws when Genex refused it, and every list keeps what it showed. */
   act(action: FriendAction, person: PlayPerson): Promise<void>;
   /** Search people by name; an older search's answer that arrives late lands nowhere. */
@@ -362,8 +386,9 @@ type PeopleSet = (change: (state: PeopleState) => PeopleState) => void;
 /**
  * Regenerate's writes: each new variant shows at once and is saved after the one before it, so the
  * last press is the variant genex.games keeps. Only the newest press's answer lands: an older one
- * arriving behind it never puts its face back. When the newest is refused, the account is read again
- * and shows what genex.games kept.
+ * arriving behind it never puts its face back, and an older refusal is not reported, as a newer
+ * press is what counts. When the newest is refused, the account is read again and shows what
+ * genex.games kept. `avatarSaving` holds while any press's save runs.
  */
 function avatarVariantWrites(
   store: StoreApi<PeopleState>,
@@ -372,19 +397,28 @@ function avatarVariantWrites(
   answered: (me: PlayMe | null) => Promise<void>,
 ): (variant: number) => Promise<void> {
   let newest = 0;
+  let saving = 0;
   let saved: Promise<unknown> = Promise.resolve();
+  const setSaving = (change: number): void => {
+    saving += change;
+    set((state) => ({ ...state, avatarSaving: saving > 0 }));
+  };
   return async (variant: number): Promise<void> => {
     const press = ++newest;
     const shown = store.getState().me;
     if (shown) set((state) => meRead(state, { ...shown, avatarVariant: variant }));
+    setSaving(1);
     const write = saved.then(() => api.playAvatarVariant(variant));
     saved = write.catch(() => undefined);
     try {
       const me = await write;
       if (press === newest) await answered(me);
     } catch (error) {
-      if (press === newest) await answered(await api.playMe().catch(() => shown));
+      if (press !== newest) return;
+      await answered(await api.playMe().catch(() => shown));
       throw error;
+    } finally {
+      setSaving(-1);
     }
   };
 }
@@ -588,6 +622,7 @@ export function createPeopleStore(api: PeopleApi, storage: KeyValueStorage | nul
     ...numberReads(store, set, api),
     ...friends,
     loadProfile: profileReads(store, set, api),
+    gameChanged: (gameId: string, next: PlayGame | null) => set((state) => profileGameChanged(state, gameId, next)),
     rename: async (name: string) => accountAnswered(await api.playRename(name)),
     setAvatar: async (webp: Uint8Array) => accountAnswered(await api.playAvatar(webp)),
     setAvatarStyle: async (style: AvatarStyle) => accountAnswered(await api.playAvatarStyle(style)),

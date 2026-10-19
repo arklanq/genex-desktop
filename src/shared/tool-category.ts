@@ -1,8 +1,9 @@
 /**
- * The one `ToolCategory` table every lane's tool calls are counted in (§7 `calls.tools`), and the
- * command classifier behind it. A shell command is unwrapped first (`/bin/zsh -c '…'` → `…`,
- * Rule 17) and then matched at COMMAND POSITION only (the start of the command or of a segment
- * after `&&`, `||`, `;`, `|`), so a word inside a quoted string or a heredoc body is not a call.
+ * The one `ToolCategory` table every lane's tool calls are counted in (§7 `calls.tools`), in the
+ * evals and in the app's field rows alike, and the command classifier behind it. A shell command
+ * is unwrapped first (`/bin/zsh -c '…'` → `…`, Rule 17) and then matched at COMMAND POSITION only
+ * (the start of the command or of a segment after `&&`, `||`, `;`, `|`), so a word inside a
+ * quoted string or a heredoc body is not a call.
  * A file written through the shell (`cat > f <<'EOF'`, `sed -i`, `tee`) is an edit: the demo's
  * local lane wrote every source file that way, and counting only the Edit tool reported it as
  * having changed nothing.
@@ -10,14 +11,28 @@
  * These are free-text regexes over commands, so each carries the false-positive note Rule 17
  * requires in `docs/evals.md`; typed tool names are always preferred when the tool has one.
  */
-import { normalizeToolName } from "../../transcript-census.ts";
-import { ToolCategory } from "../vocabulary.ts";
+import { ToolCategory } from "./eval-lane.ts";
 
 /** `node .studio/bridge/tool.mjs <tool>` and `mcp__studio__<tool>` both normalize to this prefix. */
 const STUDIO_PREFIX = "studio:";
 const MCP_PREFIX = "mcp__";
+const BRIDGE_TOOL = /(?:^|[\s"'`/])\.studio\/bridge\/tool\.mjs\s+([a-z][a-z0-9_]*)/;
+
+/**
+ * One name for the same tool on both engines. Claude calls the studio's tools over MCP; Codex
+ * runs the bridge in a shell. Both become `studio:<tool>` so a per-role tool profile compares.
+ */
+export function normalizeToolName(name: string, argumentText: string): string {
+  const mcp = /^mcp__studio__(.+)$/.exec(name);
+  if (mcp) return `${STUDIO_PREFIX}${mcp[1]}`;
+  const bridge = BRIDGE_TOOL.exec(argumentText || "");
+  if (bridge) return `${STUDIO_PREFIX}${bridge[1]}`;
+  return name;
+}
 /** The shared raw-lane browser command (D10); its first run is the raw lanes' first preview. */
 export const LOOK_AT_PAGE_COMMAND = "look-at-page";
+/** A delegated record's part that is one tool call: the unit the evals and field rows both count. */
+export const TOOL_USE_PART = "tool_use";
 
 /** Tool names whose input is a shell command, classified by `classifyCommand`. */
 const SHELL_TOOLS: ReadonlySet<string> = new Set([

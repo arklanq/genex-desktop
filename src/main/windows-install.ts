@@ -67,6 +67,17 @@ export function appUserModelId(platform: string, execPath: string, exists: (file
   return exists(squirrelUpdateExe(execPath)) ? null : APP_USER_MODEL_ID;
 }
 
+/**
+ * The folder a packaged Windows app works from: its own install folder, or null to keep the launch's.
+ * The sandbox starts srt-win as its own user from the app's working folder, which Windows opens as
+ * that user; a shortcut or Explorer can start Genex anywhere in the profile, where that user may
+ * open nothing, while the install folder is one the session lets it read.
+ */
+export function installedWorkingDir(platform: string, execPath: string, packaged: boolean): string | null {
+  if (platform !== StudioPlatform.Windows || !packaged) return null;
+  return path.win32.dirname(execPath);
+}
+
 /** The part of a spawned child a Squirrel step waits on. */
 interface StepChild {
   once(event: "exit" | "error", listener: () => void): unknown;

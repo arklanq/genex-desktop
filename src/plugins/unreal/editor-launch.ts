@@ -25,6 +25,7 @@ import { pollUntil } from "./editor-queue.ts";
 import { buildErrors } from "./editor-restart.ts";
 import { isProjectPath } from "./project-file.ts";
 import {
+  addToolsetPlugins,
   type Engine,
   EngineMatch,
   engineMatch,
@@ -415,25 +416,29 @@ async function heldPort(port: number | null, launch: LaunchEnv): Promise<number 
 }
 
 /**
- * Brings a set-up project's older (or missing) Genex editor helper up to date before a user's Open,
- * only while no Unreal editor runs: the game snapshot first, then the update. A snapshot that
- * fails means no update, and an update setup refuses writes nothing; the project opens either way.
+ * Brings a set-up project up to date before a user's Open, only while no Unreal editor runs: its
+ * older (or missing) Genex editor helper, and Epic's toolsets for games when it was set up before
+ * them. The game snapshot comes first; a snapshot that fails means no update, and an update setup
+ * refuses writes nothing; the project opens either way. Answers the helper's update, if any.
  */
 async function updateBeforeOpen(
   state: ProjectState,
   options: LaunchOptions,
   update: HelperUpdateOnOpen | undefined,
 ): Promise<HelperUpdate | undefined> {
-  // Only a project Genex set up (it has a record) gets its helper updated; a newer helper stays.
-  const behind = state.undoable && helperNeedsInstall(state.helper);
+  // Only a project Genex set up (it has a record) is brought up to date; a newer helper stays.
+  const helperBehind = helperNeedsInstall(state.helper);
+  const behind = state.undoable && (helperBehind || !state.toolsets);
   if (!update || !behind) return undefined;
   if ((await editorCount(options.env)) > 0) return undefined;
+  const file = realProjectFile(state);
   try {
     await update.snapshot();
-    return await updateHelper(realProjectFile(state), options);
   } catch {
     return undefined;
   }
+  if (!state.toolsets) await addToolsetPlugins(file, options).catch(() => undefined);
+  return helperBehind ? updateHelper(file, options).catch(() => undefined) : undefined;
 }
 
 /**

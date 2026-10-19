@@ -17,6 +17,7 @@ import type { ChildProcess } from "node:child_process";
 import { cp, lstat, mkdtemp, readFile, readdir, realpath, rename, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { sandboxBesidePlugins } from "./core/boot-side-by-side.ts";
 import { assistAvailable, coreAssistHost, engineAssist } from "./core/desktop-assist.ts";
 import type { DesktopControl } from "./core/desktop-control.ts";
 import type { MentionSources } from "./core/mention-tags.ts";
@@ -50,7 +51,7 @@ import {
   PluginToolAudience,
   NativeRuntimeState,
 } from "../shared/plugins.ts";
-import type { EngineLinkUndo } from "../shared/game-engine.ts";
+import { EngineHostAction, type EngineLinkUndo, type EngineUndoSetUpArgs } from "../shared/game-engine.ts";
 import { viewStill, type ViewStillOptions } from "./core/view-still.ts";
 import { viewClip, type ViewClipOptions } from "./core/view-clip.ts";
 import { ToolPermissionBy } from "../shared/permissions.ts";
@@ -123,7 +124,9 @@ import type { PreviewInputAction } from "../substrate/preview-input.ts";
 import { DEFAULT_POOL_MAX } from "../substrate/preview-pool.ts";
 import type { PreviewConsoleEntry, PreviewPixelStats, PreviewPort } from "../substrate/preview-port.ts";
 import { SnapshotEngine, SnapshotIndex, HARNESS_WORKSPACE } from "../substrate/snapshots.ts";
+import { gitMissingProblem, SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 import { claudeFolderDenyWrites, ProcessSandbox } from "../substrate/spawn.ts";
+import { ensureHostGit } from "../substrate/windows-sandbox.ts";
 import { type JobProbe, JobService, type JobSpawn } from "../substrate/jobs.ts";
 import { type AppLookPort, type ScreenAccess, unsupportedAppLook } from "../substrate/app-look.ts";
 import { checkLinuxIsolation } from "../substrate/linux-isolation.ts";
@@ -615,7 +618,7 @@ export class StudioCore {
   /**
    * The lock table: a lock's `personFirst` tool is asked straight through the registry as the
    * harness's own step (never through a call that holds locks itself), and a wait on the person is
-   * told to the chat.
+   * told to the chat, as is, once, an agent going ahead of them where the plugin lets it.
    */
   #createLocks(): LockService {
     return new LockService({
@@ -623,6 +626,11 @@ export class StudioCore {
       probe: (plugin, lock, binding, signal) =>
         this.plugins.tool(`${plugin}__${lock.personFirst}`, {}, binding, signal, PluginToolAudience.Harness),
       onPersonFirst: (notice) => this.emit(UiEvent.PersonFirst, notice),
+      onWentAhead: ({ threadId, project, label, plugin }) => {
+        if (!threadId) return;
+        const payload = { project, pluginId: plugin, label };
+        void this.append([customEventData(CustomEvent.AgentWentAhead, payload)], threadId).catch(() => undefined);
+      },
     });
   }
 
@@ -747,6 +755,12 @@ export class StudioCore {
   // ── boot ─────────────────────────────────────────────────────────────────────────────────
   async init(): Promise<void> {
     const mark = (step: string): void => this.options.markBoot?.(`core:${step}`);
+    // The host runs git itself (snapshots, the harness workspace) before the sandbox looks for Git
+    // Bash, so Windows settles which Git first: an installed one, else the app's own. Without any (a
+    // development build on a PC without Git) the setup screen opens here, not `spawn git ENOENT`.
+    if (process.platform === StudioPlatform.Windows && !(await ensureHostGit())) {
+      throw new SandboxUnavailableError(gitMissingProblem());
+    }
     await this.#restoreGamesRoot();
     for (const dir of Object.values(this.layout)) await ensureDir(dir);
     await this.#loadSettings();
@@ -771,10 +785,10 @@ export class StudioCore {
     void toolchain().catch(() => {});
     // Side by side: the sandbox reads only the layout and the games, and plugin setup reaches the
     // sandbox only when a tool runs later.
-    const [sandbox] = await Promise.all([
+    const sandbox = await sandboxBesidePlugins(
       this.#createSandbox(listed).finally(() => mark("sandbox")),
       this.#wirePluginServices().finally(() => mark("plugins")),
-    ]);
+    );
     // Linux: a sandbox that cannot start a process (AppArmor's user-namespace restriction) is a
     // setup problem the window shows, not a harness that never boots.
     await checkLinuxIsolation(sandbox).catch(async (error: unknown) => {
@@ -976,6 +990,9 @@ export class StudioCore {
       ],
       readableRoots: [this.options.paths.resources],
       enabled: this.options.sandbox ?? true,
+      // Windows: the window opens on the games while the network check and folder grants finish.
+      startInBackground: true,
+      log: (line) => this.options.onLog?.(`[sandbox] ${line}`, "stderr"),
       // A Finder-launched app has no npm on its PATH; every build the studio ever ran exited 127.
       toolPath: async () => (await toolchain()).path,
     });
@@ -1004,6 +1021,11 @@ export class StudioCore {
       gameThread: (project) => this.threadForGame(project),
       now: () => new Date(),
       catalog: () => this.plugins.engines(),
+      // A link that set its project up: Undo has the plugin take the set-up back, unasked (the Undo is the person's).
+      undoSetUp: async (pluginId, game, project) => {
+        const args: EngineUndoSetUpArgs = { project, ifSetUp: true };
+        await this.plugins.action(pluginId, EngineHostAction.UndoSetUp, args, await this.pluginBinding(game));
+      },
     });
     this.pluginServices.engineLinks = this.engineLinks;
     // `game.snapshot`: an ordinary game snapshot, in Rewind under the plugin's reason.
@@ -1938,7 +1960,11 @@ export class StudioCore {
     return { child };
   }
 
-  /** The chat line's Undo of a game's engine link (`engineLinks.undo`); a link that changed since is refused. */
+  /**
+   * The chat line's Undo of a game's engine link (`engineLinks.undo`); a link that changed since is
+   * refused, and one that set its project up is refused with the plugin's reason while that set-up
+   * can't be taken back.
+   */
   async undoEngineLink(request: EngineLinkUndo): Promise<boolean> {
     const { project, pluginId, linkedAt, threadId } = request;
     const plugin = this.plugins.list().find((p) => p.manifest.id === pluginId);

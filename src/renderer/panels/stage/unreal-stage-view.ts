@@ -180,3 +180,28 @@ export function keepStageStatus(game: string, received: ReceivedStatus): void {
 export function keptStageStatus(game: string): ReceivedStatus | null {
   return keptStatuses.get(game) ?? null;
 }
+
+/** A restart waiting for Unreal to close before it opens a game's project: which game, and until when. */
+export type ReopenMark = { game: string; until: number };
+
+/** What a restart's mark does on a new status: keep waiting, open the project now, or give up. */
+export const ReopenStep = { Wait: "wait", Open: "open", Drop: "drop" } as const;
+export type ReopenStep = (typeof ReopenStep)[keyof typeof ReopenStep];
+
+/**
+ * A restart opens the project once the status says no editor runs any more and opening is the step.
+ * It gives up when its wait runs out, when Unreal closed but opening isn't the step (the person
+ * cancelled the quit, or another app holds the port), and when the stage now shows another game, so
+ * a restart never opens a game the person moved away from.
+ */
+export function reopenStep(
+  mark: ReopenMark | null,
+  game: string,
+  status: UnrealStageStatus | null,
+  now: number,
+): ReopenStep {
+  if (!mark) return ReopenStep.Wait;
+  if (mark.game !== game || now > mark.until) return ReopenStep.Drop;
+  if (!status || status.editors !== 0) return ReopenStep.Wait;
+  return status.next === UnrealStageStep.Open ? ReopenStep.Open : ReopenStep.Drop;
+}

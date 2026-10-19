@@ -39,6 +39,7 @@ const WORLD: PlayWorld = {
   authorId: null,
   plays: 0,
   online: null,
+  comments: 2,
 };
 
 /** Timers the test moves by hand. */

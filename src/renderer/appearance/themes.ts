@@ -883,6 +883,9 @@ export function themeVariables(p: Palette, contrast = DEFAULT_CONTRAST): Record<
     // A box inside a card (a setup step): as quiet as the card's own edge where light, which a
     // dark card would swallow, so there it takes the control edge.
     "--line-soft": luminance(p.background) > LIGHT_BACKGROUND ? edge : controlBorder,
+    // Every floating menu's one edge (dropdowns, popovers, the composer's menus): the prompt bar's
+    // where light; a dark menu's fill swallows that, so there it takes the control edge.
+    "--menu-edge": luminance(p.background) > LIGHT_BACKGROUND ? "var(--prompt-bar-edge)" : controlBorder,
     "--accent-primary": p.accent,
     "--accent-primary-dark": p.accent,
     "--accent-ink": accentInk,

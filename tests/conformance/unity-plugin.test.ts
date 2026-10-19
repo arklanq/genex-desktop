@@ -140,7 +140,7 @@ describe("the bundled Unity plugin", () => {
         id: "editor",
         label: "Unity",
         ariaLabel: "Unity Editor",
-        icon: "box",
+        icon: "unity",
         facts: [CoreFact.UnityProject],
         target: { kind: "panel", id: "editor" },
         status: UnityAction.ToolbarStatus,
@@ -222,12 +222,14 @@ describe("the bundled Unity plugin", () => {
     await assert.rejects(async () => backend.action?.("create", {}, context), /Unknown Unity action create/);
   });
 
-  it("is off in a new profile until the person turns it on", async () => {
+  it("is off in a new profile until the person turns it on, and shows Unity's own picture", async () => {
     const lite = await coreLite({ resources: await makeResources({ tsc: false }) });
     try {
       const listed = lite.core.plugins.list().find((plugin) => plugin.manifest.id === "unity");
       assert.equal(listed?.source, "bundled");
       assert.equal(lite.core.plugins.enabled("unity"), false);
+      assert.equal(listed?.manifest.icon, "icon.svg");
+      assert.ok(listed?.iconUrl, "the list, the + menu and the @ picker draw its picture, not its initial");
     } finally {
       await lite.close();
     }
@@ -236,7 +238,7 @@ describe("the bundled Unity plugin", () => {
   it("ships in the app's resources and reaches a Unity project's sessions, never a web game's", async () => {
     const resources = await makeResources({ tsc: false });
     const seed = path.join(resources, "plugins", "unity");
-    for (const file of ["plugin.json", "backend.mjs", "editor-mcp.mjs", "panel.html"])
+    for (const file of ["plugin.json", "icon.svg", "backend.mjs", "editor-mcp.mjs", "panel.html"])
       assert.ok(existsSync(path.join(seed, file)), `${file} is built`);
     const panel = readFileSync(path.join(seed, "panel.html"), "utf8");
     assert.match(panel, /window\.studioPlugin = \{/, "the panel carries the SDK it calls Genex through");

@@ -1,7 +1,7 @@
 /**
  * Play's decisions, pure: which tabs a shelf shows, how a tab's pages add up, how counts read, which games are Recent, when
  * the sidebar's Genex card shows, what the account plate at the sidebar's foot shows, what the viewer's cover says, which header
- * button wears a note, and when the window's drag regions give way to the viewer's native views. `PlayRoom.tsx`, `PlayRecent.tsx`,
+ * button wears a note, when the window's drag regions give way to the viewer's native views, and which covers were shown before. `PlayRoom.tsx`, `PlayRecent.tsx`,
  * `PlayPromo.tsx`, `ProfilePlate.tsx`, `PlayViewerLayer.tsx` and `App.tsx` draw what these decide.
  */
 import { GenexAccountStatus } from "../../shared/genex-account.ts";
@@ -189,6 +189,30 @@ export function barAfterScroll(before: BarScroll, top: number, barHeight: number
   return { top, hidden: moved > 0 };
 }
 
+/** How many cover addresses a window remembers as shown. */
+export const SHOWN_COVERS_MAX = 500;
+
+/** The covers a window has shown, newest last: one Play draws again needs no fade in. */
+export interface ShownCovers {
+  has(url: string): boolean;
+  add(url: string): void;
+}
+
+/** A window's memory of the covers it has shown, keeping the `max` most recent. */
+export function createShownCovers(max: number = SHOWN_COVERS_MAX): ShownCovers {
+  const shown = new Set<string>();
+  return {
+    has: (url) => shown.has(url),
+    add(url) {
+      shown.delete(url);
+      shown.add(url);
+      if (shown.size <= max) return;
+      const oldest = shown.values().next().value;
+      if (oldest !== undefined) shown.delete(oldest);
+    },
+  };
+}
+
 /** The games with players counted now; a game whose count did not change stays the same object. */
 export function withOnline(games: readonly PlayGame[], counts: Readonly<Record<string, number>>): PlayGame[] {
   let changed = false;
@@ -302,10 +326,10 @@ function withHeader(shown: ViewerShown, event: PlayViewerEvent): ViewerShown {
 }
 
 /**
- * Whether the game's native view lies over the window under the header: once it plays. Not while it
- * loads (the view is not shown yet), once it failed (main hides it), nor with no game open.
+ * Whether the viewer's native views lie over the window: whenever a game is open, since the bar's
+ * layer lies over its top edge from the cover on, and the game's own view under it once it plays.
  */
-export const nativeViewsUp = (viewer: ViewerShown | null): boolean => viewer?.phase === PlayViewerPhase.Playing;
+export const nativeViewsUp = (viewer: ViewerShown | null): boolean => viewer !== null;
 
 /**
  * Whether Esc in the app leaves the viewer: while the cover or the failure is up. Never once the game
@@ -330,12 +354,15 @@ const NOTE_PLACE = {
 } as const satisfies Record<PlayNote, { control: PlayControl; look: NoteLook }>;
 
 /** The note `control`'s button says now in place of its label, if the header's note is about it. */
-export function noteOn(bar: PlayBarState | undefined, control: PlayControl): { note: PlayNote; look: NoteLook } | null {
+export function noteOn(
+  bar: PlayBarState | null | undefined,
+  control: PlayControl,
+): { note: PlayNote; look: NoteLook } | null {
   const note = bar?.note;
   if (!note || NOTE_PLACE[note].control !== control) return null;
   return { note, look: NOTE_PLACE[note].look };
 }
 
 /** Whether the header just went from not liked to liked: the player's own like, worth a burst. */
-export const justLiked = (before: PlayBarState | undefined, after: PlayBarState | undefined): boolean =>
+export const justLiked = (before: PlayBarState | null | undefined, after: PlayBarState | null | undefined): boolean =>
   before?.liked === false && after?.liked === true;

@@ -56,7 +56,7 @@ import {
   startHelperSocket,
   WsClose,
 } from "./helper-socket.ts";
-import { BINDING_REFRESH_MS, placeMatcher, readPlaceLinks, writeBinding } from "./studio-binding.ts";
+import { BINDING_REFRESH_MS, type PlaceLink, placeMatcher, readPlaceLinks, writeBinding } from "./studio-binding.ts";
 import type { StudioClient, StudioEntry, StudioToolResult } from "./studio-client.ts";
 import { DATAMODEL_ARG, EDIT_DATAMODEL, STUDIO_ID_ARG, StudioTool } from "./studio-tools.ts";
 
@@ -401,11 +401,30 @@ function takeStudio(link: LinkState, linked: Linked, studio: StudioEntry): void 
   link.byStudio.set(studio.id, linked);
 }
 
-/** The one game whose linked place the Studio has open; none when no game, or two, link it. */
+/** Whether a linked place's project file is still there: a removed game's link record outlives it. */
+const projectExists = (place: PlaceLink) =>
+  lstat(place.project).then(
+    () => true,
+    () => false,
+  );
+
+/** The one live game whose linked place the Studio has open; none when no game, or two, link it. */
 async function gameOf(link: LinkState, studio: StudioEntry): Promise<string | undefined> {
-  const games = (await readPlaceLinks(link.deps.storage)).filter(({ link: place }) => placeMatcher(place)(studio));
+  const matching = (await readPlaceLinks(link.deps.storage)).filter(({ link: place }) => placeMatcher(place)(studio));
+  const live = await Promise.all(matching.map(({ link: place }) => projectExists(place)));
+  const games = matching.filter((_game, index) => live[index]);
   if (games.length > 1) log(link, `helper link: ${games.length} games link the place ${studio.name}; none bound`);
   return games.length === 1 ? games[0]?.game : undefined;
+}
+
+/** Each connection's Studio as StudioMCP lists it now: a publish or a save renames its place. */
+async function relistStudios(link: LinkState): Promise<void> {
+  const listed = await link.deps.studio.studios().catch(() => [] as StudioEntry[]);
+  const byId = new Map(listed.map((studio) => [studio.id, studio]));
+  for (const linked of link.connections) {
+    const now = linked.studio && byId.get(linked.studio.id);
+    if (now) linked.studio = now;
+  }
 }
 
 /** Binds the connection to its Studio's game, unless a newer connection holds it, and writes its file. */
@@ -446,7 +465,11 @@ function scheduleRefresh(link: LinkState): void {
   if (link.refresh !== undefined || link.closed) return;
   link.refresh = link.deps.clock.setTimeout(() => {
     link.refresh = undefined;
-    for (const linked of link.connections) if (linked.studio) track(link, claimGame(link, linked));
+    const claims = async () => {
+      await relistStudios(link);
+      for (const linked of link.connections) if (linked.studio) track(link, claimGame(link, linked));
+    };
+    track(link, claims());
     scheduleRefresh(link);
   }, BINDING_REFRESH_MS);
 }

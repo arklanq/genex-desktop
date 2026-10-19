@@ -7,6 +7,7 @@ import type {
   PlayShelf,
   PlayShelves,
 } from "./play.ts";
+import type { PlayChangeResult, PlayCoverResult, PlayCoverType, PlayGameChange } from "./play-manage.ts";
 import type { GenexCatalogItem } from "./mention-corpus.ts";
 import type { MentionRef, MentionRetry } from "./prompt-mention.ts";
 import type {
@@ -21,7 +22,19 @@ import type {
   PresenceVisibility,
 } from "./play-people.ts";
 import type { GenexAccountView } from "./genex-account.ts";
+import type { PlayBarHold } from "./play-bar.ts";
+import type { PlayComment, PlayCommentsPage } from "./play-comments.ts";
 import type { PlayCredits } from "./play-credits.ts";
+import type {
+  AddOutcome,
+  AddSource,
+  GameLibraryStates,
+  LibraryFileAnswer,
+  LibraryPage,
+  LibraryQuery,
+  ShareItem,
+  ShareOutcome,
+} from "./asset-library.ts";
 import type { HandleCheck, HandleSave } from "./handle.ts";
 import type { PlayStats, StatsPeriod } from "./play-stats.ts";
 import type { PerformanceMark } from "./performance.ts";
@@ -94,6 +107,11 @@ export interface Bootstrap {
 export interface WindowControlColors {
   color: string;
   symbolColor: string;
+}
+
+/** The window controls as the renderer paints them: the theme's colours, and whether Home's background lies under them. */
+export interface WindowControls extends WindowControlColors {
+  seeThrough: boolean;
 }
 
 /** One read of the all-threads log: the events, and the cursor the next read starts after. */
@@ -258,8 +276,15 @@ export interface StudioApi {
    * answers whether it was installed or the prompt was dismissed, and the state after.
    */
   setUpSandbox(): Promise<SandboxSetupResult>;
-  /** Paint the Windows and Linux window controls (`titleBarOverlay`) in the theme's colours; macOS ignores it. */
-  setWindowControls(colors: WindowControlColors): Promise<void>;
+  /** Send the team a report of a Set up that failed with `error`, with this build's recent log; throws when it was not taken. */
+  reportSandboxSetup(error: string): Promise<void>;
+  /** Quit the app from the screen of a studio that would not start. */
+  quitFromBoot(): Promise<void>;
+  /**
+   * Paint the Windows and Linux window controls (`titleBarOverlay`) in the theme's colours, with no box
+   * of their own on Windows while `seeThrough`; macOS ignores it.
+   */
+  setWindowControls(controls: WindowControls): Promise<void>;
   /** The new version of the app downloaded in the background, or null; `onEvent` announces later ones. */
   readyUpdate(): Promise<ReadyUpdate | null>;
   /**
@@ -471,12 +496,20 @@ export interface StudioApi {
   playRemix(slug: string): Promise<string>;
   /** Play: players in each named game now; a game nobody counts is left out. */
   playOnline(slugs: string[]): Promise<Record<string, number>>;
-  /** Play: open a game full screen in the viewer; how it goes arrives as `UiEvent.PlayViewer`. */
-  playOpen(slug: string): Promise<void>;
+  /** Play: open a game full screen in the viewer, its bar showing `title`; how it goes arrives as `UiEvent.PlayViewer`. */
+  playOpen(slug: string, title: string): Promise<void>;
   /** Play: close the viewer. */
   playClose(): Promise<void>;
   /** Play: one of the viewer header's controls (Like, Share, Exit…); main answers with `UiEvent.PlayViewer`. */
   playControl(control: PlayControl, at?: PlayPoint): Promise<void>;
+  /** Play: what holds the viewer's bar up (the pointer or the keyboard on it, its Comments open). */
+  playBar(hold: PlayBarHold): Promise<void>;
+  /** Play: a page of the viewed game's comments, newest first: the first, or the one after `cursor`. */
+  playComments(cursor: string | null): Promise<PlayCommentsPage>;
+  /** Play: post a comment on the viewed game as the Genex account; the comment as saved. */
+  playComment(body: string): Promise<PlayComment>;
+  /** Play: delete one of the account's comments on the viewed game. */
+  playUncomment(commentId: string): Promise<void>;
   /** Play: the Genex account the app is signed in as, or null while it is signed out. */
   playMe(): Promise<PlayMe | null>;
   /** Play: rename the account (2–20 characters); the account as it is after. */
@@ -509,6 +542,13 @@ export interface StudioApi {
   playSetHandle(handle: string): Promise<HandleSave>;
   /** Play: the Mac's share menu for a page of Play's website (an invite or a profile link), by `at`. */
   playShare(url: string, at?: PlayPoint): Promise<void>;
+  /**
+   * Play: change a published game from its card menu (mobile flag, tags, remixing, Unpublish,
+   * Delete); genex.games checks who may. Fails when it refused or could not be reached.
+   */
+  playManage(gameId: string, change: PlayGameChange): Promise<PlayChangeResult>;
+  /** Play: make a picture (already cropped to 16:9) a published game's cover on genex.games. */
+  playCover(gameId: string, image: Uint8Array, contentType: PlayCoverType): Promise<PlayCoverResult>;
   /** The app's Genex account: signed out, signing in, signed in, or a sign-in genex.games ended. Never asks the network. */
   genexAccount(): Promise<GenexAccountView>;
   /** Sign in to Genex in the browser (again, after a sign-in ended); the account as it is after. */
@@ -546,6 +586,23 @@ export interface StudioApi {
   /** What these GLB and glTF files hold, read from their headers: meshes, clips and bones; other files are skipped. */
   projectModelRigs(p: { project: string; files: string[] }): Promise<ModelRig[]>;
   projectAssets(project: string): Promise<ProjectAssets>;
+  /** The Genex account's asset library on genex.games, newest first; throws signed out. */
+  assetLibrary(query: LibraryQuery): Promise<LibraryPage>;
+  /** Where each of a game's files stands with the library: saved, shared, can be shared. */
+  assetLibraryStates(project: string): Promise<GameLibraryStates>;
+  /** Save game files to the library (sending those Genex did not make), or take Saved off; the states after. */
+  assetSave(project: string, files: string[], saved: boolean): Promise<GameLibraryStates>;
+  /** Share game files to Play, each under its name; how each went. */
+  assetShare(project: string, items: ShareItem[]): Promise<ShareOutcome[]>;
+  /** Stop sharing a game file on Play; the states after. */
+  assetUnshare(project: string, file: string): Promise<GameLibraryStates>;
+  /** Bring a library generation or a shared asset into a game; where it landed. */
+  assetAdd(project: string, source: AddSource): Promise<AddOutcome>;
+  /**
+   * A library file's bytes for a tile's picture: only an https file on genex.games' asset hosts,
+   * within a cap; otherwise why there are none (too large, refused, or unavailable for now).
+   */
+  assetLibraryFile(url: string): Promise<LibraryFileAnswer>;
   /**
    * One image from inside the game, contained and byte-sniffed. `maxPx` asks for a thumbnail;
    * `scope: "genex-inspection"` reads the one saved frame of the named job instead, and
@@ -663,6 +720,11 @@ export interface StudioApi {
   openChatFile(threadId: string, ref: ChatFileRef): Promise<{ open: ChatFileOpenOutside; problem?: string }>;
   /** The images sent with a chat message. */
   messageImages(threadId: string, messageId: string): Promise<ReferenceFrame[]>;
+  /**
+   * Where a file the person dropped or pasted is on this computer, so a message can link it; ""
+   * for one that is only data (a pasted screenshot). Answered by the preload, never by main.
+   */
+  pathOfFile(file: File): string;
   /**
    * The native folder dialog. It answers *which folder* only — nothing is written by picking, and
    * the answer goes straight back to `inspectFolder`/`adoptFolder`; the renderer shows the folder

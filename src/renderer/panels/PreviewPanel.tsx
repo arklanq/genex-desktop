@@ -17,6 +17,7 @@ import { useSharedSnapshot } from "../use-shared-snapshot.ts";
  * `stage/` holds the pieces: the live page load and its probe, the native view's rectangle, the
  * build-problem strip, what waits for Live's Reload, the strip over the stage and its empty states.
  */
+import { keepBuilding, keepsBuildingOn } from "../keep-building.ts";
 import type { JSX } from "react";
 import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { mergeChatEvents } from "../../shared/chat-history.ts";
@@ -24,15 +25,7 @@ import { canBuildWith } from "../../shared/engine-descriptor.ts";
 import { ObserverLive } from "../../shared/observers.ts";
 import type { ConversationRecord, EventEnvelope } from "../../shared/event-log.ts";
 import type { PluginInfo } from "../../shared/plugins.ts";
-import {
-  buildHistory,
-  historyLabel,
-  isNewestBuild,
-  projectBuildGraph,
-  replyTarget,
-  stageRunGraph,
-  workerThreadsOf,
-} from "../build-progress.ts";
+import { buildHistory, projectBuildGraph, replyTarget, stageRunGraph, workerThreadsOf } from "../build-progress.ts";
 import type { BesideTarget } from "../open-beside.ts";
 import { OPEN_BUILD_EVENT } from "../open-build.ts";
 import { replyAbout } from "../reply-about.ts";
@@ -61,6 +54,7 @@ import { AssetsCanvas } from "./AssetsCanvas.tsx";
 import { FileViewer } from "./FileViewer.tsx";
 import type { Notify } from "../state/toasts.ts";
 import { RunGraph } from "./RunGraph.tsx";
+import type { BuildTabs } from "./run-graph/chrome.tsx";
 import type { Reply } from "./RunInspector.tsx";
 import { useLiveBehind } from "./stage/live-behind.ts";
 import { BuildTrouble, useBuildProblem } from "./stage/build-problem.tsx";
@@ -109,8 +103,7 @@ function useHistorySelection(threadId: string | null) {
       setHistorySelection(runId === latest ? null : { threadId, runId }),
     [threadId],
   );
-  const showLatest = useCallback((): void => setHistorySelection(null), []);
-  return { selectedRun, select, showLatest };
+  return { selectedRun, select };
 }
 
 /** The run a `studio:open-build` names, when it is one of this conversation's builds. */
@@ -249,8 +242,8 @@ function useStageGraph({
 
 /**
  * The run the stage draws: the conversation's build history, the one opened from it (the latest
- * by default), its graph, and whether a new run is still being planned. While an earlier build is
- * shown, `earlier` names it and leads back to the latest one.
+ * by default), its graph, and whether a new run is still being planned. `tabs` are the history as
+ * the Builds bar's tabs: each opens its build, the newest goes back to the latest.
  */
 function useStageRun({
   project,
@@ -267,7 +260,7 @@ function useStageRun({
   onView: (view: StageView) => void;
   buildsVisible: boolean;
 }) {
-  const { selectedRun, select, showLatest } = useHistorySelection(threadId);
+  const { selectedRun, select } = useHistorySelection(threadId);
   const { history, graph, runGraph, earlierGraph } = useStageGraph({
     project,
     threadId,
@@ -281,14 +274,11 @@ function useStageRun({
   const planningRun = isPlanning(status) ? runIdIn(status) : null;
   const planning = Boolean(!selectedRun && planningRun && planningRun !== graph?.runId);
   const shownRun = history[historyIndex];
-  const earlier = useMemo(
-    () =>
-      selectedRun && shownRun
-        ? { label: historyLabel(shownRun, { newest: isNewestBuild(history, shownRun) }), onLatest: showLatest }
-        : null,
-    [selectedRun, shownRun, history, showLatest],
+  const tabs = useMemo(
+    () => ({ builds: history, open: shownRun?.runId ?? null, onOpen: (runId: string) => select(runId, latestRun) }),
+    [history, shownRun, select, latestRun],
   );
-  return { selectedRun, history, graph, runGraph, planning, earlier, earlierGraph };
+  return { selectedRun, history, graph, runGraph, planning, tabs, earlierGraph };
 }
 
 /** The run whose pictures Live's own view shows (`picturesGraph`): the stage's run, else the newest earlier one with some. */
@@ -386,7 +376,7 @@ function StageContents({
   showSetup,
   beside,
   focusedAsset,
-  earlier,
+  tabs,
   onView,
   onFocusAsset,
   onNotice,
@@ -403,8 +393,8 @@ function StageContents({
   showSetup: boolean;
   beside: BesideTarget | null;
   focusedAsset: string | null;
-  /** Set while an earlier build is shown: its name, and the way back to the latest one. */
-  earlier: { label: string; onLatest: () => void } | null;
+  /** The chat's builds as the Builds bar's tabs, and the one on show. */
+  tabs: BuildTabs;
   onView: (view: StageView) => void;
   onFocusAsset: (id: string) => void;
   onNotice: Notify;
@@ -446,7 +436,12 @@ function StageContents({
           onShowLive={showLive}
           onShowAsset={showAsset}
           onReply={reply}
-          earlier={earlier}
+          onKeepBuilding={
+            threadId && keepsBuildingOn(tabs.builds, graphShown.runId)
+              ? (notDone) => keepBuilding({ threadId, notDone })
+              : null
+          }
+          tabs={tabs}
           onNotice={onNotice}
         />
       ) : null}
@@ -639,8 +634,9 @@ export function PreviewPanel({
   // Only the web preview is a game to watch or a page to probe; beside any other view, what waits goes in.
   const watch: StageWatch = { view: stageView, visible, showEmpty, preview };
   const watching = watchingLive(watch);
+  const firstPlan = useFirstPlan(project, status, runGraph);
   const shown = { onLive: previewOnStage && visible, loading: liveLoading, empty: showEmpty };
-  const controls = useStageControls(project, live, shown, onNotice);
+  const controls = useStageControls(project, live, { ...shown, firstPlan: Boolean(firstPlan) }, onNotice);
   const cover = { ...flags, liveLoading: controls.loader.covering, project, visible, sidebarOverlay, toolbarOpen };
   useNativeViewBounds(slot, { ...cover, watching });
   const trouble = useBuildProblem(project, live.loadLive, onNotice);
@@ -656,7 +652,6 @@ export function PreviewPanel({
     onView,
     onNotice,
   });
-  const firstPlan = useFirstPlan(project, status, runGraph);
 
   return (
     <div
@@ -681,6 +676,7 @@ export function PreviewPanel({
         sound={controls.sound}
         emptyGame={flags.emptyScene}
         livePreview={Boolean(project) && preview}
+        gameControls={controls.gameControls}
         plugins={plugins}
         onNotice={onNotice}
         onToolbarOpen={setToolbarOpen}
@@ -698,7 +694,7 @@ export function PreviewPanel({
           showSetup={!project && !engines.some(canBuildWith)}
           beside={beside}
           focusedAsset={focusedAsset}
-          earlier={run.earlier}
+          tabs={run.tabs}
           onView={onView}
           onFocusAsset={setFocusedAsset}
           onNotice={onNotice}

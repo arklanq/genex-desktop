@@ -9,7 +9,7 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { HOUR_MS } from "../../shared/duration.ts";
-import { outcomeEnded } from "../../shared/run-summary.ts";
+import { type OutcomeView, outcomeEnded } from "../../shared/run-summary.ts";
 import { NO_STORAGE, type StorageFreed, StorageKind, type StorageSpace } from "../../shared/storage-space.ts";
 import { clearSideTracks, historySpace } from "../../substrate/history-space.ts";
 import { isInside } from "../../substrate/paths.ts";
@@ -195,8 +195,9 @@ export class StorageSpaceService {
   }
 
   /**
-   * The runs of each game that ended and are not going any more, but its newest of them: Activity
-   * lists runs newest first, so the first ended one of a game is the one that stays.
+   * The runs of each game that ended and are not going any more, but its newest finished one (its
+   * latest build): Activity lists runs newest first, so the first finished run of a game is the one
+   * that stays, and failed or cancelled runs after it never take its place.
    */
   async #oldRuns(): Promise<OldRuns> {
     const newest = new Map<string, string>();
@@ -205,8 +206,9 @@ export class StorageSpaceService {
       if (!project || !runId || !runOutcome) continue;
       if (!outcomeEnded(runOutcome) || this.#x.activeRunIds.has(runId)) continue;
       const kept = newest.get(project);
-      if (kept === undefined) newest.set(project, runId);
-      else if (kept !== runId) old.set(project, (old.get(project) ?? new Set()).add(runId));
+      if (kept === runId) continue;
+      if (kept === undefined && isBuild(runOutcome)) newest.set(project, runId);
+      else old.set(project, (old.get(project) ?? new Set()).add(runId));
     }
     return old;
   }
@@ -245,6 +247,11 @@ export class StorageSpaceService {
       return game === undefined || game === project;
     });
   }
+}
+
+/** Whether a run that ended left a build: it finished, rather than failing or being cancelled. */
+function isBuild(outcome: OutcomeView): boolean {
+  return outcome.state === "finished";
 }
 
 /** Add what a game's history frees now to `space`; what is under an hour old waits for a later clean-up. */

@@ -6,9 +6,12 @@
  * MCP servers read it and agents can't write; the game's studio.json gets a mirror for the brief,
  * the UI and the harness (`substrate/game-engine-binding.ts`). A link is made by real path, the
  * chat it came from (the game's own chat for a link made in the panel) gets one line with Undo, and
- * a refused link changes nothing on disk.
+ * a refused link changes nothing on disk. A link that also set its project up (`setUp`) keeps that
+ * in its record, and its Undo has the plugin take the set-up back first (`undoSetUp`), unless
+ * another game's current link names the same project: that game builds in it too, so only the link
+ * is undone.
  */
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { CustomEvent, type CustomEventRecord, customEventData } from "../../shared/custom-events.ts";
 import {
@@ -36,6 +39,7 @@ const MESSAGE = {
   InvalidGame: "Invalid game",
   NoEngine: "This plugin declares no engine, so it can't link a game to a project.",
   Stale: "This link already changed, so there is nothing to undo.",
+  NoSetUpUndo: "Genex can't take back this project's set-up here, so the link stays.",
 } as const;
 
 /** A game's link as a plugin reads it: the binding plus the project's name. */
@@ -49,8 +53,11 @@ export class EngineLinkStale extends Error {
   }
 }
 
-/** What a link file holds: the current link and the one it replaced, or when Undo left the game with none. */
-type LinkRecord = { link?: EngineBinding; previous?: EngineBinding; unlinkedAt?: string };
+/**
+ * What a link file holds: the current link, the one it replaced and whether making it set its
+ * project up, or when Undo left the game with none.
+ */
+type LinkRecord = { link?: EngineBinding; previous?: EngineBinding; setUp?: boolean; unlinkedAt?: string };
 
 /**
  * What the link service needs from the host: storage, game folders, the chat log, a change signal,
@@ -69,6 +76,11 @@ export type EngineLinkDeps = {
    * (`engine.id` is its id), and a game's record names one of them.
    */
   catalog(): EngineCatalog;
+  /**
+   * Has the plugin take back the set-up a link of `game` made on `project` (its real path); throws
+   * the plugin's reason when it refuses. Without it, such a link's Undo is refused.
+   */
+  undoSetUp?(pluginId: string, game: string, project: string): Promise<void>;
 };
 
 /** The services a `game-engine` plugin calls (`game.engine.*`); the host answers them through this. */
@@ -84,7 +96,8 @@ function gameOf(project: string | undefined): string {
   return project;
 }
 
-const linkFile = (root: string, game: string) => path.join(root, ENGINE_LINKS_FOLDER, `${game}.json`);
+const LINK_FILE_EXTENSION = ".json";
+const linkFile = (root: string, game: string) => path.join(root, ENGINE_LINKS_FOLDER, `${game}${LINK_FILE_EXTENSION}`);
 
 /** A catalog of the one engine a plugin declares: what its own link records may name. */
 const own = (engine: EngineDeclaration): EngineCatalog => new Map([[engine.id, engine]]);
@@ -97,13 +110,23 @@ async function readRecord(root: string, game: string, engine: EngineDeclaration)
   const previous = parseEngineBinding(raw.previous, own(engine));
   const unlinkedAt = typeof raw.unlinkedAt === "string" ? raw.unlinkedAt : undefined;
   if (!link && !unlinkedAt) return undefined;
-  return { ...(link ? { link } : {}), ...(previous ? { previous } : {}), ...(unlinkedAt ? { unlinkedAt } : {}) };
+  const setUp = Boolean(link) && raw.setUp === true;
+  return {
+    ...(link ? { link } : {}),
+    ...(previous ? { previous } : {}),
+    ...(setUp ? { setUp } : {}),
+    ...(unlinkedAt ? { unlinkedAt } : {}),
+  };
 }
 
 async function writeRecord(root: string, game: string, record: LinkRecord): Promise<void> {
   await mkdir(path.join(root, ENGINE_LINKS_FOLDER), { recursive: true, mode: 0o700 });
   const body = record.link
-    ? { ...record.link, ...(record.previous ? { previous: record.previous } : {}) }
+    ? {
+        ...record.link,
+        ...(record.previous ? { previous: record.previous } : {}),
+        ...(record.setUp ? { setUp: true } : {}),
+      }
     : { unlinkedAt: record.unlinkedAt };
   await atomicWriteJson(linkFile(root, game), body);
 }
@@ -153,9 +176,9 @@ function linkName(value: unknown): string | undefined {
  * What a link call asks for: the project file (its shape checked here, its real path when the link
  * is written), the published game's ids (ids of any other shape are dropped and the link is still
  * made), the project's name as people know it when the file's name isn't (any other shape is
- * dropped), and whether the first call made it.
+ * dropped), whether the first call made it, and whether the plugin set the project up to make it.
  */
-type LinkArgs = { project: string; remote?: EngineRemote; name?: string; auto: boolean };
+type LinkArgs = { project: string; remote?: EngineRemote; name?: string; auto: boolean; setUp: boolean };
 
 function linkArgs(args: unknown): LinkArgs {
   const fields = args && typeof args === "object" ? (args as Record<string, unknown>) : {};
@@ -166,17 +189,28 @@ function linkArgs(args: unknown): LinkArgs {
     ...(remote ? { remote } : {}),
     ...(name ? { name } : {}),
     auto: fields.auto === true,
+    setUp: fields.setUp === true,
   };
 }
 
-/** The chat's line for a new link: the game, the project, and the one it replaced. */
+/** What a new link's chat line says beside the link itself. */
+type LinkedContext = {
+  engine: EngineDeclaration;
+  title?: string;
+  previous?: EngineBinding;
+  auto: boolean;
+  setUp: boolean;
+  name?: string;
+};
+
+/** The chat's line for a new link: the game, the project, the one it replaced, and whether it set the project up. */
 function linkedRecord(
   pluginId: string,
   game: string,
   linked: EngineBinding,
-  context: { engine: EngineDeclaration; title?: string; previous?: EngineBinding; auto: boolean; name?: string },
+  context: LinkedContext,
 ): CustomEventRecord {
-  const { engine, title, previous, auto } = context;
+  const { engine, title, previous, auto, setUp } = context;
   return customEventData(CustomEvent.EngineLinked, {
     pluginId,
     project: game,
@@ -188,6 +222,93 @@ function linkedRecord(
     linkedAt: linked.linkedAt,
     ...(previous ? { previous: projectName(previous.project, engine.projectFiles) } : {}),
     ...(auto ? { auto } : {}),
+    ...(setUp ? { setUp } : {}),
+  });
+}
+
+/** What a new link's line says beside it: what the call asked, the game's title and the link it replaced. */
+function linkedContext(
+  engine: EngineDeclaration,
+  asked: LinkArgs,
+  title: string | undefined,
+  previous: EngineBinding | undefined,
+): LinkedContext {
+  return {
+    engine,
+    ...(title ? { title } : {}),
+    ...(previous ? { previous } : {}),
+    ...(asked.name ? { name: asked.name } : {}),
+    auto: asked.auto,
+    setUp: asked.setUp,
+  };
+}
+
+/** The record a new link writes: the link, the one it replaced, and whether making it set its project up. */
+const newRecord = (link: EngineBinding, previous: EngineBinding | undefined, setUp: boolean): LinkRecord => ({
+  link,
+  ...(previous ? { previous } : {}),
+  ...(setUp ? { setUp } : {}),
+});
+
+/** The games other than `game` the plugin keeps a link file for, by the id each file is named after. */
+async function otherGames(root: string, game: string): Promise<string[]> {
+  const files = await readdir(path.join(root, ENGINE_LINKS_FOLDER)).catch(() => []);
+  const ids = files
+    .filter((file) => file.endsWith(LINK_FILE_EXTENSION))
+    .map((file) => file.slice(0, -LINK_FILE_EXTENSION.length));
+  return ids.filter((id) => id !== game && GAME_ID.test(id));
+}
+
+/**
+ * Whether another game's current link names `project` (both real paths, as links are stored): that
+ * game builds in it too, so its set-up stays.
+ */
+async function linkedElsewhere(
+  root: string,
+  game: string,
+  project: string,
+  engine: EngineDeclaration,
+): Promise<boolean> {
+  for (const other of await otherGames(root, game))
+    if ((await readRecord(root, other, engine))?.link?.project === project) return true;
+  return false;
+}
+
+/** What Undo did with the set-up a link made: took it back, or kept it for another game's link. */
+const SetUpUndo = { Undone: "undone", Kept: "kept" } as const;
+type SetUpUndo = (typeof SetUpUndo)[keyof typeof SetUpUndo];
+
+/**
+ * Has the plugin take back the set-up the game's current link made; null for a link that set
+ * nothing up, and `Kept` for a project another game's current link names, whose set-up stays.
+ */
+async function takeBackSetUp(
+  deps: EngineLinkDeps,
+  pluginId: string,
+  game: string,
+  { current, engine }: { current: LinkRecord; engine: EngineDeclaration },
+): Promise<SetUpUndo | null> {
+  if (!current.setUp || !current.link) return null;
+  if (await linkedElsewhere(deps.root(pluginId), game, current.link.project, engine)) return SetUpUndo.Kept;
+  if (!deps.undoSetUp) throw new Error(MESSAGE.NoSetUpUndo);
+  await deps.undoSetUp(pluginId, game, current.link.project);
+  return SetUpUndo.Undone;
+}
+
+/** The chat's record that Undo took the link made at `linkedAt` back, with what it restored and whose set-up it took back. */
+function undoneRecord(
+  pluginId: string,
+  game: string,
+  linkedAt: string,
+  names: { restored?: string; setUpUndone?: string; setUpKept?: string },
+): CustomEventRecord {
+  return customEventData(CustomEvent.EngineLinkUndone, {
+    pluginId,
+    project: game,
+    linkedAt,
+    ...(names.restored ? { restored: names.restored } : {}),
+    ...(names.setUpUndone ? { setUpUndone: names.setUpUndone } : {}),
+    ...(names.setUpKept ? { setUpKept: names.setUpKept } : {}),
   });
 }
 
@@ -208,7 +329,8 @@ export function createEngineLinks(deps: EngineLinkDeps) {
     const asked = linkArgs(args);
     const project = await projectFileOf(asked.project, engine);
     const before = await record(pluginId, game, engine);
-    const same = await alreadyLinked(before?.link, project, asked.remote, engine);
+    // A link that set its project up is always a new one: its line carries that set-up's Undo.
+    const same = asked.setUp ? undefined : await alreadyLinked(before?.link, project, asked.remote, engine);
     if (same) return asLink(same, engine, asked.name);
     const title = await gameTitle(deps.gameDir(game));
     const written = await writeEngineBinding(deps.gameDir(game), project, engine.id, deps.catalog(), {
@@ -218,16 +340,9 @@ export function createEngineLinks(deps: EngineLinkDeps) {
     const linked = written.binding;
     const previous = before?.link;
     try {
-      await writeRecord(deps.root(pluginId), game, { link: linked, ...(previous ? { previous } : {}) });
-      const context = {
-        engine,
-        ...(title ? { title } : {}),
-        ...(previous ? { previous } : {}),
-        ...(asked.name ? { name: asked.name } : {}),
-        auto: asked.auto,
-      };
+      await writeRecord(deps.root(pluginId), game, newRecord(linked, previous, asked.setUp));
       await deps.append(
-        linkedRecord(pluginId, game, linked, context),
+        linkedRecord(pluginId, game, linked, linkedContext(engine, asked, title, previous)),
         binding?.threadId ?? (await deps.gameThread(game)),
       );
     } catch (error) {
@@ -260,27 +375,26 @@ export function createEngineLinks(deps: EngineLinkDeps) {
 
   /**
    * Takes back the link made at `linkedAt`: the project it replaced comes back (when it still
-   * holds), else the game is left with no link. A link that has changed since is refused.
+   * holds), else the game is left with no link. A link that has changed since is refused. A link
+   * that set its project up has the plugin take that back first, unless another game's current
+   * link names that project; when the plugin refuses, the link stays and its reason is thrown.
    */
   async function undo(pluginId: string, project: string, linkedAt: string, threadId?: string): Promise<void> {
     const game = gameOf(project);
     const engine = deps.catalog().get(pluginId);
     const current = engine ? await record(pluginId, game, engine) : undefined;
     if (!engine || !current?.link || current.link.linkedAt !== linkedAt) throw new EngineLinkStale();
+    const name = (binding: EngineBinding | undefined) =>
+      binding ? projectName(binding.project, engine.projectFiles) : undefined;
+    const setUp = await takeBackSetUp(deps, pluginId, game, { current, engine });
+    const setUpName = setUp ? name(current.link) : undefined;
+    const setUpNames = setUp === SetUpUndo.Kept ? { setUpKept: setUpName } : { setUpUndone: setUpName };
     const restored = await holding(current.previous, engine);
     await restoreEngineBinding(deps.gameDir(game), restored);
     const next: LinkRecord = restored ? { link: restored } : { unlinkedAt: deps.now().toISOString() };
     await writeRecord(deps.root(pluginId), game, next);
     if (threadId)
-      await deps.append(
-        customEventData(CustomEvent.EngineLinkUndone, {
-          pluginId,
-          project: game,
-          linkedAt,
-          ...(restored ? { restored: projectName(restored.project, engine.projectFiles) } : {}),
-        }),
-        threadId,
-      );
+      await deps.append(undoneRecord(pluginId, game, linkedAt, { restored: name(restored), ...setUpNames }), threadId);
     deps.changed(game);
   }
 

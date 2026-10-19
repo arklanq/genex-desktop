@@ -9,11 +9,14 @@ import {
   saveWork,
 } from "../../src/plugins/unity/editor-life.ts";
 import { PipelineProblem } from "../../src/plugins/unity/pipeline.ts";
+import type { ProcessRow } from "../../src/plugins/unity/processes.ts";
 import {
+  EDITOR_PROGRAM,
   editor,
   editorRow,
   json,
   openProject,
+  processRow,
   processTable,
   type Reply,
   type Seen,
@@ -21,6 +24,8 @@ import {
   unityProject,
 } from "../helpers/unity-editor-stand-in.ts";
 
+/** A Windows editor's program, as Windows' task list names it. */
+const WINDOWS_EDITOR = "Unity.exe";
 const ok = (result: unknown = {}) => json(200, { success: true, result });
 const look = () => json(200, { status: "ready", playMode: "stopped" });
 const scenes = (...listed: Array<[string, boolean]>) =>
@@ -50,12 +55,43 @@ describe("whether an editor has a game's project open", () => {
     const elsewhere = processTable([editorRow(77, "/another/project")]);
     const served = editor([], { alive: () => true });
     const unlisted: EditorDeps = { pipeline: served.deps, processes: elsewhere.env };
-    assert.deepEqual(await openPids(root, unlisted), [STAND_IN.pid], "where processes can't be listed, the descriptor");
+    assert.deepEqual(await openPids(root, unlisted), [], "a descriptor whose process isn't listed names nobody");
     assert.equal(
       await editorRuns(await unityProject(), unlisted),
       false,
       "a project with no descriptor and no process",
     );
+  });
+
+  it("counts the process a descriptor names only when it is a Unity editor of this project or of none", async () => {
+    const root = await openProject();
+    const rows: Array<[string, ProcessRow, number[]]> = [
+      [
+        "another app that got the pid",
+        processRow(STAND_IN.pid, "/Applications/Safari.app/Contents/MacOS/Safari", ""),
+        [],
+      ],
+      ["another project's editor", editorRow(STAND_IN.pid, "/another/project"), []],
+      ["Unity Hub", processRow(STAND_IN.pid, "/Applications/Unity Hub.app/Contents/MacOS/Unity Hub", ""), []],
+      ["an editor that names no project", processRow(STAND_IN.pid, EDITOR_PROGRAM, "-useHub"), [STAND_IN.pid]],
+      ["a Windows editor, which lists no command line", processRow(STAND_IN.pid, WINDOWS_EDITOR, ""), [STAND_IN.pid]],
+      ["this project's editor", editorRow(STAND_IN.pid, root), [STAND_IN.pid]],
+    ];
+    for (const [what, row, expected] of rows) {
+      const table = processTable([row]);
+      const stand = editor([], { alive: () => true });
+      assert.deepEqual(await openPids(root, { pipeline: stand.deps, processes: table.env }), expected, what);
+    }
+  });
+
+  it("never signals another app that got the pid of a stale descriptor", async () => {
+    const root = await openProject();
+    const table = processTable([processRow(STAND_IN.pid, "/Applications/Safari.app/Contents/MacOS/Safari", "")]);
+    const stand = editor([], { alive: (pid) => table.running().includes(pid) });
+    const deps: EditorDeps = { pipeline: stand.deps, processes: table.env };
+    assert.equal(await editorRuns(root, deps), false);
+    assert.equal(await endEditor(root, deps), true);
+    assert.deepEqual([stand.seen, table.sent, table.running()], [[], [], [STAND_IN.pid]]);
   });
 });
 

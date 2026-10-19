@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { editorPids, endEditors } from "../../src/plugins/unity/processes.ts";
+import { editorPids, endEditors, tasklistEditors } from "../../src/plugins/unity/processes.ts";
 import { EDITOR_PROGRAM, processRow, processTable } from "../helpers/unity-editor-stand-in.ts";
 
 const EDITOR = EDITOR_PROGRAM;
@@ -34,6 +34,22 @@ describe("the editor processes that have a game's Unity project open", () => {
       row(28, "/usr/bin/tail", `-f ${ROOT}/Logs/Editor.log`),
     ]);
     assert.deepEqual(await editorPids(env, ROOT), []);
+  });
+});
+
+describe("Windows' Unity editors", () => {
+  it("are the Unity.exe rows of the task list's CSV, by id, with no command line", () => {
+    const csv = [
+      '"Unity.exe","4242","Console","1","1,234,567 K"',
+      '"Unity Hub.exe","51","Console","1","98,304 K"',
+      '"UNITY.EXE","77","Console","1","5 K"',
+      "INFO: No tasks are running which match the specified criteria.",
+      "",
+    ].join("\r\n");
+    assert.deepEqual(tasklistEditors(csv), [
+      { pid: 4242, exec: "Unity.exe", args: "" },
+      { pid: 77, exec: "UNITY.EXE", args: "" },
+    ]);
   });
 });
 

@@ -162,8 +162,9 @@ describe("The Unity panel", { skip }, () => {
     const tab = await browser.newPage({ viewport: VIEWPORT });
     const backend = async (method: string, name: string, args: Record<string, unknown>, wait: number | null) => {
       if (method !== "action") return { error: `unexpected ${method}` };
-      if (name !== UnityAction.Status) wire.sent.push([name, args, wait]);
-      const scripted = name === UnityAction.Status ? undefined : wire.answer?.(name);
+      const look = name === UnityAction.Status || name === UnityAction.Agents;
+      if (!look) wire.sent.push([name, args, wait]);
+      const scripted = look ? undefined : wire.answer?.(name);
       if (scripted) return scripted;
       try {
         return { value: await computer.act(name, args, binding) };
@@ -231,6 +232,28 @@ describe("The Unity panel", { skip }, () => {
       assert.ok(200_000 > PLUGIN_CALL_TIMEOUT_MS, "the host's own answer reaches the panel before its wait ends");
       assert.equal(computer.launches.length, 1);
       assert.equal(await shown(tab, "error"), false);
+    } finally {
+      await tab.close();
+    }
+  });
+
+  it("shows whether agents may use Unity while the person plays, on unless turned off, and keeps the person's choice", async () => {
+    const { computer, root } = await setUpGame(looks(look));
+    await computer.openIn(root);
+    const { tab, wire } = await open(computer);
+    try {
+      const box = tab.locator("#while-playing");
+      assert.equal(await shown(tab, "agents"), true);
+      assert.match(await textOf(tab, "agents"), /Agents may use Unity while you play/);
+      assert.equal(await box.isChecked(), true, "on unless the person turned it off");
+      await tab.getByText("Agents may use Unity while you play").click();
+      await tab.waitForFunction(() => !(document.getElementById("while-playing") as HTMLInputElement).disabled);
+      assert.equal(await box.isChecked(), false);
+      assert.deepEqual(wire.sent, [[UnityAction.AgentsWait, {}, null]]);
+      assert.deepEqual(await computer.act(UnityAction.Agents), { whilePlaying: false }, "kept for every game");
+      await box.click();
+      await tab.waitForFunction(() => (document.getElementById("while-playing") as HTMLInputElement).checked);
+      assert.deepEqual(wire.sent.at(-1), [UnityAction.AgentsGoAhead, {}, null]);
     } finally {
       await tab.close();
     }

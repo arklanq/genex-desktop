@@ -7,7 +7,11 @@ import { type AppLookAccessKind, JobTool } from "../shared/jobs.ts";
 import { type ChatJudgeResultPayload, readChatJudgeResult } from "../shared/chat-judge.ts";
 import { type WorkerLine, workerEndLine, workerLineEnded, workerStartLine } from "./chat/worker-lines.ts";
 import { workerKeyOf } from "../shared/run-graph-events.ts";
-import { type FinishRecord, FinishCheckStep, finishRecordOf } from "../shared/finish-check.ts";
+import {
+  type StillToFix as ClosedStillToFix,
+  StopWhy,
+  stillToFixOf as closedStillToFix,
+} from "../shared/finish-check.ts";
 /**
  * The chat transcript as entries: the thread's event log read once, oldest first, into the
  * bubbles, tool-chip groups, narration lines and cards the chat draws. Pure — `chat/transcript.ts`
@@ -54,7 +58,6 @@ import { offeredRewindUndo } from "../shared/chat-rewind.ts";
 import { type ConnectorStep, connectorStep, endsPlay, showsPlayView, startsPlay } from "./chat/connector-steps.ts";
 import {
   A_PLUGIN,
-  FINISH_CHECK_WORDS,
   GAME_ENGINE_WORDS,
   appAccessMissing,
   autopilotStartWords,
@@ -94,6 +97,7 @@ import {
   toolActivityWords,
   toolWords,
   usingPluginWords,
+  STILL_TO_FIX_WORDS,
   verdictSentence,
   wasCancelled,
 } from "./words.ts";
@@ -143,8 +147,19 @@ export const EntryAction = {
   Judge: "judge",
   /** A rewind put game files back (`conversation_rewound`): one line, with Bring back newer version while offered. */
   Rewound: "rewound",
+  /** An agent went ahead of the person in an app a plugin's lock guards (`agent_went_ahead`): one line, with that plugin's settings. */
+  WentAhead: "went-ahead",
 } as const;
 export type EntryAction = (typeof EntryAction)[keyof typeof EntryAction];
+
+/** Why a Loop stopped, as the person reads it under "Almost there"; `listed`: the card lists what is left. */
+export function stopWhyLine(why: StopWhy, hours: number | null, listed = true): string {
+  if (why !== StopWhy.Time) return STILL_TO_FIX_WORDS.why[why];
+  return listed ? STILL_TO_FIX_WORDS.why.time(hours) : STILL_TO_FIX_WORDS.why.timeUnlooked(hours);
+}
+
+/** What a run that ended without the reviewer's yes leaves for the person: its last no's lists, why it stopped, its hours. */
+export type StillToFix = ClosedStillToFix;
 
 export type Entry =
   | {
@@ -234,6 +249,8 @@ export type Entry =
       appAccess?: AppLookAccessKind[];
       /** action "judge": what the judge established, in the words of a build's checks list. */
       judge?: ChatJudgeResultPayload;
+      /** action "went-ahead": the plugin whose settings the line opens, and the app it names. */
+      wentAhead?: { pluginId: string; label: string };
     }
   /**
    * The morning: what the run amounts to, in one card. It replaces the line that read
@@ -271,10 +288,13 @@ export type Entry =
       handedOff?: boolean;
       /** a later close of the same run followed: only that one offers Resume */
       superseded?: true;
+      /** the run ended without the reviewer's yes: what its last no found done and still to fix */
+      stillToFix?: StillToFix;
+      /** the chat's newest result card: only it offers Keep building */
+      latest?: true;
     };
 
 type ToolsEntry = Extract<Entry, { kind: typeof EntryKind.Tools }>;
-type SystemEntry = Extract<Entry, { kind: typeof EntryKind.System }>;
 /** The card of the Genex cover a builder kept. */
 export type GenexCoverEntry = Extract<Entry, { kind: typeof EntryKind.GenexCover }>;
 type ActionEntry = Extract<Entry, { kind: typeof EntryKind.Action }>;
@@ -284,7 +304,8 @@ const isConsentCard = (e: Entry): e is ActionEntry => e.kind === EntryKind.Actio
 /** Claude's own permission card in the transcript. */
 const isPermissionCard = (e: Entry): e is ActionEntry =>
   e.kind === EntryKind.Action && e.action === EntryAction.Permission;
-type MorningEntry = Extract<Entry, { kind: typeof EntryKind.Morning }>;
+/** A run's result card. */
+export type MorningEntry = Extract<Entry, { kind: typeof EntryKind.Morning }>;
 type QuestionEntry = Extract<Entry, { kind: typeof EntryKind.Question }>;
 
 /** The tag of a narration line or card (`Entry.tag`): what the transcript shows and the activity fold keys on. */
@@ -315,8 +336,6 @@ export const SystemTag = {
   Show: "SHOW",
   Checkpoint: "CHECKPOINT",
   Engine: "ENGINE",
-  /** The reviewer's check of the lead's claim that the goal is reached: never routine. */
-  FinishCheck: "FINISH CHECK",
 } as const;
 export type SystemTag = (typeof SystemTag)[keyof typeof SystemTag];
 
@@ -535,8 +554,8 @@ interface ChatDraft {
   endedJobs: Set<string>;
   /** Each worker's line by its graph and id (`workerKeyOf`), with what its records said, so later ones rewrite it. */
   workerLines: Map<string, { entry: ActionEntry; line: WorkerLine }>;
-  /** Each finish check round's line by its run and round, so the round's verdict rewrites it; `checking` until it has one. */
-  finishLines: Map<string, { entry: SystemEntry; runId: string; checking: boolean }>;
+  /** The chat's newest result card: only it offers Keep building. */
+  latestResult: MorningEntry | null;
 }
 
 /**
@@ -586,7 +605,7 @@ function newChatDraft(events: EventEnvelope[], queueIds: ReadonlyMap<string, str
     jobs: new Map(),
     endedJobs: new Set(),
     workerLines: new Map(),
-    finishLines: new Map(),
+    latestResult: null,
     rounds: { kept: 0, undone: 0, firstShot: null, lastShot: null },
     rowByCall: new Map(),
     directTurns: new Map(),
@@ -734,11 +753,18 @@ function userEntry(id: string, content: string): Entry {
   return { id, kind: EntryKind.User, text: note.text, about: NOTE_ABOUT };
 }
 
+/** The person spoke after the newest result: its Keep building is history, as Builds' is after a chat turn. */
+function retireLatestResult(chat: ChatDraft): void {
+  if (chat.latestResult) delete chat.latestResult.latest;
+  chat.latestResult = null;
+}
+
 function readMessages(chat: ChatDraft, eventId: string, data: Extract<EventData, { type: "messages" }>): void {
   for (const [messageIndex, message] of data.messages.entries()) {
     const messageId = `${eventId}-${messageIndex}`;
     if (message.role === "user") {
       for (const entry of chat.entries) if (awaitsAnswer(entry)) entry.pending = false;
+      retireLatestResult(chat);
       const bubble = userEntry(messageId, message.content);
       chat.entries.push(bubble);
       placeTagCard(chat, chat.tagged.queueIds.get(eventId), bubble);
@@ -1167,7 +1193,10 @@ function linkedEngineWords(link: EngineLinkedPayload): string {
   return isEngineId(link.engine) ? link.engine : GAME_ENGINE_WORDS[GameEngine.Unreal];
 }
 
-/** "Fog Valley now builds in Unreal · Valley": the newest link of a game keeps its Undo. */
+/**
+ * "Fog Valley now builds in Unreal · Valley" ("Set up Valley for Genex · Fog Valley now builds in
+ * Unreal" when the link also set the project up): the newest link of a game keeps its one Undo.
+ */
 function narrateEngineLink(chat: ChatDraft, event: EventEnvelope): void {
   const link = customPayload(event.data, CustomEvent.EngineLinked);
   if (!link) return;
@@ -1180,7 +1209,9 @@ function narrateEngineLink(chat: ChatDraft, event: EventEnvelope): void {
     kind: EntryKind.Action,
     tag: SystemTag.Engine,
     action: EntryAction.EngineLink,
-    text: TRANSCRIPT_WORDS.engineLinked(link.title, engine, link.name ?? ""),
+    text: link.setUp
+      ? TRANSCRIPT_WORDS.engineSetUpAndLinked(link.title, engine, link.name ?? "")
+      : TRANSCRIPT_WORDS.engineLinked(link.title, engine, link.name ?? ""),
     ...(pluginId && project && linkedAt ? { engineLink: { project, pluginId, linkedAt } } : {}),
   };
   closeGroup(chat);
@@ -1328,57 +1359,6 @@ function pushWorkerLine(chat: ChatDraft, id: string, key: string, line: WorkerLi
   chat.workerLines.set(key, { entry, line });
 }
 
-/** A finish check round's line: the reviewer at work, its yes, its no with the first reason, a stop, or no answer. */
-function finishLine(check: FinishRecord): string {
-  const { chat } = FINISH_CHECK_WORDS;
-  if (check.step === FinishCheckStep.Checking) return chat.checking;
-  if (check.step === FinishCheckStep.Accepted) return chat.accepted;
-  if (check.step === FinishCheckStep.Unanswered) return chat.unanswered(check.why ?? "");
-  if (check.stopped) return chat.stopped(check.reasons.join(" "));
-  return chat.rejected(check.rejections ?? 1, check.reasons[0] ?? "");
-}
-
-/**
- * One line per round of a run's finish check: written when the reviewer starts, rewritten in place
- * by its verdict; a verdict whose start is not on this page is a line of its own. A stop asks for
- * attention.
- */
-function narrateFinishCheck(chat: ChatDraft, event: EventEnvelope): void {
-  const payload = customPayload(event.data, CustomEvent.FinishCheck);
-  const check = payload ? finishRecordOf(payload) : null;
-  if (!check) return;
-  const key = `${check.runId}\u0000${check.round}`;
-  const text = finishLine(check);
-  const checking = check.step === FinishCheckStep.Checking;
-  const known = chat.finishLines.get(key);
-  if (known) {
-    known.entry.text = text;
-    known.checking = checking;
-    if (check.stopped) known.entry.attention = true;
-    return;
-  }
-  const entry: SystemEntry = {
-    id: event.id,
-    kind: EntryKind.System,
-    tag: SystemTag.FinishCheck,
-    text,
-    ...(check.stopped ? { attention: true } : {}),
-  };
-  chat.entries.push(entry);
-  chat.finishLines.set(key, { entry, runId: check.runId, checking });
-}
-
-/** A run finished: a round of its finish check still checking (no verdict reached the log) had no answer. */
-function narrateRunFinishSettled(chat: ChatDraft, event: EventEnvelope): void {
-  const runId = customPayload(event.data, CustomEvent.RunFinished)?.runId;
-  if (!runId) return;
-  for (const known of chat.finishLines.values()) {
-    if (known.runId !== runId || !known.checking) continue;
-    known.entry.text = FINISH_CHECK_WORDS.chat.unanswered("");
-    known.checking = false;
-  }
-}
-
 /** Genex can't see app windows yet: one line naming what to allow, with a button per pane. */
 function narrateAppAccess(chat: ChatDraft, event: EventEnvelope): void {
   const payload = customPayload(event.data, CustomEvent.AppLookAccess);
@@ -1392,6 +1372,23 @@ function narrateAppAccess(chat: ChatDraft, event: EventEnvelope): void {
     action: EntryAction.AppAccess,
     text: appAccessMissing(missing),
     appAccess: missing,
+  });
+}
+
+/** An agent went ahead of the person: one line naming the app, with its plugin's settings; a partial record draws nothing. */
+function narrateWentAhead(chat: ChatDraft, event: EventEnvelope): void {
+  const payload = customPayload(event.data, CustomEvent.AgentWentAhead);
+  const pluginId = typeof payload?.pluginId === "string" ? payload.pluginId : "";
+  const label = typeof payload?.label === "string" ? payload.label.trim() : "";
+  if (!pluginId || !label) return;
+  closeGroup(chat);
+  chat.entries.push({
+    id: event.id,
+    kind: EntryKind.Action,
+    tag: SystemTag.Ask,
+    action: EntryAction.WentAhead,
+    text: TRANSCRIPT_WORDS.wentAhead(label),
+    wentAhead: { pluginId, label },
   });
 }
 
@@ -1425,7 +1422,10 @@ function narrateEngineUndone(chat: ChatDraft, event: EventEnvelope): void {
   const line = undone?.linkedAt ? chat.engineLinks.get(undone.linkedAt) : undefined;
   if (!line) return;
   delete line.entry.engineLink;
-  line.entry.outcome = TRANSCRIPT_WORDS.engineUndone(line.title, undone?.restored);
+  line.entry.outcome = TRANSCRIPT_WORDS.engineUndone(line.title, undone?.restored, {
+    undone: undone?.setUpUndone,
+    kept: undone?.setUpKept,
+  });
 }
 
 function narrateImprovement(chat: ChatDraft, event: EventEnvelope): void {
@@ -1953,6 +1953,10 @@ function narrateFinished(chat: ChatDraft, event: EventEnvelope): void {
   settleRunTools(chat, finished);
   const result = morningCard(chat, event.id, finished);
   chat.entries.push(result);
+  // Only the chat's newest result offers Keep building: an older card's list is history.
+  if (chat.latestResult) delete chat.latestResult.latest;
+  result.latest = true;
+  chat.latestResult = result;
   if (result.runId && chat.cover?.runId === result.runId) placeCoverCard(chat);
   // A paused or reopened run closes more than once; its latest result carries everything it
   // generated, and the earlier cards no longer speak for where it stands.
@@ -1987,8 +1991,20 @@ function profileOf(finished: FinishedPayload): LoopProfile | null {
   return isLoopProfile(finished.profile) ? finished.profile : null;
 }
 
+/**
+ * What a Loop's close without its yes leaves to fix, as the harness wrote it on the close
+ * (`run_finished.stillToFix`): none on a pause, which keeps its own reason and Resume, nor after a yes.
+ */
+function stillToFixOf(finished: FinishedPayload): { stillToFix?: StillToFix } {
+  const paused = finished.executionStatus === ExecutionStatus.Paused || finished.paused === true;
+  if (paused || finished.victory === true) return {};
+  const left = closedStillToFix(finished.stillToFix);
+  return left ? { stillToFix: left } : {};
+}
+
 function morningCard(chat: ChatDraft, id: string, finished: FinishedPayload): MorningEntry {
   const { rounds } = chat;
+  const stillToFix = stillToFixOf(finished);
   const judged = rounds.kept + rounds.undone;
   const n = judged || (Array.isArray(finished.iterations) ? finished.iterations.length : 0);
   const head = finished.integrationHead;
@@ -2014,6 +2030,7 @@ function morningCard(chat: ChatDraft, id: string, finished: FinishedPayload): Mo
     before: rounds.firstShot,
     after: rounds.lastShot,
     ...(chat.waiting.size > 0 && wasCancelled(finished.stoppedBecause) ? { handedOff: true } : {}),
+    ...stillToFix,
   };
 }
 
@@ -2089,9 +2106,8 @@ const NARRATORS: readonly Narrator[] = [
   narrateJobEnded,
   narrateWorkerStarted,
   narrateWorkerFinished,
-  narrateFinishCheck,
-  narrateRunFinishSettled,
   narrateAppAccess,
+  narrateWentAhead,
   narrateChatJudge,
   narratePluginSuggested,
   narrateImprovement,

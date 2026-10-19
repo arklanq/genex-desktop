@@ -67,8 +67,9 @@ import {
   type LibraryStore,
 } from "./library.ts";
 import { createPluginsStore, PLUGIN_INDEX_POLL_MS, type PluginsStore } from "./plugins.ts";
-import { createPlayStore, type PlayStore, remixProgressed, viewerReported } from "./play.ts";
+import { createPlayStore, type PlayStore, remixClosed, remixProgressed, viewerReported } from "./play.ts";
 import { createPeopleStore, type PeopleStore } from "./people.ts";
+import { createSharingStore, type SharingStore } from "./sharing.ts";
 import {
   bootstrapFailed,
   bootstrapReady,
@@ -133,6 +134,8 @@ export interface Studio {
   readonly play: PlayStore;
   /** Play's people: the Genex account, friends and profiles (`people.ts`). */
   readonly people: PeopleStore;
+  /** Save and Share on the open game's assets (`sharing.ts`). */
+  readonly sharing: SharingStore;
   readonly agentScreens: AgentScreensStore;
   readonly commandRuns: CommandRunsStore;
   /** What commands a reply offered have printed, outside React state. */
@@ -213,6 +216,7 @@ interface Stores {
   readonly plugins: PluginsStore;
   readonly play: PlayStore;
   readonly people: PeopleStore;
+  readonly sharing: SharingStore;
   readonly agentScreens: AgentScreensStore;
   readonly commandRuns: CommandRunsStore;
   readonly commandOutput: CommandOutput;
@@ -230,6 +234,7 @@ function createStores(
   visibility: VisibilitySource,
 ): Stores {
   const publication = createPublicationBatch(unstable_batchedUpdates);
+  const people = createPeopleStore(api, storage);
   return {
     publication,
     session: createSessionStore(),
@@ -241,8 +246,10 @@ function createStores(
     library: createLibraryStore(api, timers, visibility, publication.publish),
     engines: createEnginesStore(api),
     plugins: createPluginsStore(api),
-    play: createPlayStore(api, storage),
-    people: createPeopleStore(api, storage),
+    // A change from a card's menu shows on a profile's cards too.
+    play: createPlayStore(api, storage, Date.now, (gameId, next) => people.gameChanged(gameId, next)),
+    people,
+    sharing: createSharingStore(api, timers),
     agentScreens: createAgentScreensStore(),
     commandRuns: createCommandRunsStore(),
     commandOutput: createCommandOutput(),
@@ -361,6 +368,8 @@ function bootstrapper(api: StudioApi, stores: Stores, storage: KeyValueStorage |
 function applyUiEvent({ agentScreens, threads, layout, library, update, play }: Stores, event: UiEvent): void {
   switch (event.type) {
     case UiEvent.PlayViewer:
+      // The bar's Remix closed the viewer: the copy is made of the game it showed, as a card's is.
+      if (remixClosed(play.getState().viewer, event.payload)) void play.remixViewed();
       play.setState((state) => viewerReported(state, event.payload), true);
       break;
     case UiEvent.PlayRemix:

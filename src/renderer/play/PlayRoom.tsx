@@ -1,7 +1,7 @@
 /**
  * Play's dashboard: genex.games' published games, tools and assets inside the app. The sidebar picks
- * the shelf; its tabs and search ride a bar over the grid that steps away while the cards scroll on
- * down and comes back as soon as they scroll up. The grid reads its next page before it runs out, and
+ * the shelf; its tabs (the Assets shelf's switchers, `PlayAssets.tsx`) and search ride a bar over the
+ * grid that steps away while the cards scroll on down and comes back as soon as they scroll up. The grid reads its next page before it runs out, and
  * the players in multiplayer games are counted again while the page is in front. A tab read before
  * draws at once; one on its way draws its cards' shapes; one that failed says so with Try again.
  * Offline, the bar says so, what cannot load says it comes back by itself, and it does once the Mac
@@ -9,21 +9,23 @@
  */
 import type { JSX, KeyboardEvent, RefObject, UIEvent } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { AssetScope } from "../../shared/asset-library.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { PlayCategory, type PlayGame, PlayShelf } from "../../shared/play.ts";
 import { SIDEBAR_TOGGLE } from "../shell/use-shell-chrome.ts";
 import { feedOf } from "../state/play.ts";
 import { usePlay, useShallow } from "../state/hooks.ts";
 import { studio } from "../state/studio.ts";
-import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { withViewTransition } from "../ui/view-transition.ts";
 import { PLAY_WORDS } from "../words.ts";
 import { useBackOnline, useOnline } from "../ui/use-online.ts";
 import { gridColumns, setClipsCovered, topRowClip } from "./clip-playback.ts";
 import { ClipsToggle } from "./CoverClip.tsx";
+import { AssetSwitchers, AssetsBody } from "./PlayAssets.tsx";
 import { PlayCard, PlayCardPlaceholder } from "./PlayCard.tsx";
-import { OfflineChip, OfflineMark, OfflineNotice } from "./PlayOffline.tsx";
+import { MoreFailed, MoreMarker, Notice } from "./PlayFeedParts.tsx";
+import { OfflineChip, OfflineNotice } from "./PlayOffline.tsx";
 import { BAR_AT_TOP, barAfterScroll, FeedStatus, shelfTabs } from "./play-model.ts";
 import { TopCreators } from "./TopCreators.tsx";
 
@@ -34,8 +36,6 @@ const ONLINE_POLL_MS = 20 * SECOND_MS;
 const SEARCH_DEBOUNCE_MS = 200;
 /** How many card shapes stand in for a tab on its way. */
 const PLACEHOLDERS = 8;
-/** How far below the fold the next page starts loading. */
-const LOAD_AHEAD = "900px";
 
 /** The tabs on the header's line; arrow keys, Home and End move between them. */
 function CategoryTabs({
@@ -114,7 +114,7 @@ function SearchField({
 }
 
 /** A search's answer: the games, or that it is on its way or failed. */
-interface SearchState {
+export interface SearchState {
   query: string;
   games: PlayGame[];
   status: FeedStatus;
@@ -169,29 +169,6 @@ function useOnlineCounts(category: PlayCategory, ready: boolean): void {
   }, [category, ready]);
 }
 
-/** A marker under the grid that reads the next page once it comes near the fold. */
-function MoreMarker({
-  onNear,
-  scroller,
-}: {
-  onNear: () => void;
-  /** The element the grid scrolls in: the look-ahead is measured from its edge. */
-  scroller: RefObject<HTMLDivElement | null>;
-}): JSX.Element {
-  const marker = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    const element = marker.current;
-    if (!element) return;
-    const observer = new IntersectionObserver((entries) => entries.some((e) => e.isIntersecting) && onNear(), {
-      root: scroller.current,
-      rootMargin: `0px 0px ${LOAD_AHEAD} 0px`,
-    });
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [onNear, scroller]);
-  return <div ref={marker} className="play-more" aria-hidden="true" />;
-}
-
 /** Remix from a card: Create shows the copy being made in main, and opens it (`usePlayRemixes`). */
 export function useCardRemix(): (game: PlayGame) => void {
   // One change on screen: the card's Play turns into Create's remix (`usePlayRemixes`).
@@ -205,7 +182,7 @@ function useGridColumns(grid: RefObject<HTMLDivElement | null>, on: boolean): nu
     const element = grid.current;
     if (!on || !element) return;
     const measure = () => setColumns(gridColumns(getComputedStyle(element).gridTemplateColumns));
-    measure();
+    // The observer's first call measures once the grid is laid out, never forcing a layout mid-commit.
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
@@ -258,41 +235,6 @@ export function Grid({
         // biome-ignore lint/suspicious/noArrayIndexKey: placeholders are identical and only counted
         <PlayCardPlaceholder key={i} />
       ))}
-    </div>
-  );
-}
-
-/** A tab, or a search, that has nothing to show: the reason in one line, and Try again after a failure. */
-function Notice({ text, onRetry }: { text: string; onRetry?: () => void }): JSX.Element {
-  return (
-    <div className="play-notice" role={onRetry ? "alert" : "status"}>
-      <p>{text}</p>
-      {onRetry && (
-        <Button variant="secondary" onClick={onRetry}>
-          <Icon name="reload" />
-          {WORDS.retry}
-        </Button>
-      )}
-    </div>
-  );
-}
-
-/** Under the cards, when their next page could not be read: offline it waits, else Try again. */
-function MoreFailed({ noun, online, onRetry }: { noun: string; online: boolean; onRetry: () => void }): JSX.Element {
-  if (!online)
-    return (
-      <div className="play-more-failed" role="status">
-        <OfflineMark />
-        {WORDS.offline.more(noun)}
-      </div>
-    );
-  return (
-    <div className="play-more-failed" role="alert">
-      {WORDS.moreFailed(noun)}
-      <Button variant="secondary" onClick={onRetry}>
-        <Icon name="reload" />
-        {WORDS.retry}
-      </Button>
     </div>
   );
 }
@@ -374,6 +316,36 @@ function SearchBody({
   );
 }
 
+/** The shown shelf's grid: the Assets shelf's tiles, a search's cards, or the tab's. */
+function ShelfBody({
+  shelf,
+  category,
+  query,
+  search,
+  online,
+  onRetrySearch,
+  onRemix,
+  scroller,
+}: {
+  shelf: PlayShelf;
+  category: PlayCategory;
+  query: string;
+  search: SearchState | null;
+  online: boolean;
+  onRetrySearch: () => void;
+  onRemix: (game: PlayGame) => void;
+  scroller: RefObject<HTMLDivElement | null>;
+}): JSX.Element {
+  if (shelf === PlayShelf.Assets)
+    return (
+      <AssetsBody query={query} search={search} online={online} onRetrySearch={onRetrySearch} scroller={scroller} />
+    );
+  const noun = WORDS.nouns[shelf];
+  if (search)
+    return <SearchBody search={search} noun={noun} online={online} onRetry={onRetrySearch} onRemix={onRemix} />;
+  return <FeedBody category={category} shelf={shelf} online={online} onRemix={onRemix} scroller={scroller} />;
+}
+
 /**
  * The bar over the cards as they scroll: whether they are under it (its controls then wear a
  * backing) and whether it has stepped away; both start over when `reset` changes. What stands
@@ -423,6 +395,10 @@ function useReloadsWhenBack(shown: PlayCategory, search: SearchState | null, ret
   });
 }
 
+/** What a search on `shelf` asks Play's catalog: nothing on Mine, which searches the person's own library. */
+const catalogQuery = (shelf: PlayShelf, scope: AssetScope, query: string): string =>
+  shelf === PlayShelf.Assets && scope === AssetScope.Mine ? "" : query;
+
 /** Play's dashboard, in place of the workspace while Play is up. */
 export function PlayRoom({
   sidebarHidden,
@@ -442,7 +418,8 @@ export function PlayRoom({
     setSearchedShelf(shelf);
     setQuery("");
   }
-  const { search, retry } = useSearch(query, shelf);
+  const scope = usePlay((s) => s.assetView.scope);
+  const { search, retry } = useSearch(catalogQuery(shelf, scope, query), shelf);
   const remix = useCardRemix();
   const { bar, lead, scrolled, hidden, onScroll } = useBarScroll(shelf);
   const online = useOnline();
@@ -466,6 +443,7 @@ export function PlayRoom({
     setQuery("");
     scroll.current?.scrollTo({ top: 0 });
   };
+  const toTop = (): void => scroll.current?.scrollTo({ top: 0 });
   return (
     <section data-play-page aria-label={WORDS.page} className="play-page">
       {/* Keyed by shelf: another shelf starts at the top. The cards scroll under the bar. */}
@@ -489,17 +467,23 @@ export function PlayRoom({
               <Icon name="sidebar" />
             </button>
           )}
+          {shelf === PlayShelf.Assets && <AssetSwitchers onChoose={toTop} />}
           {tabs.length > 1 && <CategoryTabs categories={tabs} active={search ? null : shown} onSelect={choose} />}
           <ClipsToggle />
           {!online && <OfflineChip />}
           <SearchField query={query} noun={noun} onQuery={setQuery} />
         </header>
         <div className="play-content">
-          {search ? (
-            <SearchBody search={search} noun={noun} online={online} onRetry={retry} onRemix={remix} />
-          ) : (
-            <FeedBody category={shown} shelf={shelf} online={online} onRemix={remix} scroller={scroll} />
-          )}
+          <ShelfBody
+            shelf={shelf}
+            category={shown}
+            query={query}
+            search={search}
+            online={online}
+            onRetrySearch={retry}
+            onRemix={remix}
+            scroller={scroll}
+          />
         </div>
       </div>
       {/* The cards fade out under the bar once they scroll, and at the foot of the page. */}

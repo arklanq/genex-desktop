@@ -47,7 +47,7 @@ export interface PluginNativeJob {
   maxOutputBytes: number;
   /** Maximum aggregate bytes in declared generated files, 1–104857600. */
   maxAssetBytes: number;
-  /** Needed for GPU rendering, including Blender EEVEE; permits the runtime's Metal cache. */
+  /** Needed for GPU rendering, including Blender EEVEE; permits the runtime's Metal cache, and lets Metal's compiler use it. */
   gpu?: boolean;
 }
 export interface PluginNativeStatus {
@@ -273,7 +273,7 @@ export interface PluginToolbarItem {
   label: string;
   /** 1–60 characters, unique across the manifest. */
   ariaLabel: string;
-  /** A glyph of at most 4 characters, or a host icon: globe, export, play, image, box, boxes, unreal. */
+  /** A glyph of at most 4 characters, or a host icon: globe, export, play, image, box, boxes, unreal, godot, unity. */
   icon?: string;
   /** Default true: the button waits for a loaded game. */
   requiresProject?: boolean;
@@ -640,12 +640,22 @@ export interface PluginHostCall {
    * called from shows one line with Undo, naming the project by `name` when you give one (one plain
    * line, at most 80 characters: the project as people know it, when its file's name isn't), else
    * by its file's name; `auto` says the link was made by the game's first call rather than asked
-   * for. From outside any game, `game` names one this plugin made with `game.create`; any other
-   * game is refused.
+   * for. `setUp` says you set the project up for Genex to make this link: the chat line says so,
+   * and its Undo first runs your `undo-setup` action with `{project, ifSetUp: true}` (no question;
+   * answer nothing when the project is no longer set up, and refuse with a reason to keep the link).
+   * Linking the project the game already uses with `setUp` makes a new link. From outside any game,
+   * `game` names one this plugin made with `game.create`; any other game is refused.
    */
   (
     method: "game.engine.link",
-    args: { project: string; remote?: PluginEngineRemote; name?: string; auto?: boolean; game?: string },
+    args: {
+      project: string;
+      remote?: PluginEngineRemote;
+      name?: string;
+      auto?: boolean;
+      setUp?: boolean;
+      game?: string;
+    },
   ): Promise<PluginEngineLink>;
   /** `game-engine`: the bound game's link, or null while it has none that still holds. */
   (method: "game.engine.read"): Promise<PluginEngineLink | null>;

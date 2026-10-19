@@ -3,7 +3,15 @@ import { Popover, PopoverContent, PopoverTrigger } from "./popover.tsx";
 import { ComposerTip } from "./PickerPanel.tsx";
 import { Icon } from "./icons.tsx";
 import { contextLabel, type ModelChoice, type RoleKey } from "./ModelMenu.tsx";
-import { contextReading, limitLevel, pendingPlans, PLAN_PROVIDERS, planWords, resetWords } from "./usage-words.ts";
+import {
+  contextReading,
+  limitLevel,
+  pendingPlans,
+  PLAN_PROVIDERS,
+  planWords,
+  resetWords,
+  shownLimits,
+} from "./usage-words.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { usePolling } from "../use-polling.ts";
 import { GenexCredits } from "../panels/plugins/genex/GenexCredits.tsx";
@@ -18,8 +26,6 @@ export type { ContextUsage };
 /** The ring's circumference: a circle of radius 6. */
 const RING = 2 * Math.PI * 6;
 const ROLE_WORDS: Record<RoleKey, string> = { planner: "Main agent", builder: "Workers", judge: "Reviewers" };
-/** A reading this old says when it was taken. */
-const STALE_MS = 10 * MINUTE_MS;
 /** A usage reading younger than this is not asked for again on hover. */
 const USAGE_FRESH_MS = 30 * SECOND_MS;
 /** While the panel is open, usage is read again this often. */
@@ -136,7 +142,7 @@ function PlanLimits({
   const usage: ProviderUsage | null = report.usage;
   const page = PLAN_PROVIDERS[report.engine]?.usagePage;
   const title = planWords(report.engine, usage?.plan);
-  const stale = usage && Date.now() - Date.parse(usage.measuredAt) > STALE_MS;
+  const limits = shownLimits(usage?.windows ?? []);
   const { accounts, reload } = useSubscriptionAccounts(report.engine, report);
   return (
     <section className="usage-plan" data-usage-engine={report.engine}>
@@ -163,15 +169,10 @@ function PlanLimits({
       {accounts.length > 1 && (
         <PlanAccounts engine={report.engine} accounts={accounts} onSwitched={() => onSwitched(reload)} />
       )}
-      {usage?.windows.map((window) => (
+      {limits.map((window) => (
         <LimitWindow key={window.id} window={window} />
       ))}
       {!usage?.windows.length && <p className="usage-note">Usage not reported</p>}
-      {stale && (
-        <p className="usage-note">
-          As of {new Date(usage.measuredAt).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
-        </p>
-      )}
     </section>
   );
 }

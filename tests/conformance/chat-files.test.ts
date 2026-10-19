@@ -28,7 +28,7 @@ import {
   credentialRoots,
   openModeFor,
 } from "../../src/main/chat-files.ts";
-import { fileLinkTitle, linkifyHtml } from "../../src/renderer/ui/file-links.ts";
+import { fileLinkTitle, fileNameOfPath, linkifyHtml } from "../../src/renderer/ui/file-links.ts";
 import { markdownHtml } from "../../src/renderer/ui/markdown-html.ts";
 import { toEntries } from "../../src/renderer/chat-entries.ts";
 import type { EventData, EventEnvelope } from "../../src/substrate/types.ts";
@@ -516,4 +516,13 @@ test("a Claude Code tool names its file in the row's chip", () => {
   ]);
   const rows = entries.flatMap((entry) => (entry.kind === "tools" ? entry.rows : []));
   assert.equal(rows[0]?.chip, "src/a.js");
+});
+
+test("a file a person's message carries shows by its own name; a short name is left as written", () => {
+  assert.equal(fileNameOfPath("/Users/me/Downloads/notes.txt"), "notes.txt");
+  assert.equal(fileNameOfPath("~/Desktop/level.pdf"), "level.pdf");
+  assert.equal(fileNameOfPath("file:///Users/me/Downloads/level%20plan.pdf"), "level plan.pdf");
+  assert.equal(fileNameOfPath("C:\\Users\\me\\notes.txt"), "notes.txt");
+  assert.equal(fileNameOfPath("src/game.js"), null);
+  assert.equal(fileNameOfPath("notes.txt"), null);
 });

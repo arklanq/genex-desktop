@@ -127,8 +127,8 @@ function projectWords(project: string | null | undefined, found?: string): strin
  * game folder (the Unreal Loop's lead: ART.md, build scripts, deliveries) is told `ownFiles`, and
  * never that the folder holds only notes. A project found in the folder but not linked (`found`, the
  * folder it was found in) is not built through the Unreal tools at all: until the plugin links it
- * (once the person has set it up; its skill names the tool), those tools work on the project chosen
- * in the Unreal panel, which can be another game's (`unlinkedUnrealRules`).
+ * (its skill names the tool, which sets the project up when it isn't), those tools work on the
+ * project chosen in the Unreal panel, which can be another game's (`unlinkedUnrealRules`).
  */
 export function unrealRules(
   _engine: string | undefined,
@@ -155,7 +155,7 @@ export function unrealRules(
  */
 function unlinkedUnrealRules(found: string, notes: string): string[] {
   return [
-    `This folder holds an Unreal Engine project ${projectWords(null, found)} that is not linked to this game yet. Until it is, the Unreal tools (${UNREAL_CONNECTOR}) work on the project chosen in Genex's Unreal panel, which can be another game's: never call them before this folder's project is linked to this game, once the person has set it up from the Unreal button (the Unreal plugin's skill names the tool that links it). Until then, work with the project's files.`,
+    `This folder holds an Unreal Engine project ${projectWords(null, found)} that is not linked to this game yet. Until it is, the Unreal tools (${UNREAL_CONNECTOR}) work on the project chosen in Genex's Unreal panel, which can be another game's: never call them before this folder's project is linked to this game (the Unreal plugin's skill names the tool that links it, and that tool sets the project up for Genex when it isn't). Until then, work with the project's files.`,
     notes,
     "Never build file watchers, polling scripts or exec bridges between this folder and Unreal: the Unreal tools are the way in once the project is linked.",
   ];

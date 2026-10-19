@@ -7,13 +7,14 @@
  * and the engine it plays in.
  */
 import type { JSX } from "react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { SECOND_MS } from "../../../shared/duration.ts";
 import { isUserCancelled } from "../../../shared/errors.ts";
 import { type PluginStageButton, type PluginStageCard, stageCardFrom } from "../../../shared/plugin-stage-card.ts";
 import type { PluginInfo } from "../../../shared/plugins.ts";
 import { runPluginAction } from "../../plugin-actions.ts";
 import { openPluginSetup } from "../../plugin-setup.ts";
+import { type StatusPoll, startStatusPoll } from "../../status-poll.ts";
 import { type Notify, ToastTone } from "../../state/toasts.ts";
 import { Button } from "../../ui/Button.tsx";
 import { PLUGIN_CARD_WORDS, problemWords } from "../../words.ts";
@@ -32,21 +33,33 @@ function cardSource(plugins: readonly PluginInfo[], observer: string | null) {
 
 type CardSource = NonNullable<ReturnType<typeof cardSource>>;
 
-/** The plugin's card for this game, asked every few seconds while it shows; null before its first answer. */
+/**
+ * The plugin's card for this game, asked every few seconds while it shows, one ask at a time; null
+ * before its first answer. A new game restarts the asking and drops the last game's answers; a new
+ * plugin list restarts it only when the plugin, its status action or its actions changed.
+ */
 function usePluginCard(source: CardSource | null, game: string) {
   const [card, setCard] = useState<{ game: string; card: PluginStageCard | null }>({ game, card: null });
-  const refresh = useCallback(async () => {
-    if (!source) return;
-    const answer = await window.studio
-      .pluginAction(source.plugin.manifest.id, source.status, {}, game)
-      .catch(() => null);
-    setCard({ game, card: stageCardFrom(answer, source.actions) });
-  }, [source, game]);
+  const poll = useRef<StatusPoll | null>(null);
+  const pluginId = source?.plugin.manifest.id;
+  const status = source?.status;
+  const actions = source ? [...source.actions].join("\n") : "";
   useEffect(() => {
-    void refresh();
-    const timer = setInterval(() => void refresh(), STATUS_POLL_MS);
-    return () => clearInterval(timer);
-  }, [refresh]);
+    if (!pluginId || !status) return;
+    const declared = new Set(actions.split("\n"));
+    const ask = () => window.studio.pluginAction(pluginId, status, {}, game).catch(() => null);
+    const read = startStatusPoll(
+      ask,
+      (answer) => setCard({ game, card: stageCardFrom(answer, declared) }),
+      STATUS_POLL_MS,
+    );
+    poll.current = read;
+    return () => {
+      read.stop();
+      if (poll.current === read) poll.current = null;
+    };
+  }, [pluginId, status, actions, game]);
+  const refresh = useCallback(() => poll.current?.refresh() ?? Promise.resolve(), []);
   return { card: card.game === game ? card.card : null, refresh };
 }
 
@@ -76,7 +89,7 @@ export function PluginCardStage({
   shot: string | null;
   onNotice: Notify;
 }): JSX.Element {
-  // The plugin list is a new array on each change, so the source is too: the poll restarts only then.
+  // The plugin list is a new array on each change, so the source is too; the poll keys on what it asks.
   const source = useMemo(() => cardSource(plugins, observer), [plugins, observer]);
   const { card, refresh } = usePluginCard(source, game.name);
   const [busy, setBusy] = useState(false);

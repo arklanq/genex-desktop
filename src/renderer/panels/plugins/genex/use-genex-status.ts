@@ -16,8 +16,11 @@ const MESSAGE = { unreadable: "Genex answered with something Studio can’t read
 /** A cancelled review or approval is the person's choice, not an error to show. */
 const CANCELLED = /Cancelled/;
 
-/** The plugin's status and the one action that may run at a time. */
-export function useGenexStatus(plugin: PluginInfo, project: string | null | undefined) {
+/**
+ * The plugin's status and the one action that may run at a time. While `reading` is false (the
+ * plugin is off) it reads nothing and holds no status, so turning it on starts from a fresh read.
+ */
+export function useGenexStatus(plugin: PluginInfo, project: string | null | undefined, reading = true) {
   const id = plugin.manifest.id;
   const [status, setStatus] = useState<GenexStatus | null>(null);
   // A failed read clears on the next good read; a failed action stays until the next action, so
@@ -62,6 +65,13 @@ export function useGenexStatus(plugin: PluginInfo, project: string | null | unde
   );
 
   useEffect(() => {
+    if (!reading) {
+      latest.current++;
+      setStatus(null);
+      setReadError("");
+      setActionError("");
+      return;
+    }
     void refresh();
     const again = (): void => void refresh();
     window.addEventListener("focus", again);
@@ -73,13 +83,14 @@ export function useGenexStatus(plugin: PluginInfo, project: string | null | unde
       window.removeEventListener("focus", again);
       unsubscribe();
     };
-  }, [id, refresh]);
+  }, [id, refresh, reading]);
 
   const pollMs = genexPollMs(status);
   useEffect(() => {
+    if (!reading) return;
     const timer = window.setInterval(() => void refresh(), pollMs);
     return () => window.clearInterval(timer);
-  }, [pollMs, refresh]);
+  }, [pollMs, refresh, reading]);
 
   const error = actionError || readError;
   return { status, error, running, act, refresh, review, closeReview: () => setReview(null) };

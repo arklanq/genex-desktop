@@ -3,8 +3,9 @@
  * it ready after it opens, saving its work, and ending it.
  *
  * An editor has a project open when a Unity process names it on its command line, or the Pipeline
- * descriptor in the project names a process that still runs (the only sign where processes can't
- * be listed). Unity's lock file is no sign: a killed editor leaves it behind.
+ * descriptor in the project names a process the computer lists as a Unity editor of this project or
+ * of none (`processes.ts`): a stale descriptor's id may belong to another app by now, which is
+ * neither counted nor signalled. Unity's lock file is no sign: a killed editor leaves it behind.
  *
  * Saving never asks Unity to save a scene that has no name: Unity would ask for one in a system
  * save panel, which stalls the editor until a person answers and which Pipeline itself does not
@@ -30,7 +31,7 @@ import {
   readDescriptor,
   runCommand,
 } from "./pipeline.ts";
-import { editorPids, endEditors, type ProcessEnv } from "./processes.ts";
+import { endEditors, type ProcessEnv, projectPids } from "./processes.ts";
 
 /** How long an editor asked to exit cleanly is given before its processes are signalled. */
 const CLEAN_EXIT_MS = 8 * SECOND_MS;
@@ -90,12 +91,11 @@ export const editorCommand = (
 ): Promise<PipelineAnswer> =>
   runCommand(root, { command, parameters }, deps.pipeline, { waitMs: COMMAND_WAIT_MS, signal });
 
-/** The ids of the processes that have the project open: by their command line, and by a descriptor whose process runs. */
+/** The ids of the processes that have the project open: by their command line, and by a descriptor whose process is a Unity editor. */
 export async function openPids(root: string, deps: EditorDeps): Promise<number[]> {
-  const listed = await editorPids(deps.processes, root);
   const descriptor = await readDescriptor(root);
-  const served = descriptor && deps.pipeline.alive(descriptor.pid) ? [descriptor.pid] : [];
-  return [...new Set([...listed, ...served])];
+  const named = descriptor && deps.pipeline.alive(descriptor.pid) ? descriptor.pid : undefined;
+  return projectPids(deps.processes, root, named);
 }
 
 /** Whether a Unity editor has the project at `root` open. */
@@ -211,7 +211,7 @@ export async function endEditor(root: string, deps: EditorDeps): Promise<boolean
   return false;
 }
 
-/** After the listed processes ended: ends one only its descriptor names, where processes can't be listed. */
+/** After the listed processes ended: ends the Unity editor only its descriptor names, as on Windows, whose list names no project. */
 async function goneOrSignalled(root: string, deps: EditorDeps): Promise<boolean> {
   const left = await openPids(root, deps);
   if (left.length === 0) return true;

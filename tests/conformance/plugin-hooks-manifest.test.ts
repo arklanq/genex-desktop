@@ -342,7 +342,7 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
   it("the bundled Unreal manifest is valid and its lock's probe needs no lock", () => {
     const raw = JSON.parse(readFileSync("src/plugins/unreal/plugin.json", "utf8")) as PluginManifest;
     const unreal = validateManifest(raw);
-    assert.equal(unreal.version, "0.17.1");
+    assert.equal(unreal.version, "0.17.5");
     assert.deepEqual(unreal.locks, [
       { id: "editor", label: "Unreal", per: LockScope.Project, personFirst: "editor-activity" },
     ]);
@@ -379,8 +379,8 @@ describe("a plugin's hooks, locks, needs and readiness", () => {
   it("the bundled Roblox manifest is valid: its version, its lock, its toolbar button, and no folders", () => {
     const raw = JSON.parse(readFileSync("src/plugins/roblox/plugin.json", "utf8")) as PluginManifest;
     const roblox = validateManifest(raw);
-    // Flipped: dev already ships 0.1.1, so a change to the plugin raises it (check-plugin-versions).
-    assert.equal(roblox.version, "0.1.2", "one step above the version dev has");
+    // A change to the plugin raises its version above the one dev has (check-plugin-versions).
+    assert.equal(roblox.version, "0.1.4", "one step above the version dev has");
     assert.deepEqual(roblox.locks, [
       { id: "studio", label: "Roblox Studio", per: LockScope.Project, personFirst: "studio-activity" },
     ]);

@@ -22,8 +22,10 @@
  *
  * A session joins a play already running rather than starting another, and ends only a play it
  * started. A play it started carries the agent's play mark (`agent-marks.ts`) from just before it
- * starts until it ends, so the Studio lock's probe never reads it as the person's; a session whose
- * plugin restarted takes over the play the mark still claims.
+ * starts until it ends or a play tool finds it stopped, so the Studio lock's probe never reads it
+ * as the person's; a session whose plugin restarted takes over the play the mark still claims, and
+ * a play the person started is never marked. A new play starts once the game's script changes on
+ * their way to Studio are sent.
  */
 import { SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
@@ -108,6 +110,8 @@ export interface PlayGame {
   ask: HelperAsk;
   /** The game's connection folder, where the agent's marks live; absent for a name that isn't a game id. */
   marks?: string;
+  /** Sends the game's script changes still on their way to Studio (refused while a play ran, too). */
+  flush?(): Promise<void>;
   signal?: AbortSignal;
 }
 
@@ -396,6 +400,8 @@ type Opening = { session: PlaySession; joined: boolean } | EnginePlayRefused;
 /** Starts the helper's multiplayer test (or joins the one running) and maps its players. */
 async function openTest(c: Ctx, edit: string, players: number): Promise<Opening> {
   const before = c.deps.studio ? await c.deps.studio.studios({ timeoutMs: CALL_MS }).catch(() => []) : [];
+  // Read before marking: a test this session joins is the agent's only when the mark claimed it already.
+  const claimed = await agentsPlay(c);
   await markPlay(c);
   const start = await startTest(c, players);
   if (start.why !== undefined) {
@@ -406,7 +412,7 @@ async function openTest(c: Ctx, edit: string, players: number): Promise<Opening>
   const seen = start.joined ? new Set<string>() : new Set(before.map((studio) => studio.id));
   const map = await mapTest(c, seen, players);
   const ids = inOrder(map, players);
-  const started = !start.joined || (await agentsPlay(c));
+  const started = !start.joined || claimed;
   if (!map.server || ids.length === 0) return giveUp(c, map.server, started);
   if (!started) await clearPlay(c);
   const view = map.view ?? { ...ENGINE_PLAY_VIEW };
@@ -431,6 +437,8 @@ async function openFresh(c: Ctx, edit: string, players: number): Promise<Opening
   const state = await studioState(c, edit);
   if (!state) return refused(EnginePlayRefusal.NoEditor, MESSAGE.noStudio);
   const running = state.dataModels.includes(DataModel.Client);
+  // A play runs the code Studio holds when it starts: changes held back while one ran go first.
+  if (!running) await c.game.flush?.();
   if (players > 1 && !running) return openTest(c, edit, players);
   const solo = await openSolo(c, edit, running);
   return "refused" in solo ? solo : { session: solo, joined: running };
@@ -444,7 +452,7 @@ async function open(c: Ctx, args: Record<string, unknown>) {
   const key = keyOf(c.game);
   const known = c.book.sessions.get(key);
   if (known && (await playingIn(c, known.players[0] ?? edit))) return opened(c, known, true);
-  c.book.sessions.delete(key);
+  await forget(c);
   const fresh = await openFresh(c, edit, playersArg(args.players));
   if ("refused" in fresh) return fresh;
   c.book.sessions.set(key, fresh.session);
@@ -461,9 +469,26 @@ function playerOf(c: Ctx, args: Record<string, unknown>) {
   return { session, player, studio: session.players[player - 1] ?? session.edit };
 }
 
+/**
+ * Lets go of the session's play once it is found ended (the person stopped it): the agent's mark
+ * goes with a play the session started, so the person's next edits count as theirs.
+ */
+async function forget(c: Ctx): Promise<void> {
+  const key = keyOf(c.game);
+  const session = c.book.sessions.get(key);
+  c.book.sessions.delete(key);
+  if (session?.started) await clearPlay(c);
+}
+
+/** A play that is found ended: the session lets go of it, and the answer says so. */
+async function notPlaying(c: Ctx): Promise<EnginePlayRefused> {
+  await forget(c);
+  return refused(EnginePlayRefusal.NotPlaying, MESSAGE.notPlaying);
+}
+
 /** A call that failed: not playing any more, or Studio's own words. */
 async function failed(c: Ctx, studio: string, answer: Called): Promise<EnginePlayRefused> {
-  if (!(await playingIn(c, studio))) return refused(EnginePlayRefusal.NotPlaying, MESSAGE.notPlaying);
+  if (!(await playingIn(c, studio))) return notPlaying(c);
   throw new Error(answer.text || MESSAGE.notPlaying);
 }
 
@@ -604,8 +629,7 @@ async function state(c: Ctx, args: Record<string, unknown>) {
     luau(c, session.server, DataModel.Server, PLAY_LUAU.ServerState),
     consoleTail(c, studio),
   ]);
-  if (!studioNow?.dataModels.includes(DataModel.Client))
-    return refused(EnginePlayRefusal.NotPlaying, MESSAGE.notPlaying);
+  if (!studioNow?.dataModels.includes(DataModel.Client)) return notPlaying(c);
   return {
     player,
     players: session.players.length,

@@ -23,7 +23,15 @@ import {
   ModelRefusal,
   openModelFile,
 } from "../../src/plugins/roblox/asset-gate.ts";
-import { buildGlb, gridCube, greyPng, MODEL_FIXTURES, manyTriangles, modelFixtures } from "../helpers/roblox-models.ts";
+import {
+  buildGlb,
+  glbFile,
+  gridCube,
+  greyPng,
+  MODEL_FIXTURES,
+  manyTriangles,
+  modelFixtures,
+} from "../helpers/roblox-models.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const PREVIEWS = path.resolve(import.meta.dirname, "../fixtures/asset-previews");
@@ -141,6 +149,57 @@ function jpegHeader(frame: number, before: Array<[number, number]>, width: numbe
   segments.push(sof);
   return Buffer.concat(segments);
 }
+
+/**
+ * A model drawing the unit cube `copies` times from one POSITION accessor of `vertices` vertices
+ * (the cube's first, the rest unused), as exporters write a vertex buffer that primitives share.
+ */
+function sharedPositions(vertices: number, copies: number): Buffer {
+  const cube = gridCube();
+  const corners = cube.indices ?? [];
+  const positions = Buffer.alloc(vertices * 12);
+  cube.positions.forEach((value, at) => positions.writeFloatLE(value, at * 4));
+  const indices = Buffer.alloc(corners.length * 2);
+  corners.forEach((value, at) => indices.writeUInt16LE(value, at * 2));
+  const primitive = { attributes: { POSITION: 0 }, indices: 1, material: 0 };
+  const json = {
+    asset: { version: "2.0" },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: Array.from({ length: copies }, () => primitive) }],
+    materials: [{ name: "Material0" }],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: vertices, type: "VEC3" },
+      { bufferView: 1, componentType: 5123, count: corners.length, type: "SCALAR" },
+    ],
+    bufferViews: [
+      { buffer: 0, byteOffset: 0, byteLength: positions.length },
+      { buffer: 0, byteOffset: positions.length, byteLength: indices.length },
+    ],
+    buffers: [{ byteLength: positions.length + indices.length }],
+  };
+  return glbFile(json, Buffer.concat([positions, indices]));
+}
+
+describe("a vertex buffer the primitives share", () => {
+  it("is read for the vertices the triangles use, not whole for each primitive", async () => {
+    const folder = await tmpDir("roblox-gate-shared-");
+    await writeFile(path.join(folder, "shared.glb"), sharedPositions(400_000, 5));
+    const check = checked(await checkModel(folder, "shared.glb"));
+    assert.equal(check.triangles, 60);
+    assert.equal(check.mesh?.positions.length, 5 * 24 * 3, "each copy's 24 corners, and no more");
+    assert.equal(check.mesh?.indices.length, 5 * 36);
+  });
+
+  it("drawn once is checked as the model it is", async () => {
+    const folder = await tmpDir("roblox-gate-shared-");
+    await writeFile(path.join(folder, "one.glb"), sharedPositions(1_000, 1));
+    const check = checked(await checkModel(folder, "one.glb"));
+    assert.deepEqual(check.problems, []);
+    assert.deepEqual(check.size, [1, 1, 1]);
+  });
+});
 
 describe("texture sizes from image headers, read by hand", () => {
   const TABLE: Array<[string, Buffer, { format: string; width: number; height: number } | undefined]> = [

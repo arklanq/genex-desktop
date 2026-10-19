@@ -251,7 +251,8 @@ async function installMac(options: { team?: string; freeGb?: number; signedIn?: 
   const ran: string[][] = [];
   const opened: Launch[] = [];
   const started: { command: string; args: string[]; log: string }[] = [];
-  const living = new Set<number>();
+  /** The processes that run, each with its program. */
+  const living = new Map<number, string>();
   let clock = Date.parse("2026-10-15T20:00:00.000Z");
   const license = path.join(env.home, "Library", "Unity", "licenses", "UnityEntitlementLicense.xml");
   const signIn = async () => {
@@ -274,10 +275,10 @@ async function installMac(options: { team?: string; freeGb?: number; signedIn?: 
     start: async (command, args, log) => {
       started.push({ command, args, log });
       await writeFile(log, "Downloading 15%\n");
-      living.add(77);
+      living.set(77, command);
       return 77;
     },
-    alive: (pid) => living.has(pid),
+    programOf: async (pid) => living.get(pid),
     kill: () => undefined,
     freeBytes: async () => freeGb * GB,
     open: async (launch) => {
@@ -298,14 +299,15 @@ describe("installing Unity Hub for the person", () => {
     await mac.installer.getHub();
     assert.deepEqual(
       mac.ran.map((call) => path.basename(call[0] ?? "")),
-      ["hdiutil", "codesign", "codesign", "ditto", "hdiutil"],
-      "mount, check Unity's signature, copy, unmount",
+      ["hdiutil", "codesign", "codesign", "spctl", "ditto", "hdiutil"],
+      "mount, check Unity's signature and Gatekeeper's verdict, copy, unmount",
     );
     assert.deepEqual(mac.ran[1]?.slice(1, 4), ["--verify", "--deep", "--strict"]);
-    assert.equal(mac.ran[4]?.[1], "detach");
+    assert.ok(mac.ran[1]?.some((arg) => arg.startsWith("-R=anchor apple generic") && arg.includes(UNITY_TEAM_ID)));
+    assert.equal(mac.ran[5]?.[1], "detach");
     // Copied beside under another name and renamed into place: a half-copied Hub never reads as installed.
-    assert.notEqual(mac.ran[3]?.[2], path.join(mac.env.applications, "Unity Hub.app"));
-    assert.equal(path.dirname(mac.ran[3]?.[2] ?? ""), mac.env.applications);
+    assert.notEqual(mac.ran[4]?.[2], path.join(mac.env.applications, "Unity Hub.app"));
+    assert.equal(path.dirname(mac.ran[4]?.[2] ?? ""), mac.env.applications);
     assert.deepEqual(await readdir(mac.env.applications), ["Unity Hub.app"], "in Applications, and nothing else left");
     assert.equal(await mac.installer.job(), null);
     assert.deepEqual(await readdir(path.join(mac.storage, "unity-setup")), ["mount"], "the disk image is gone");
@@ -416,6 +418,71 @@ describe("stopping what Genex is doing", () => {
     assert.equal(job?.state, JobState.Failed);
     assert.equal(job?.stopped, true);
     assert.match(String(job?.why), /You stopped/);
+  });
+
+  it("starts no install when Stop comes while Hub lists its releases, and ends the listing", async () => {
+    const mac = await installMac({ hub: true });
+    const listed = gate();
+    const asked = gate();
+    const run = mac.deps.run;
+    let listing: AbortSignal | undefined;
+    mac.deps.run = async (command, args, timeoutMs, signal) => {
+      if (args.includes("--releases")) {
+        listing = signal;
+        asked.resolve();
+        await listed.promise;
+      }
+      return run(command, args, timeoutMs, signal);
+    };
+    mac.installer.setUp();
+    await asked.promise;
+    const stopping = mac.installer.stop();
+    listed.resolve();
+    await stopping;
+    assert.equal(listing?.aborted, true, "Hub's listing is told to end");
+    assert.deepEqual(mac.started, [], "no install once stopped");
+    const job = await mac.installer.job();
+    assert.equal(job?.stopped, true);
+    assert.match(String(job?.why), /You stopped/);
+  });
+
+  it("opens no Hub when Stop comes while Hub is copied into Applications", async () => {
+    const mac = await installMac({ signedIn: false });
+    const run = mac.deps.run;
+    let stopping: Promise<void> | undefined;
+    mac.deps.run = async (command, args, timeoutMs, signal) => {
+      const answer = await run(command, args, timeoutMs, signal);
+      if (command.endsWith("ditto")) stopping ??= mac.installer.stop();
+      return answer;
+    };
+    mac.installer.setUp();
+    await mac.installer.running();
+    await stopping;
+    assert.deepEqual(mac.opened, [], "Hub is not opened for a sign-in after Stop");
+    assert.deepEqual(await readdir(mac.env.applications), [], "no Hub is put in place after Stop");
+    assert.equal((await mac.installer.job())?.stopped, true);
+  });
+
+  it("never takes another program that got an ended install's process id for the install", async () => {
+    const mac = await installMac({ hub: true });
+    const signalled: number[] = [];
+    mac.deps.kill = (pid) => {
+      signalled.push(pid);
+    };
+    await mac.installer.installEditor();
+    const hub = mac.living.get(77) ?? "";
+    mac.living.set(77, "/Applications/Safari.app/Contents/MacOS/Safari");
+    assert.equal((await mac.installer.job())?.state, JobState.Failed, "Hub's install has ended");
+    mac.living.set(77, hub);
+    assert.equal(
+      (await mac.installer.job())?.state,
+      JobState.Failed,
+      "an install once seen ended stays ended, whatever later runs as its id",
+    );
+    await mac.installer.stop();
+    assert.deepEqual(signalled, [], "nothing is signalled");
+    await mac.installer.installEditor();
+    assert.equal(mac.started.length, 2, "Try again starts the install again");
   });
 
   it("stops Do it for me while it waits for the sign-in, and starts nothing after", async () => {

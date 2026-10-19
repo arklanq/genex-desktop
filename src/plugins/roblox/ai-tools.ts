@@ -25,7 +25,7 @@ import path from "node:path";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { readRegularFile } from "../../substrate/fsx.ts";
 import { assertRelativePath } from "../../substrate/paths.ts";
-import { agentBusyMarker, clearAgentPlay, markAgentPlay } from "./agent-marks.ts";
+import { agentBusyMarker, clearAgentPlay, markAgentPlay, readAgentMarks } from "./agent-marks.ts";
 import { type StudioClient, StudioClientError, StudioClientFailure, type StudioToolResult } from "./studio-client.ts";
 import { AskFirstTool, STUDIO_ID_ARG, StudioTool } from "./studio-tools.ts";
 
@@ -571,10 +571,7 @@ export async function askStudio(
     let result: StudioToolResult;
     if (!marks || call.mark === CallMark.None) result = await send();
     else if (call.mark === CallMark.Busy) result = await agentBusyMarker(marks, deps.now).around(send);
-    else {
-      await markAgentPlay(marks, deps.now());
-      result = await send().finally(() => clearAgentPlay(marks));
-    }
+    else result = await asAgentsPlay(marks, deps.now, send);
     return { ok: !result.isError, text: answerText(result), studiosWords: true };
   } catch (error) {
     // Studio's own refusal, as its MCP server worded it; anything else left the outcome unknown.
@@ -582,6 +579,16 @@ export async function askStudio(
       return { ok: false, text: error.message, studiosWords: true };
     return { ok: false, text: MESSAGE.unanswered, studiosWords: false };
   }
+}
+
+/**
+ * Runs `send` under the agent's play mark. A play the agent already runs keeps its own mark: this
+ * call neither restamps nor ends it.
+ */
+async function asAgentsPlay<T>(marks: string, now: () => number, send: () => Promise<T>): Promise<T> {
+  if ((await readAgentMarks(marks, now())).play) return send();
+  await markAgentPlay(marks, now());
+  return send().finally(() => clearAgentPlay(marks));
 }
 
 /** A refused call's words: Studio's own after a plain lead, or Genex's. */

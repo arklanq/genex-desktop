@@ -1,6 +1,6 @@
 /**
  * The engine plugin's setup card ("Unreal setup") above the composer: a quiet card, not a permission card. Its rows are the
- * plugin's own answer, asked again every few seconds while it shows, so a step done outside Genex
+ * plugin's own answer, asked again every few seconds while it shows a step open, so a step done outside Genex
  * (Xcode installed, opened once) is ticked by itself; with nothing left open it goes, and when the
  * plugin names words for that the agent is told, so the chat goes on. A card may carry its own
  * button that does every step it can for the person (Do it for me), and its own way out in Hide's
@@ -17,16 +17,17 @@ import { STEPS_WORDS } from "../words.ts";
 import { usePlugins } from "../state/hooks.ts";
 import { Icon } from "../ui/icons.tsx";
 import {
-  finishedSays,
+  type KeptSteps,
   parseSteps,
   runButton,
-  stuckSays,
   STEPS_ACTION,
   type StepButton,
   type StepRow,
   type StepsCard,
+  stepsCardFor,
   type StepsOffer,
   stepsShown,
+  watchSteps,
 } from "./engine-steps.ts";
 
 /** How often the card asks the plugin again while it shows. */
@@ -35,40 +36,33 @@ const STEPS_REFRESH_MS = 5 * SECOND_MS;
 const COPIED_MS = 2 * SECOND_MS;
 
 /**
- * The plugin's rows for an offer, asked now and every few seconds while `live`; `onFinished` hears
- * what the agent is told when the card it showed open has nothing left open, or a step stopped.
+ * The plugin's rows for an offer, asked now and every few seconds while `live` and a step is open
+ * (`watchSteps`); `onFinished` hears what the agent is told when the card it showed open has nothing
+ * left open, or a step stopped. A card read for another game or engine is never returned.
  */
 function useSteps(offer: StepsOffer | null, live: boolean, onFinished: (says: string) => void): StepsCard | null {
-  const [card, setCard] = useState<StepsCard | null>(null);
+  const [kept, setKept] = useState<KeptSteps | null>(null);
   const finished = useRef(onFinished);
   finished.current = onFinished;
-  // The offer is derived on every render; its plugin and game are what the asking depends on.
+  // The offer is derived on every render; its id, plugin and game are what the asking depends on.
+  const offerId = offer?.id;
   const pluginId = offer?.pluginId;
   const project = offer?.project;
   useEffect(() => {
-    if (!pluginId || !project || !live) return;
-    let stopped = false;
-    let previous: StepsCard | null = null;
-    const read = (next: StepsCard | null) => {
-      if (stopped) return;
-      const says = finishedSays(previous, next) ?? stuckSays(previous, next);
-      previous = next;
-      setCard(next);
-      if (says) finished.current(says);
-    };
-    const ask = () =>
-      window.studio
-        .pluginAction(pluginId, STEPS_ACTION, {}, project)
-        .then((answer) => read(parseSteps(answer)))
-        .catch(() => read(null));
-    void ask();
-    const timer = setInterval(() => void ask(), STEPS_REFRESH_MS);
-    return () => {
-      stopped = true;
-      clearInterval(timer);
-    };
-  }, [pluginId, project, live]);
-  return card;
+    if (!offerId || !pluginId || !project || !live) return;
+    const asked = { id: offerId, pluginId, project };
+    return watchSteps({
+      ask: () =>
+        window.studio
+          .pluginAction(pluginId, STEPS_ACTION, {}, project)
+          .then(parseSteps)
+          .catch(() => null),
+      onCard: (card) => setKept({ offer: asked, card }),
+      onFinished: (says) => finished.current(says),
+      everyMs: STEPS_REFRESH_MS,
+    });
+  }, [offerId, pluginId, project, live]);
+  return stepsCardFor(kept, offer);
 }
 
 /** A row's command copied to the clipboard; Copy says Copied for a moment, then Copy again. */

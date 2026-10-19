@@ -65,6 +65,7 @@ import { crashAnswer, probeAnswer } from "./hook-answers.ts";
 import {
   createStudioWatch,
   heroShotsAt,
+  FLUSH_MAX_MS,
   loadPlaceAt,
   type MomentOps,
   openForRun,
@@ -86,7 +87,7 @@ import {
   setupPaths,
   undoSetup,
 } from "./setup.ts";
-import { hasPublishNote, notePublish, type RelinkDeps, relinkPublished } from "./relink.ts";
+import { notedFrom, notePublish, type RelinkDeps, relinkPublished, studioHolding } from "./relink.ts";
 import { SETUP_PROMPTS } from "./setup-prompts.ts";
 import { RobloxSetupError, SetupRefusal } from "./setup-refusal.ts";
 import { createScriptSyncs, type ScriptSyncs, systemWatch } from "./script-sync.ts";
@@ -818,6 +819,7 @@ async function playGame(deps: RobloxDeps, services: MomentServices, context: Plu
     edit: () => services.bound(game),
     ask: services.ask(game),
     signal: context.signal,
+    flush: () => services.flush(game, FLUSH_MAX_MS),
     ...(marks ? { marks } : {}),
   };
 }
@@ -879,7 +881,10 @@ function publishDeps(deps: RobloxDeps, services: MomentServices, context: Plugin
   return { ...answer, noted };
 }
 
-/** Notes a first publish of the game a call is bound to under `name`, from the Studio it is bound to. */
+/**
+ * Notes a first publish of the game a call is bound to under `name`, from the Studio holding the
+ * game; with no Studio holding it there is nothing to publish from, and nothing is noted.
+ */
 async function noteFirstPublish(
   deps: RobloxDeps,
   services: MomentServices,
@@ -888,21 +893,24 @@ async function noteFirstPublish(
   name: string,
 ): Promise<void> {
   const game = context.project ?? "";
-  const studioId = services.bound(game);
-  const note = { at: deps.now(), project, name, ...(studioId ? { studioId } : {}) };
-  await notePublish(deps, await context.host(PluginService.StorageRoot), game, note);
+  const storage = await context.host(PluginService.StorageRoot);
+  const studioId = await studioHolding(deps, storage, game, services.bound(game));
+  if (studioId) await notePublish(deps, storage, game, { at: deps.now(), project, name, studioId });
 }
 
 /**
  * Where Genex can't click, the panel shows the person Studio's own clicks for a first publish: noted
- * under the name it shows, once, so the game is linked to the place they publish by hand.
+ * under the name it shows, once for the Studio holding the game, so the game is linked to the place
+ * they publish by hand there. With no Studio holding the game, nothing is noted.
  */
 async function noteHandPublish(deps: RobloxDeps, services: MomentServices, context: PluginContext, name: string) {
   const link = await linkHere(context);
   if (!link || link.remote || !context.project) return;
+  const game = context.project;
   const storage = await context.host(PluginService.StorageRoot);
-  if (await hasPublishNote(storage, context.project, link.project, deps.now())) return;
-  await noteFirstPublish(deps, services, context, link.project, name);
+  const studioId = await studioHolding(deps, storage, game, services.bound(game));
+  if (!studioId || (await notedFrom(storage, game, link.project, studioId))) return;
+  await notePublish(deps, storage, game, { at: deps.now(), project: link.project, name, studioId });
 }
 
 /** What relinking asks of the computer and of the helper link. */

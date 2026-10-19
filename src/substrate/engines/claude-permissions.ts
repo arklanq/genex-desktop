@@ -397,7 +397,8 @@ async function projectRules(
 function withinBudget(candidates: FenceRule[]): { rules: string[]; dropped: string[] } {
   const rules: string[] = [];
   const dropped: string[] = [];
-  let spent = 0;
+  // The array's brackets, less the separator the first rule's cost counts but never needs.
+  let spent = 1;
   for (const candidate of candidates) {
     const cost = JSON.stringify(candidate.rule).length + 1;
     if (spent + cost > HOME_FENCE_BUDGET) {

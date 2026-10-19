@@ -10,7 +10,8 @@ import { PLUGINS_WORDS } from "../words.ts";
 
 export interface EntryStatus {
   text: string;
-  action?: { label: string; run: () => void };
+  /** The fix; `opensPage` when it only opens the plugin's page, where the fix lives. */
+  action?: { label: string; run: () => void; opensPage?: boolean };
 }
 
 /** Where a row's switch applies. Plugins are on or off for every game at once. */
@@ -33,6 +34,10 @@ export interface AddMenuEntry {
   icon?: string;
   /** A plugin row's plugin id (the row's own id is namespaced by its kind). */
   pluginId?: string;
+  /** Opens a plugin's page in Plugins; a server's row has none, so its name works its switch. */
+  open?: () => void;
+  /** Settings beside the switch: the plugin's page, unless the row's own action already opens it. */
+  settings?: () => void;
 }
 
 /** What the menu's rows can do, bound by the menu to its studio calls. */
@@ -104,8 +109,9 @@ function connectorStatus(
   const sentence = prefix ? `${prefix} ${text}` : text.charAt(0).toUpperCase() + text.slice(1);
   if (view.health === McpHealth.Connecting) return { text: sentence };
   // A plugin's own server is configured on the plugin's page.
-  const run = setup || pluginId ? () => actions.manage(pluginId) : () => actions.connect(view);
-  return { text: sentence, action: { label: connectorActionLabel(view, setup), run } };
+  const opensPage = Boolean(setup || pluginId);
+  const run = opensPage ? () => actions.manage(pluginId) : () => actions.connect(view);
+  return { text: sentence, action: { label: connectorActionLabel(view, setup), run, opensPage } };
 }
 
 /**
@@ -132,7 +138,10 @@ function pluginStatus(
   const account = accountStatus(plugin, state, actions);
   if (account) return account;
   if (plugin.health === PluginHealth.Failed)
-    return { text: "Failed to start", action: { label: "Manage", run: () => actions.manage(plugin.manifest.id) } };
+    return {
+      text: "Failed to start",
+      action: { label: "Manage", run: () => actions.manage(plugin.manifest.id), opensPage: true },
+    };
   const servers = owned.map((view) => connectorStatus(view, plugin.manifest.id, true, serverName(view), actions));
   return servers.find(Boolean) ?? null;
 }
@@ -169,15 +178,19 @@ export function addMenuEntries(
     const state = connections?.sources.find(
       (source) => source.kind === "plugin" && source.id === plugin.manifest.id,
     )?.account;
+    const status = pluginStatus(plugin, owned, state, actions);
+    const open = () => actions.manage(plugin.manifest.id);
     return {
       id: `plugin:${plugin.manifest.id}`,
       kind: "plugin",
       name: plugin.manifest.name,
       on: plugin.enabled,
       scope: EntryScope.AllGames,
-      status: pluginStatus(plugin, owned, state, actions),
+      status,
       toggle: (on) => actions.enablePlugin(plugin, on),
       pluginId: plugin.manifest.id,
+      open,
+      ...(status?.action?.opensPage ? {} : { settings: open }),
       ...(plugin.iconUrl ? { icon: plugin.iconUrl } : {}),
     };
   });

@@ -58,6 +58,16 @@ function computersOf(core: StudioCore, x: CoreInternals): ReturnType<typeof comp
   return made;
 }
 
+/**
+ * Forget the computers on windows a harness that ended had leased, stopping what each started (a
+ * Play Protocol game's process, an editor's play): its own `preview.release` never comes.
+ */
+export async function forgetHarnessComputers(x: CoreInternals, handles: readonly string[]): Promise<void> {
+  const computers = COMPUTERS.get(x);
+  if (!computers) return;
+  await Promise.all(handles.map((handle) => computers.forget(handle).catch(() => {})));
+}
+
 /** A still named by its bytes or by a path the previews may read. */
 type StillSource = { base64?: string; path?: string } | null | undefined;
 

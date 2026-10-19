@@ -142,6 +142,7 @@ async function read(dir: string, args: string[], env: Record<string, string> = {
   const environment = hostGitEnv({ ...(toolPath ? { PATH: toolPath } : {}), ...env });
   const config = await hostGitConfig(dir, environment);
   const running = exec("git", [...config, "-C", dir, "-c", "core.autocrlf=false", ...hostGitArgs(args)], {
+    windowsHide: true,
     env: environment,
     maxBuffer: 64 * 1024 * 1024,
   });
@@ -153,6 +154,7 @@ async function write(dir: string, args: string[]): Promise<string> {
   const env = hostGitEnv(GIT_ENV);
   const config = await hostGitConfig(dir, env);
   const { stdout } = await exec("git", [...config, "-C", dir, ...args], {
+    windowsHide: true,
     env,
     maxBuffer: 16 * 1024 * 1024,
   });

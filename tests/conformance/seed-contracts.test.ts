@@ -1051,6 +1051,8 @@ describe("a game's observers and a lead's claim (shared/observers.ts ↔ loop/fi
     assert.equal(seed.MAX_FINISH_REJECTIONS, check.MAX_FINISH_REJECTIONS);
     assert.equal(seed.MAX_FINISH_REASONS, check.MAX_FINISH_REASONS);
     assert.equal(seed.FINISH_REASON_CHARS, check.FINISH_REASON_CHARS);
+    assert.equal(seed.FINISH_TIME_LEFT_MS, check.FINISH_TIME_LEFT_MS);
+    assert.deepEqual({ ...seed.StopWhy }, { ...check.StopWhy });
     assert.equal(seed.FINISH_CHECK_EVENT, CustomEvent.FinishCheck);
     assert.deepEqual({ ...seed.ObserverSource }, { ...app.ObserverSource });
     assert.equal(seed.PREVIEW_OBSERVER, app.PREVIEW_OBSERVER);
