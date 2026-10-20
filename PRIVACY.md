@@ -67,14 +67,15 @@ Subscription limits apply; there is no fallback to API-key billing, and an ambie
 bundled Genex CLI runs with its crash reporting off unless you set `GENEX_TELEMETRY`;
 `DO_NOT_TRACK` and `GENEX_DISABLE_SENTRY` are passed on to it.
 
-**Let agents control your computer** (Settings → Permissions, macOS) is off by default. With it
-on, an agent can click and type in the apps you allow, through the cua-driver bundled with Genex,
-which uses Genex's own Screen Recording and Accessibility access; each chat session asks you
-first, each app is asked for once, and ⌃⌥⌘Esc stops it; the driver stops 30 s after the last
-session ends. Without the setting, agents can still look at an app's window (`app_look`: its
-picture and the text of its controls), never at System Settings, the login and password prompts,
-password managers or Genex itself. Those screenshots and window texts go to the selected model
-provider like any other tool result.
+**Let agents control your computer** (Settings → Permissions, macOS and Windows) is off by default.
+With it on, an agent can click and type in the apps you allow, through the cua-driver bundled with
+Genex, which on a Mac uses Genex's own Screen Recording and Accessibility access; on Windows a small
+PowerShell helper also tells Genex which app is in front and which app a click reaches. Each chat
+session asks you first, each app is asked for once, and ⌃⌥⌘Esc (Ctrl+Alt+Shift+Esc on Windows)
+stops it; the driver stops 30 s after the last session ends. On a Mac, without the setting,
+agents can still look at an app's window (`app_look`: its picture and the text of its controls),
+never at System Settings, the login and password prompts, password managers or Genex itself.
+Those screenshots and window texts go to the selected model provider like any other tool result.
 
 Opening a folder does not authorize its Claude settings or hooks. The Open Game trust checkbox
 is an explicit choice because hooks can run commands with the user's access. Interactive

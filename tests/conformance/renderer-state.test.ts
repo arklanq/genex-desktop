@@ -16,11 +16,9 @@ import { PermissionMode } from "../../src/shared/permissions.ts";
 import { EngineId } from "../../src/shared/providers.ts";
 import { shownPermissionMode } from "../../src/renderer/chat/use-permission-mode.ts";
 import { createRefresher } from "../../src/renderer/state/refresher.ts";
-import {
-  computerControlOffered,
-  computerControlOn,
-  setComputerControl,
-} from "../../src/renderer/use-computer-control.ts";
+import { computerControlOn, setComputerControl } from "../../src/renderer/use-computer-control.ts";
+import { computerControlDetail } from "../../src/renderer/words.ts";
+import { computerControlOffered, desktopStopShortcut, stopShortcutWords } from "../../src/shared/computer-control.ts";
 import { StudioPlatform } from "../../src/shared/boot.ts";
 import { SetupReport } from "../../src/renderer/state/boot.ts";
 import { PlayViewerPhase } from "../../src/shared/play.ts";
@@ -1047,14 +1045,28 @@ function rendererFiles(): string[] {
 }
 
 describe("Settings → Permissions: Let agents control your computer", () => {
-  it("is off unless the host's settings say it is on, and offered only on macOS", () => {
+  it("is off unless the host's settings say it is on, and offered only on macOS and Windows", () => {
     assert.equal(computerControlOn(null), false, "before the settings load");
     assert.equal(computerControlOn({ learning: true, selfImproving: false }), false, "an older host's view");
     assert.equal(computerControlOn({ learning: true, selfImproving: false, computerControl: false }), false);
     assert.equal(computerControlOn({ learning: true, selfImproving: false, computerControl: true }), true);
     assert.equal(computerControlOffered(StudioPlatform.Mac), true);
-    for (const platform of [StudioPlatform.Windows, StudioPlatform.Linux, ""])
+    assert.equal(computerControlOffered(StudioPlatform.Windows), true, "the desktop driver ships on Windows too");
+    for (const platform of [StudioPlatform.Linux, ""])
       assert.equal(computerControlOffered(platform), false, platform || "before main answered");
+  });
+
+  it("stops by a shortcut each system can register: no Command key on Windows, and not Task Manager's", () => {
+    const mac = desktopStopShortcut(StudioPlatform.Mac);
+    const windows = desktopStopShortcut(StudioPlatform.Windows);
+    assert.equal(mac.accelerator, "Control+Alt+Command+Escape");
+    assert.equal(stopShortcutWords(mac), "Control-Option-Command-Escape (⌃⌥⌘Esc)");
+    assert.equal(windows.accelerator, "Control+Alt+Shift+Escape");
+    assert.doesNotMatch(windows.accelerator, /Command|Cmd|Super|Meta/);
+    assert.notEqual(windows.accelerator, "Control+Shift+Escape");
+    assert.equal(stopShortcutWords(windows), "Ctrl+Alt+Shift+Esc");
+    assert.match(computerControlDetail(StudioPlatform.Windows), /Ctrl\+Alt\+Shift\+Esc stops it/);
+    assert.match(computerControlDetail(StudioPlatform.Mac), /⌃⌥⌘Esc stops it/);
   });
 
   it("the switch sends only this setting and shows what the host saved", async () => {
