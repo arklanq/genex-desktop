@@ -802,10 +802,11 @@ only a page's own boot failure. `validateAt` answers `loaded`, `attached` or `mi
 `preview.pageUi` and `game.attached` are host RPC calls, not agent tools.
 
 **Worker windows and computer use.** Every building delegation and every looking read-only session
-gets one pooled preview window for the session
+gets one pooled preview window
 ([`src/main/core/session-port.ts`](../../src/main/core/session-port.ts)). `capture` reloads and
-photographs; `computer` is the studio's own computer use: one tool, a session referee and
-swappable targets ([computer use](../computer-use.md)). Headless ports render offscreen. Native input is sent and synthetic copies withheld
+photographs; `computer` is the studio's computer use: one tool, a session referee and
+swappable targets ([computer use](../computer-use.md)). Headless ports render offscreen; idle ones pause
+(`paint-while-used.ts`). Native input is sent and synthetic copies withheld
 per event type once a trusted event is seen; a mousemove always sends its synthetic copy with the
 real delta, and `game-template/src/studio.js` de-duplicates. Two pool windows are never a worker's
 (`workerWindows(max)` = max − 2, at least 1). A lease the harness takes carries its boot as `owner`
@@ -1124,13 +1125,14 @@ managed local runtime; core has no Blender tool of its own.
   none selects a license for Studio itself. Forge's `afterPrune` runs
   [`scripts/package-prune.cjs`](../../scripts/package-prune.cjs): `pruneUnreachable` removes
   `node_modules` packages reachable only through excluded dependencies (`@genex-ai/cli-demo`, which
-  the plugin payload vendors, and the Claude SDK and Codex native packages); `trimNodePty` keeps only
-  node-pty's `lib`, `build/Release` binaries (with Windows's `conpty/`) and the target prebuild,
-  without PDBs; Windows packages node-pty's N-API prebuild instead of rebuilding it; `trimSandboxVendor` keeps only
-  the target's sandbox-runtime helper (Linux `seccomp/<arch>`, Windows `srt-win/<arch>`, none on
-  macOS). A `prePackage` hook refuses a symlinked `node_modules`, which the packager would prune in
-  place. `package-prune.test.ts`, `package-linked-modules.test.ts` and checks in
-  `run-packaged-smoke` hold it.
+  the plugin payload vendors, and the Claude SDK and Codex native packages); `trimNodePty` keeps
+  node-pty's `lib`, `build/Release` binaries (with Windows's `conpty/`) and the target prebuild
+  (Windows packages it unrebuilt), without PDBs; `trimSandboxVendor` keeps the target's
+  sandbox-runtime helper (Linux `seccomp/<arch>`, Windows `srt-win/<arch>`); then
+  [`copyVcRuntime`](../../scripts/package-vc-runtime.cjs) puts the Visual C++ runtime DLLs Windows
+  executables import beside them ([why](../windows-sandbox.md#visual-c-runtime)). `prePackage`
+  refuses a symlinked `node_modules`, which the packager would prune in place;
+  `package-*.test.ts` and `run-packaged-smoke` hold it.
 - Release signing ([`scripts/package-signing.cjs`](../../scripts/package-signing.cjs)) is decided by
   the environment: no `MACOS_SIGN_IDENTITY` re-signs the bundle ad-hoc (`localSigningHook`); an
   identity signs with the hardened runtime and `build/entitlements.mac.plist` (`allow-jit` only, no

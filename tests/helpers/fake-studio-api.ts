@@ -164,6 +164,7 @@ const METHODS = [
   "playComments",
   "playComment",
   "playUncomment",
+  "playPurchase",
   "playMe",
   "playRename",
   "playAvatar",

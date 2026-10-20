@@ -99,7 +99,7 @@ export const holdKey = (hold: PlayBarHold): string => JSON.stringify({ held: hol
 
 /** What Esc in the bar's layer does. Never rename a value. */
 export const BarEscape = {
-  /** Nothing: Comments closes itself, a key held down repeats, or no game is open. */
+  /** Nothing: Comments closes itself, a purchase sheet answers it, a key held down repeats, or no game is open. */
   None: "none",
   /** The game is playing: the keyboard goes back to it. */
   Resume: "resume",
@@ -111,9 +111,11 @@ export type BarEscape = (typeof BarEscape)[keyof typeof BarEscape];
 /** What an Esc press in the bar's layer does, by the game's phase. */
 export function barEscape(
   phase: PlayViewerPhase | undefined,
-  press: { repeat: boolean; commentsOpen: boolean },
+  press: { repeat: boolean; commentsOpen: boolean; sheetOpen: boolean },
 ): BarEscape {
-  if (!phase || press.repeat || press.commentsOpen) return BarEscape.None;
+  // Comments and a purchase sheet each answer Esc themselves; the game stays covered under them.
+  const covered = press.commentsOpen || press.sheetOpen;
+  if (!phase || press.repeat || covered) return BarEscape.None;
   return phase === PlayViewerPhase.Playing ? BarEscape.Resume : BarEscape.Leave;
 }
 

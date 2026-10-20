@@ -5,7 +5,7 @@
  */
 import type { StudioApi } from "./studio-api.ts";
 
-/** The studio calls the bar's layer may make: the viewer's news, its controls and its game's comments. */
+/** The studio calls the bar's layer may make: the viewer's news, its controls, its game's comments and purchase sheet. */
 export const PLAY_BAR_CALLS = [
   "onEvent",
   "playControl",
@@ -14,6 +14,7 @@ export const PLAY_BAR_CALLS = [
   "playComments",
   "playComment",
   "playUncomment",
+  "playPurchase",
 ] as const satisfies readonly (keyof StudioApi)[];
 
 /** The bridge the bar's layer gets. */

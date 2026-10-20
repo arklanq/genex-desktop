@@ -111,8 +111,33 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   signed out, else the field with Post inside it once something is typed; at most 500 characters).
   The account's own comments can be deleted. Main reads and writes them for the game on screen
   (`main/play/comments.ts`); Esc, ✕ or a click outside closes it and the game gets the keyboard back.
+- Paying in coin: a game's purchase (the embed SDK's `buy()` or `requestPayment()`) opens Studio's
+  own sheet over the dimmed game in the bar's layer (`main/play/viewer-purchase.ts`,
+  `renderer/play/PlayPurchase.tsx`), never genex.games' confirm page. The SDK's popup is made hidden,
+  at most one per game and only while the viewer may show a sheet; only the game's own top frame's
+  counts, its first move ends it, and it never loads the confirm page. While one lives, Play's session
+  cancels any request for a confirm page; with none alive it cancels nothing
+  (`main/play/purchase-window.ts`, `purchase-address.ts`). Main reads the purchase as the app's Genex
+  account, then the coin balance
+  only for a purchase the game may ask for, and shows a sheet only for the game on screen while the
+  purchase is open to pay (`main/play/coin.ts`); an ask it drops waits 5 seconds like a Cancel.
+  Pay counts once the page has shown Ask for a second with no press in it; a press, a held key or the
+  window's focus changing starts that second again. Main confirms the purchase it holds, never one the
+  page names, and the game learns how it went from its own SDK. Cancel, Esc, ✕ or a click outside
+  cancels it on genex.games, and the next sheet waits 5 seconds; a page that reloads or leaves, or a
+  viewer that closes, cancels one still unpaid. Its states: Ask (`× N` above one; a game-priced
+  payment's terms whole, in a scroll area), Paying, Paid (the receipt and what is left), Not enough
+  coin (Get coin opens genex.games; once the coin arrives, Review; after genex.games refused Pay for
+  want of coin, try again in the game), Sign in (Review once signed in), Pending (genex.games has not
+  answered; asked every 2 seconds) and Failed (timed out, canceled, refused or refunded). A purchase
+  genex.games still holds open never times out sooner than its two minutes after the game asked, by
+  the app's own clock, however far that clock runs ahead. Signing in from the sheet signs the bar in
+  too. UNCONFIRMED with genex.games: confirming from Studio on the `native_modal` surface, and
+  `/inventory` as Get coin's page; each is one constant (`STUDIO_CONFIRM_SURFACE`, `playCoinPageUrl`).
+  A development profile pointing Studio at another API catches nothing.
 - The page stays on Genex games' addresses; a link it opens goes to the browser, at most one every
-  few seconds.
+  few seconds. A coin purchase's popup is the exception above: its confirm address no longer goes to
+  the browser.
 - Voice chat: a game that asks for a microphone gets the bar's mic switch, remembered per game.
   Main lets the page open the microphone only right after it asked it to, and only on the game's
   own origin.
@@ -136,8 +161,11 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
 [feature map](agent/feature-map.md). Fixtures: `STUDIO_FIXTURE_GENEX_ACCOUNT=1|admin|new|quiet|fresh|nickname|terms`
 signs a fixture launch in (the full account owns Snowball, and `admin` is it as a genex.games
 admin; `new` and `nickname` have not chosen a nickname; a few names, such as `rab`, read as taken),
-`ended` gives it a refused one. Tests: `tests/conformance/play-*`,
-`genex-account`, `app-account-plugin`.
+`ended` gives it a refused one. A fixture launch's stand-in game asks for a coin purchase from a
+button per case (`[data-fixture-buy="<case>"]`) or keys 1 to 9 and 0 (`dev/fixture-coin.ts`): every
+state of the sheet, on a confirm website that resolves nowhere; the account holds 1,240 coin, and Get
+coin adds 1,000. Tests: `tests/conformance/play-*`, `genex-account`, `app-account-plugin`; the
+purchase popup in Electron: `npm run test:ui -- play-purchase`.
 
 A live `studio:dev` profile can point Play at a local or test genex.games with
 `GENEX_DEV_PLAY_API_ORIGIN` and `GENEX_DEV_PLAY_WEB_ORIGIN` (bare origins: https, or http on this

@@ -23,6 +23,7 @@ import type {
 } from "./play-people.ts";
 import type { GenexAccountView } from "./genex-account.ts";
 import type { PlayBarHold } from "./play-bar.ts";
+import type { PurchaseAnswer } from "./play-purchase.ts";
 import type { PlayComment, PlayCommentsPage } from "./play-comments.ts";
 import type { PlayCredits } from "./play-credits.ts";
 import type {
@@ -510,6 +511,11 @@ export interface StudioApi {
   playComment(body: string): Promise<PlayComment>;
   /** Play: delete one of the account's comments on the viewed game. */
   playUncomment(commentId: string): Promise<void>;
+  /**
+   * Play: the bar's answer to the purchase sheet numbered `sheet` (Pay, Cancel…). Main acts only on
+   * the sheet on screen and the purchase it holds; Play's bar layer alone may send it.
+   */
+  playPurchase(sheet: number, answer: PurchaseAnswer): Promise<void>;
   /** Play: the Genex account the app is signed in as, or null while it is signed out. */
   playMe(): Promise<PlayMe | null>;
   /** Play: rename the account (2–20 characters); the account as it is after. */

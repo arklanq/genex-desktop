@@ -11,13 +11,13 @@ import { randomUUID } from "node:crypto";
 import { EventEmitter } from "node:events";
 import net from "node:net";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { PassThrough } from "node:stream";
 import { describe, it } from "node:test";
 import { setImmediate as turn, setTimeout as delay } from "node:timers/promises";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import { SandboxProblemCode } from "../../src/shared/boot.ts";
+import { SandboxProblemCode, WindowsSetupNeed } from "../../src/shared/boot.ts";
 import { HarnessHost } from "../../src/substrate/harness-host.ts";
 import {
   SandboxLaunchCode,
@@ -28,9 +28,9 @@ import { ProcessSandbox, type SandboxRuntime } from "../../src/substrate/spawn.t
 import {
   type AncestorGrantDeps,
   type AncestorGrants,
-  type OwnDenyDeps,
-  type OwnDenyEntry,
-  type OwnDenyStamps,
+  type OwnAclDeps,
+  type OwnAclEntry,
+  type OwnAclEntries,
   type SessionMember,
   WindowsSandboxSession,
   ancestorDirs,
@@ -43,36 +43,46 @@ import {
   grantUnion,
   grantableToolDirs,
   grantsCover,
+  insideWindowsPath,
   keepWindowsDenies,
   msysPath,
   msysPathList,
   granteeOf,
+  grantLauncherFolders,
   groupSidOnce,
-  ownDenyStamps,
+  ownAclEntries,
   renderEnvFile,
   routeWindowsDenies,
+  routeWindowsGrants,
+  sandboxEntriesLeft,
   sandboxGroupOf,
   sandboxSidOnce,
   setupGaps,
   srtWinExecFailure,
   srtWinPath,
+  takeBackSandboxEntries,
+  toolDirEntries,
   windowsAccessReport,
   windowsDenyHolders,
   windowsGrantHolders,
+  type WindowsSetupGap,
   windowsRunEnv,
+  windowsSetupGaps,
   writeDeniesBeyondRead,
 } from "../../src/substrate/windows-sandbox.ts";
+import { ServiceStartType } from "../../src/substrate/windows-logon-service.ts";
 import {
   DenyAccess,
+  GrantAccess,
   type FolderAceEdit,
   type FolderAceEditor,
   FolderAceOp,
-  type FolderDenyEdit,
-  type FolderDenyEditor,
+  type FolderOwnEdit,
+  type FolderOwnEditor,
   folderAceCommand,
   folderAceEditor,
   folderAceOutcomes,
-  folderDenyEditor,
+  folderOwnEditor,
   FOLDER_ACE_SCRIPT,
   icaclsArgs,
 } from "../../src/substrate/windows-folder-ace.ts";
@@ -294,6 +304,46 @@ describe("read-attributes grants above each root", () => {
     assert.equal(granteeOf({}), null, "no sandbox user yet");
   });
 
+  it("grants the folders srt-win starts from after a status probe that failed once", async () => {
+    // A per-user install sits in the profile, where the sandbox user may open nothing: without
+    // this grant srt-win's egress check fails with "CreateProcessWithLogonW(srt-sandbox): Access
+    // is denied". One probe that timed out used to skip the grant without a word.
+    const answers = [null, "S-1-5-21-9"];
+    const calls: string[] = [];
+    const logged: string[] = [];
+    const release = await grantLauncherFolders([at("AppData", "Local", "genex", "app-0.1.12")], {
+      sid: sandboxSidOnce(async () => answers.shift() ?? null, 0),
+      grant: async (sid, dirs) => void calls.push(`grant ${sid} ${dirs.join(",")}`),
+      revoke: async (sid) => void calls.push(`revoke ${sid}`),
+      log: (line) => logged.push(line),
+    });
+    assert.deepEqual(calls, [`grant S-1-5-21-9 ${at("AppData", "Local", "genex", "app-0.1.12")}`]);
+    assert.deepEqual(logged, []);
+    await release();
+    assert.deepEqual(calls.at(-1), "revoke S-1-5-21-9");
+  });
+
+  it("says why the folders srt-win starts from were not granted, and takes back a grant srt-win refused", async () => {
+    const logged: string[] = [];
+    const calls: string[] = [];
+    const deps = {
+      grant: async () => {
+        calls.push("grant");
+        throw new Error("srt-win acl grant timed out after 60000ms");
+      },
+      revoke: async () => void calls.push("revoke"),
+      log: (line: string) => logged.push(line),
+    };
+    await grantLauncherFolders([PROFILE], { ...deps, sid: async () => "S-1-5-21-9" });
+    assert.deepEqual(calls, ["grant", "revoke"]);
+    await grantLauncherFolders([PROFILE], { ...deps, sid: async () => null });
+    assert.deepEqual(calls, ["grant", "revoke"], "nothing to grant to without the user's id");
+    assert.deepEqual(logged, [
+      "launcher folders not granted: srt-win acl grant timed out after 60000ms",
+      "launcher folders not granted: srt-win did not say the sandbox user's id",
+    ]);
+  });
+
   it("asks again for the sandbox user's id when a probe comes back empty, and keeps it once found", async () => {
     const answers = [null, "S-1-5-21-9"];
     let asked = 0;
@@ -412,6 +462,27 @@ describe("an entry on one folder alone", () => {
     ]);
   });
 
+  it("answers a batch PowerShell ran past its deadline on as timed out, and one it could not run as nothing", async () => {
+    const edit: FolderOwnEdit = {
+      dir: "C:\\x",
+      sid: SID,
+      op: FolderAceOp.Own,
+      deny: null,
+      guard: false,
+      grant: GrantAccess.Read,
+      allows: true,
+    };
+    const killed = folderOwnEditor({
+      powershell: async () => Promise.reject(Object.assign(new Error("Command failed"), { killed: true })),
+    });
+    const [outcome] = (await killed([edit])) ?? [];
+    assert.equal(outcome?.ok, false);
+    assert.equal(outcome && !outcome.ok && outcome.timedOut, true);
+    const locked = folderOwnEditor({ powershell: async () => Promise.reject(new Error("Cannot invoke method")) });
+    assert.equal(await locked([edit]), null);
+    assert.deepEqual(folderAceOutcomes('[{"ok":true,"ms":41000}]', 1), [{ ok: true, ms: 41_000 }]);
+  });
+
   it("uses PowerShell's answer when it gives one, and runs nothing for no edits", async () => {
     let runs = 0;
     const editor = folderAceEditor({
@@ -510,7 +581,7 @@ describe("an entry on one folder alone, on Windows", {
     await mkdir(path.join(elsewhere, "moved"));
     await rename(path.join(elsewhere, "moved"), moved);
     const inheritedElsewhere = /\(A;[A-Z]*ID[A-Z]*;(?:0x80|LO);;;BG\)/;
-    const denies = ownDenyStamps(path.join(root, "holders"), { sid: async () => GUESTS, pid: 1, alive: () => false });
+    const denies = ownAclEntries(path.join(root, "holders"), { sid: async () => GUESTS, pid: 1, alive: () => false });
     const { own } = routeWindowsDenies({ read: [secret], write: [] });
     assert.equal(await denies.sync(own), true);
     assert.match(sddl(secret, root), /\(D;OICI;FA;;;BG\)/, "the folder is denied, passed down");
@@ -527,15 +598,137 @@ describe("an entry on one folder alone, on Windows", {
     assert.match(sddl(moved, root), inheritedElsewhere, "nor by the take-back");
   });
 
+  it("grants a folder and what is in it, and the folder entry above the grants comes and goes beside it", async () => {
+    const root = realpathSync.native(await tmpDir("folder-grant-"));
+    const game = path.join(root, "game");
+    const file = path.join(game, "src", "main.js");
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, "game");
+    const entries = ownAclEntries(path.join(root, "holders"), { sid: async () => GUESTS, pid: 1, alive: () => false });
+    assert.equal(await entries.sync(routeWindowsGrants({ write: [game], read: [] }).own), true);
+    const granted = /\(A;OICI;[^;]+;;;BG\)/;
+    const inherited = /\(A;ID;[^;]+;;;BG\)/;
+    assert.match(sddl(game, root), granted, "the folder is granted, passed down");
+    assert.match(sddl(file, root), inherited, "a file in it inherits the grant");
+    // A folder above another root gets the read-attributes entry; taking it back on this folder
+    // (it stopped being one) must leave the folder's own grant alone.
+    const editor = folderAceEditor();
+    await editor([{ dir: game, sid: GUESTS, op: FolderAceOp.Grant }]);
+    await editor([{ dir: game, sid: GUESTS, op: FolderAceOp.Remove }]);
+    assert.match(sddl(game, root), granted, "the grant stays");
+    assert.match(sddl(file, root), inherited);
+    await entries.revokeAll();
+    for (const p of [game, file]) assert.doesNotMatch(sddl(p, root), /;;;BG\)/, p);
+  });
+
+  it("walks nothing under a folder already granted when the next start sets the same entries", async () => {
+    // srt-win passed its grant down through every file under the folder again at every start; a
+    // games folder full of node_modules or a toolchain ran past its 60-second deadline each time.
+    const root = realpathSync.native(await tmpDir("folder-grant-again-"));
+    const game = path.join(root, "game");
+    const moved = path.join(game, "node_modules", "moved");
+    const elsewhere = path.join(root, "elsewhere");
+    await mkdir(path.dirname(moved), { recursive: true });
+    await mkdir(elsewhere);
+    const first = ownAclEntries(path.join(root, "holders"), { sid: async () => GUESTS, pid: 1, alive: () => false });
+    const own = routeWindowsGrants({ write: [game], read: [] }).own;
+    assert.equal(await first.sync(own), true);
+    // A folder moved in keeps what it inherited where it was made until a walk works it out again.
+    const USERS = "S-1-5-32-545";
+    execFileSync("icacls", [elsewhere, "/grant", `*${USERS}:(OI)(CI)(RA)`], { stdio: "ignore" });
+    await mkdir(path.join(elsewhere, "moved"));
+    await rename(path.join(elsewhere, "moved"), moved);
+    const keptFromElsewhere = /\(A;[A-Z]*ID[A-Z]*;(?:0x80|LO);;;BU\)/;
+    assert.match(sddl(moved, root), keptFromElsewhere);
+    // The first process ended without taking its entries back; the next one starts.
+    const next = ownAclEntries(path.join(root, "holders"), {
+      sid: async () => GUESTS,
+      pid: 2,
+      alive: (pid) => pid === 2,
+    });
+    assert.equal(await next.sync(own), true);
+    assert.match(sddl(moved, root), keptFromElsewhere, "nothing under the granted folder was walked again");
+    assert.match(sddl(game, root), /\(A;OICI;[^;]+;;;BG\)/, "the grant is still there");
+    await next.revokeAll();
+  });
+
+  it("denies a folder and guards the one above it without touching an allow Genex did not set there", async () => {
+    const root = realpathSync.native(await tmpDir("folder-deny-beside-"));
+    const above = path.join(root, "above");
+    const secret = path.join(above, "secret");
+    const open = path.join(above, "open.txt");
+    await mkdir(secret, { recursive: true });
+    await writeFile(open, "open");
+    execFileSync("icacls", [above, "/grant", `*${GUESTS}:(OI)(CI)(RX)`], { stdio: "ignore" });
+    const theirs = /\(A;OICI;0x1200a9;;;BG\)/i;
+    assert.match(sddl(above, root), theirs);
+    const entries = ownAclEntries(path.join(root, "holders"), { sid: async () => GUESTS, pid: 1, alive: () => false });
+    assert.equal(await entries.sync(routeWindowsDenies({ read: [secret], write: [] }).own), true);
+    assert.match(sddl(above, root), theirs, "the allow on the folder stays");
+    assert.match(sddl(above, root), /\(D;;(?:0x40|DT);;;BG\)/, "beside the guard");
+    assert.match(sddl(open, root), /\(A;ID;0x1200a9;;;BG\)/i, "and what is in the folder still inherits it");
+    await entries.revokeAll();
+    assert.match(sddl(above, root), theirs, "taking the deny back leaves it too");
+  });
+
   it("refuses to deny anyone the running user is, setting nothing", async () => {
     const EVERYONE = "S-1-1-0";
     const root = realpathSync.native(await tmpDir("folder-deny-self-"));
     const target = path.join(root, "target");
     await mkdir(target);
-    const edit = { dir: target, sid: EVERYONE, op: FolderAceOp.Deny, deny: DenyAccess.Read, guard: true } as const;
-    assert.equal(await folderDenyEditor()([edit]), null);
+    const edit = {
+      dir: target,
+      sid: EVERYONE,
+      op: FolderAceOp.Own,
+      deny: DenyAccess.Read,
+      guard: true,
+      grant: null,
+      allows: false,
+    } as const;
+    assert.equal(await folderOwnEditor()([edit]), null);
     assert.doesNotMatch(sddl(target, root), /\(D;/);
   });
+
+  for (const protectedAcl of [false, true]) {
+    for (const access of [DenyAccess.Read, DenyAccess.Write]) {
+      const inheritance = protectedAcl ? "protected" : "unprotected";
+      it(`denies ${access} access on ${inheritance} DACL without changing inheritance`, async () => {
+        const root = realpathSync.native(await tmpDir("folder-deny-inheritance-"));
+        const above = path.join(root, "above");
+        const secret = path.join(above, "secret");
+        const key = path.join(secret, "nested", "key");
+        const sibling = path.join(above, "sibling");
+        await mkdir(path.dirname(key), { recursive: true });
+        await mkdir(sibling);
+        await writeFile(key, "fixture");
+        if (protectedAcl) execFileSync("icacls", [secret, "/inheritance:d"], { stdio: "ignore" });
+        const protectedDacl = /D:P/;
+        assert.equal(protectedDacl.test(sddl(secret, root)), protectedAcl, "fixture inheritance");
+        const denies = ownAclEntries(path.join(root, "holders"), {
+          sid: async () => GUESTS,
+          pid: 1,
+          alive: () => false,
+        });
+        const own = routeWindowsDenies({
+          read: access === DenyAccess.Read ? [secret] : [],
+          write: access === DenyAccess.Write ? [secret] : [],
+        }).own;
+        const mask = access === DenyAccess.Read ? "FA" : "(?:0x10156|DCLCRPDTCRSD)";
+        try {
+          assert.equal(await denies.sync(own), true);
+          assert.match(sddl(secret, root), new RegExp(`\\(D;OICI;${mask};;;BG\\)`));
+          assert.match(sddl(key, root), new RegExp(`\\(D;ID;${mask};;;BG\\)`));
+          assert.match(sddl(above, root), /\(D;;(?:0x40|DT);;;BG\)/, "parent guard is not inherited");
+          assert.doesNotMatch(sddl(sibling, root), /\(D;[^)]*;;;BG\)/, "guard stays on the parent alone");
+          assert.equal(protectedDacl.test(sddl(secret, root)), protectedAcl, "deny preserves inheritance");
+        } finally {
+          await denies.revokeAll();
+        }
+        for (const dir of [secret, key, above]) assert.doesNotMatch(sddl(dir, root), /\(D;[^)]*;;;BG\)/, dir);
+        assert.equal(protectedDacl.test(sddl(secret, root)), protectedAcl, "removal preserves inheritance");
+      });
+    }
+  }
 });
 
 describe("toolchain and deny paths", () => {
@@ -552,10 +745,61 @@ describe("toolchain and deny paths", () => {
       "relative\\bin",
     ];
     const exists = (dir: string) => !dir.includes("missing");
-    assert.deepEqual(grantableToolDirs(entries, PROFILE, denied, exists), [
+    assert.deepEqual(grantableToolDirs(entries, PROFILE, denied, { exists, entries: () => null }), [
       at("AppData", "Roaming", "nvm", "v24.18.0"),
       at("scoop", "shims"),
     ]);
+  });
+
+  it("grants pnpm's home without its package store, so the grant walks none of the store's files", () => {
+    // srt-win's grant re-applies permissions through everything under a granted folder: granting
+    // pnpm's home whole walked every package the person ever installed with pnpm.
+    const pnpmHome = at("AppData", "Local", "pnpm");
+    const npmPrefix = at("AppData", "Roaming", "npm");
+    const listing: Record<string, string[]> = {
+      [pnpmHome]: ["pnpm.exe", "pnpm", "pnpm.cmd", "global", ".tools", "store"],
+      [`${pnpmHome}\\store`]: ["v3"],
+      [npmPrefix]: ["pnpm", "pnpm.cmd", "node_modules"],
+    };
+    const disk = { exists: () => true, entries: (dir: string) => listing[dir] ?? null };
+    const granted = grantableToolDirs([pnpmHome, npmPrefix], PROFILE, [], disk);
+    const store = `${pnpmHome}\\store`;
+    assert.ok(!granted.some((root) => insideWindowsPath(root, store)), granted.join("\n"));
+    assert.deepEqual(
+      new Set(granted),
+      new Set([
+        ...["pnpm.exe", "pnpm", "pnpm.cmd", "global", ".tools"].map((name) => `${pnpmHome}\\${name}`),
+        // npm's prefix holds no store: its node_modules are the global CLIs it runs (OpenCode among them).
+        npmPrefix,
+      ]),
+    );
+    // The home itself still gets the read-attributes entry, so Git Bash finds `pnpm` there.
+    assert.ok(ancestorDirs(PROFILE, granted).includes(pnpmHome));
+  });
+
+  it("grants a PATH folder whole when what it holds is no pnpm store, or cannot be listed", () => {
+    const tools = at("tools");
+    const unlisted = at("unlisted");
+    const listing: Record<string, string[]> = {
+      [tools]: ["tool.exe", "store"],
+      [`${tools}\\store`]: ["items.json"],
+    };
+    const disk = { exists: () => true, entries: (dir: string) => listing[dir] ?? null };
+    assert.deepEqual(grantableToolDirs([tools, unlisted], PROFILE, [], disk), [tools, unlisted]);
+  });
+
+  it("lists a PATH folder's files and folders but none of its links, whose targets a grant would open", async () => {
+    // srt-win grants a link's target: a link in pnpm's home to `~\.ssh` must not become a grant there.
+    const root = await tmpDir("tool-dir-entries-");
+    const home = path.join(root, "pnpm");
+    const secrets = path.join(root, ".ssh");
+    await mkdir(path.join(home, "global"), { recursive: true });
+    await mkdir(secrets);
+    await writeFile(path.join(home, "pnpm.exe"), "");
+    await symlink(secrets, path.join(home, "keys"), "junction");
+    const listed = toolDirEntries(home);
+    assert.deepEqual(listed?.sort(), ["global", "pnpm.exe"]);
+    assert.equal(toolDirEntries(path.join(root, "missing")), null);
   });
 
   it("drops a missing deny path only in the profile outside every grant, where nothing could read it anyway", () => {
@@ -886,15 +1130,15 @@ function fakeAncestors() {
 }
 
 /**
- * Genex's own deny entries over a fake: each sync's entries, logged in `calls` as "own denies";
+ * Genex's own entries over a fake: each sync's entries, logged in `calls` as "own entries";
  * `available: false` answers as a PC where Genex cannot set them (no sandbox users' group).
  */
-function fakeOwnDenies(calls: string[], options: { available?: boolean } = {}) {
-  const synced: OwnDenyEntry[][] = [];
+function fakeOwnEntries(calls: string[], options: { available?: boolean } = {}) {
+  const synced: OwnAclEntry[][] = [];
   let revoked = 0;
-  const denies: OwnDenyStamps = {
+  const entries: OwnAclEntries = {
     sync: async (entries) => {
-      calls.push("own denies");
+      calls.push("own entries");
       synced.push([...entries]);
       return options.available ?? true;
     },
@@ -905,7 +1149,7 @@ function fakeOwnDenies(calls: string[], options: { available?: boolean } = {}) {
       revoked++;
     },
   };
-  return { denies, synced, revoked: () => revoked };
+  return { entries, synced, revoked: () => revoked };
 }
 
 /**
@@ -922,13 +1166,13 @@ function session(
 ) {
   const runtime = fakeSessionRuntime();
   const ancestors = fakeAncestors();
-  const own = fakeOwnDenies(runtime.calls, { available: options.ownDenies !== "unavailable" });
+  const own = fakeOwnEntries(runtime.calls, { available: options.ownDenies !== "unavailable" });
   const logged: string[] = [];
   const value = new WindowsSandboxSession({
     runtime: runtime.runtime,
     profile: options.profile ?? PROFILE,
     ancestors: ancestors.ancestors,
-    ...(options.ownDenies ? { denies: own.denies } : {}),
+    ...(options.ownDenies ? { own: own.entries } : {}),
     ...(options.realDenies ? {} : { keepDenies: (paths: readonly string[]) => [...paths], exists: () => true }),
     ...(options.exists ? { exists: options.exists } : {}),
     log: (line) => logged.push(line),
@@ -1163,19 +1407,19 @@ describe("the grant session", () => {
     assert.deepEqual(runtime.calls.slice(5), ["reset", "initialize"], "the egress check runs once per process");
   });
 
-  it("an srt-win timeout in the egress check is tried again, up to three attempts in all", async () => {
+  it("an srt-win timeout in the egress check is tried once more, two attempts in all", async () => {
     const s = session();
-    s.runtime.failInitialize("srt_win_timeout", "srt_win_timeout");
+    s.runtime.failInitialize("srt_win_timeout");
     await s.session.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG });
-    assert.deepEqual(s.runtime.calls, ["initialize", "initialize", "initialize"]);
+    assert.deepEqual(s.runtime.calls, ["initialize", "initialize"]);
 
     const stuck = session();
-    stuck.runtime.failInitialize("srt_win_timeout", "srt_win_timeout", "srt_win_timeout");
+    stuck.runtime.failInitialize("srt_win_timeout", "srt_win_timeout");
     await assert.rejects(
       stuck.session.join({}, { grants: { write: [GAMES], read: [] }, config: BASE_CONFIG }),
       /srt_win_timeout/,
     );
-    assert.equal(stuck.runtime.calls.length, 3);
+    assert.equal(stuck.runtime.calls.length, 2);
   });
 
   it("waits for asynchronous launcher rollback before allowing the next initialization", async () => {
@@ -1287,7 +1531,7 @@ describe("deny paths Genex sets itself", () => {
         { path: PROFILE, deny: null, guard: true },
         { path: at(".claude"), deny: DenyAccess.Read, guard: false },
         { path: at(".ssh"), deny: DenyAccess.Read, guard: false },
-        { path: PONG, deny: null, guard: true },
+        { path: PONG, deny: null, guard: true, grant: GrantAccess.Modify },
         { path: at("AI Games", "Pong", ".claude"), deny: DenyAccess.Write, guard: false },
         { path: at("AI Games", "Pong", ".env"), deny: DenyAccess.Read, guard: false },
         { path: at("AppData", "Local", "Roblox"), deny: null, guard: true },
@@ -1298,30 +1542,108 @@ describe("deny paths Genex sets itself", () => {
         { path: "D:\\Keys\\deploy.pem", deny: DenyAccess.Read, guard: false },
       ],
     ]);
-    assert.deepEqual(s.runtime.calls, ["own denies", "initialize"], "denied before srt-win grants anything");
+    assert.deepEqual(s.runtime.calls, ["own entries", "initialize"], "denied before srt-win grants anything");
   });
 
-  it("leaves every deny to srt-win, as before, where Genex cannot set them itself", async () => {
+  it("leaves every deny to srt-win, as before, where Genex cannot set them itself, and says so", async () => {
     const s = session({ ownDenies: "unavailable", exists });
     await s.session.join({}, denying(SECRETS, WRITE_ONLY));
     const sent = s.runtime.last().filesystem;
     assert.deepEqual(sent.denyRead, SECRETS);
     assert.deepEqual(sent.denyWrite, WRITE_ONLY);
+    // srt-win's grant and stamp then walk each folder again: a timeout after it reads as that.
+    assert.ok(
+      s.logged.some((line) => line.startsWith("own entries off: srt-win sets all 9 grants and denies")),
+      s.logged.join("\n"),
+    );
   });
 
-  it("sets them again on every regrant, and takes them back with the last member and on dispose", async () => {
+  it("sets them again on every regrant, and keeps them after the last member and dispose, for the next start", async () => {
     const s = session({ ownDenies: true });
     const owner = {};
     await s.session.join(owner, denying([at(".ssh")]));
     s.session.update(owner, { write: [PONG, LATE], read: [] });
     await s.session.settled();
-    assert.deepEqual(s.runtime.calls, ["own denies", "initialize", "reset", "own denies", "initialize"]);
+    assert.deepEqual(s.runtime.calls, ["own entries", "initialize", "reset", "own entries", "initialize"]);
     s.session.leave(owner);
     await s.session.settled();
-    assert.equal(s.own.revoked(), 1);
     await s.session.join({}, denying([at(".ssh")]));
     await s.session.dispose();
-    assert.equal(s.own.revoked(), 2);
+    // Intentionally flipped: they were taken back here, and walked again at every start.
+    assert.equal(s.own.revoked(), 0);
+  });
+
+  it("hands srt-win no grant on a folder that exists, so no start walks a granted folder again", async () => {
+    // srt-win's grant passed its entry down through everything under each folder at every start
+    // (a toolchain, a games folder full of node_modules) and ran past its 60-second deadline.
+    const runtime = fakeSessionRuntime();
+    const own = fakeOwnEntries(runtime.calls);
+    const npm = at("AppData", "Roaming", "npm");
+    const install = at("AppData", "Local", "genex", "app-0.1.13");
+    const value = new WindowsSandboxSession({
+      runtime: runtime.runtime,
+      profile: PROFILE,
+      ancestors: fakeAncestors().ancestors,
+      own: own.entries,
+      launchDirs: [install],
+      launcher: async () => {
+        runtime.calls.push("launcher");
+        return () => {};
+      },
+      keepDenies: (paths) => [...paths],
+      exists: (p) => p !== LATE,
+    });
+    await value.join({}, { grants: { write: [PONG, LATE], read: [npm] }, config: BASE_CONFIG });
+    const sent = runtime.last();
+    assert.deepEqual(sent.filesystem.allowWrite, [LATE], "only a folder Genex cannot grant (gone here)");
+    assert.deepEqual(sent.filesystem.allowRead, []);
+    assert.deepEqual(
+      sent.git?.safeDirectories,
+      [PONG, LATE],
+      "Git trusts the writable folders, as with srt-win's grant",
+    );
+    assert.deepEqual(own.synced[0], [
+      { path: PONG, deny: null, guard: false, grant: GrantAccess.Modify },
+      { path: install, deny: null, guard: false, grant: GrantAccess.Read },
+      { path: npm, deny: null, guard: false, grant: GrantAccess.Read },
+    ]);
+    assert.deepEqual(runtime.calls, ["own entries", "initialize"], "the launch folders are among Genex's grants");
+  });
+
+  it("grants with srt-win and its launcher where Genex cannot set entries itself", async () => {
+    const runtime = fakeSessionRuntime();
+    const own = fakeOwnEntries(runtime.calls, { available: false });
+    const value = new WindowsSandboxSession({
+      runtime: runtime.runtime,
+      profile: PROFILE,
+      ancestors: fakeAncestors().ancestors,
+      own: own.entries,
+      launchDirs: [at("AppData", "Local", "genex", "app-0.1.13")],
+      launcher: async () => {
+        runtime.calls.push("launcher");
+        return () => {};
+      },
+      keepDenies: (paths) => [...paths],
+      exists: () => true,
+    });
+    await value.join({}, { grants: { write: [PONG], read: [] }, config: BASE_CONFIG });
+    assert.deepEqual(runtime.last().filesystem.allowWrite, [PONG]);
+    assert.equal(runtime.last().git, undefined);
+    assert.deepEqual(runtime.calls, ["own entries", "launcher", "initialize"]);
+  });
+
+  it("leaves srt-win a grant root that is gone, a drive root or a share", () => {
+    const table: Array<[string, string]> = [
+      ["a folder that is gone (srt-win drops it)", NEVER_MADE],
+      ["a drive root", "D:\\"],
+      ["a network share", "\\\\nas\\games"],
+    ];
+    for (const [label, root] of table) {
+      const routes = routeWindowsGrants({ write: [root], read: [root] }, { realpath: (p) => p, exists });
+      assert.deepEqual(routes, { srt: { read: [root], write: [root] }, own: [] }, label);
+    }
+    const both = routeWindowsGrants({ write: [PONG], read: [at("AI Games", "pong")] }, { realpath: (p) => p, exists });
+    assert.deepEqual(both.own, [{ path: PONG, deny: null, guard: false, grant: GrantAccess.Modify }], "write wins");
   });
 
   it("denies a path where it really is, its spelling and links worked out", () => {
@@ -1356,11 +1678,11 @@ describe("deny paths Genex sets itself", () => {
 describe("Genex's own deny entries", () => {
   const SID = "S-1-5-21-1-1002";
   const DEAD_PID = 3;
-  const done = (edits: readonly FolderDenyEdit[]) => edits.map(() => ({ ok: true }) as const);
-  const shape = (edit: FolderDenyEdit) => [edit.dir, `${edit.deny}`, edit.guard ? "guard" : "-"];
+  const done = (edits: readonly FolderOwnEdit[]) => edits.map(() => ({ ok: true }) as const);
+  const shape = (edit: FolderOwnEdit) => [edit.dir, `${edit.deny}`, edit.guard ? "guard" : "-"];
   /** Deny entries for holder `pid` in `holders`, logging every edit as `[pid, dir, deny, guard]`. */
-  const holder = (holders: string, pid: number, calls: string[][], options: Partial<OwnDenyDeps> = {}) =>
-    ownDenyStamps(holders, {
+  const holder = (holders: string, pid: number, calls: string[][], options: Partial<OwnAclDeps> = {}) =>
+    ownAclEntries(holders, {
       sid: async () => SID,
       pid,
       alive: (other) => other !== DEAD_PID,
@@ -1391,7 +1713,7 @@ describe("Genex's own deny entries", () => {
       edit: async (edits) => {
         for (const edit of edits) {
           if (edit.deny || edit.guard) {
-            const recorded = JSON.parse(await readFile(record, "utf8")) as { entries: OwnDenyEntry[] };
+            const recorded = JSON.parse(await readFile(record, "utf8")) as { entries: OwnAclEntry[] };
             assert.ok(
               recorded.entries.some((entry) => entry.path === edit.dir),
               "recorded before set",
@@ -1472,7 +1794,7 @@ describe("Genex's own deny entries", () => {
     const holders = await tmpDir("windows-denies-");
     const batches: string[][] = [];
     let refusals = 1;
-    const flaky: FolderDenyEditor = async (edits) => {
+    const flaky: FolderOwnEditor = async (edits) => {
       batches.push(edits.map((edit) => edit.dir));
       return edits.map((edit) =>
         edit.dir === at(".ssh") && refusals-- > 0 ? { ok: false, error: "being changed" } : { ok: true },
@@ -1481,14 +1803,65 @@ describe("Genex's own deny entries", () => {
     const denies = holder(holders, 1, [], { edit: flaky });
     await denies.sync([guard, ssh]);
     assert.deepEqual(batches, [[PROFILE, at(".ssh")], [at(".ssh")]]);
-    const gone: FolderDenyEditor = async (edits) =>
+    const gone: FolderOwnEditor = async (edits) =>
       edits.map((edit) => (edit.deny || edit.guard ? { ok: true } : { ok: false, error: "cannot find the file" }));
     assert.equal(await holder(holders, 1, [], { edit: gone }).sync([]), true);
-    const broken: FolderDenyEditor = async (edits) => edits.map(() => ({ ok: false, error: "Access is denied." }));
+    const broken: FolderOwnEditor = async (edits) => edits.map(() => ({ ok: false, error: "Access is denied." }));
     await assert.rejects(
       holder(holders, 2, [], { edit: broken }).sync([ssh]),
-      /could not deny the sandbox user .*\\\.ssh: Access is denied\./,
+      /could not set the sandbox user's entries on .*\\\.ssh: Access is denied\./,
     );
+  });
+
+  it("stops at a batch that ran out of time, keeping what it set for the next try", async () => {
+    const holders = await tmpDir("windows-denies-");
+    let batches = 0;
+    const slow: FolderOwnEditor = async (edits) => {
+      batches++;
+      return edits.map(
+        () => ({ ok: false, error: "still passing the entries down after 600 s", timedOut: true }) as const,
+      );
+    };
+    await assert.rejects(
+      holder(holders, 1, [], { edit: slow }).sync([guard, ssh]),
+      /could not set the sandbox user's entries on .*: still passing the entries down/,
+    );
+    assert.equal(batches, 1, "a batch that ran out of time is not run again at once");
+    const recorded = JSON.parse(await readFile(path.join(holders, "1.json"), "utf8")) as { entries: OwnAclEntry[] };
+    assert.deepEqual(recorded.entries, [guard, ssh], "what it may have set stays recorded");
+  });
+
+  it("says which edits Windows took long over: a first walk of a large folder", async () => {
+    const logged: string[] = [];
+    const timed: FolderOwnEditor = async (edits) =>
+      edits.map((edit) => ({ ok: true, ms: edit.dir === at(".ssh") ? 41_000 : 30 }) as const);
+    await holder(await tmpDir("windows-denies-"), 1, [], { edit: timed, log: (line) => logged.push(line) }).sync([
+      guard,
+      ssh,
+    ]);
+    assert.deepEqual(logged, [`own entries: ${at(".ssh")} took 41 s (once; they stay)`]);
+  });
+
+  it("touches the group's passed-down allows only on a folder Genex grants or once granted", async () => {
+    // A deny or a guard on a folder must leave an allow there that Genex did not set (an admin's,
+    // or the grant on the folder above a denied one) exactly as it is.
+    const holders = await tmpDir("windows-denies-");
+    const seen: FolderOwnEdit[] = [];
+    const recording: FolderOwnEditor = async (edits) => {
+      seen.push(...edits);
+      return edits.map(() => ({ ok: true }) as const);
+    };
+    const denies = holder(holders, 1, [], { edit: recording });
+    const game = { path: at("AI Games"), deny: null, guard: false, grant: GrantAccess.Modify };
+    await denies.sync([guard, ssh, game]);
+    const allows = (dir: string) => seen.filter((edit) => edit.dir === dir).map((edit) => edit.allows);
+    assert.deepEqual(allows(PROFILE), [false], "a guard leaves the folder's allows alone");
+    assert.deepEqual(allows(at(".ssh")), [false], "so does a deny");
+    assert.deepEqual(allows(at("AI Games")), [true]);
+    seen.length = 0;
+    await denies.sync([guard, ssh]);
+    const takenBack = seen.find((edit) => edit.dir === at("AI Games"));
+    assert.deepEqual(takenBack && [takenBack.allows, takenBack.grant], [true, null], "a grant Genex set goes");
   });
 
   it("runs nothing when it has nothing to set and nothing to take back", async () => {
@@ -1502,6 +1875,47 @@ describe("Genex's own deny entries", () => {
     assert.equal(await denies.sync([]), true);
     await denies.revokeAll();
     assert.equal(runs, 0);
+  });
+
+  it("leaves an uninstall every recorded entry to take back, except what a running Genex needs", async () => {
+    const local = await tmpDir("windows-uninstall-");
+    const holders = { above: path.join(local, "genex-sandbox-grants"), own: path.join(local, "genex-sandbox-denies") };
+    await mkdir(holders.own, { recursive: true });
+    await mkdir(holders.above, { recursive: true });
+    const game = { path: at("AI Games"), deny: null, guard: false, grant: GrantAccess.Modify };
+    await writeFile(path.join(holders.own, `${DEAD_PID}.json`), JSON.stringify({ sid: SID, entries: [game, ssh] }));
+    await writeFile(path.join(holders.own, "7.json"), JSON.stringify({ sid: SID, entries: [ssh] }));
+    await writeFile(path.join(holders.above, `${DEAD_PID}.json`), JSON.stringify({ sid: SID, dirs: [at("AppData")] }));
+    const alive = (pid: number) => pid === 7;
+    const edits = sandboxEntriesLeft(holders, alive);
+    assert.deepEqual(edits, [
+      { dir: at("AppData"), sid: SID, op: FolderAceOp.Remove },
+      { dir: at("AI Games"), sid: SID, op: FolderAceOp.Own, deny: null, guard: false, grant: null, allows: true },
+      {
+        dir: at(".ssh"),
+        sid: SID,
+        op: FolderAceOp.Own,
+        deny: DenyAccess.Read,
+        guard: false,
+        grant: null,
+        allows: false,
+      },
+    ]);
+    const started: Array<{ file: string; env: NodeJS.ProcessEnv }> = [];
+    const spawnBatch = (file: string, _args: string[], env: NodeJS.ProcessEnv) => {
+      started.push({ file, env });
+      return { unref: () => {} };
+    };
+    assert.equal(takeBackSandboxEntries(spawnBatch, PROFILE, { SystemRoot: "C:\\Windows" }, { holders, alive }), 3);
+    assert.equal(started.length, 1, "one PowerShell batch, left to run after the uninstall launch exits");
+    const payload = JSON.parse(Buffer.from(started[0]?.env.GENEX_FOLDER_ACES ?? "", "base64").toString("utf8"));
+    assert.deepEqual(payload, edits);
+    const none = await tmpDir("windows-uninstall-empty-");
+    const empty = { above: path.join(none, "a"), own: path.join(none, "b") };
+    assert.equal(
+      takeBackSandboxEntries(() => assert.fail("nothing to take back"), PROFILE, {}, { holders: empty }),
+      0,
+    );
   });
 
   it("records under %LOCALAPPDATA%, beside the folder grants", () => {
@@ -1524,7 +1938,7 @@ async function windowsSandbox(
     wrapError?: object;
     initializeError?: object;
     bash?: string | null;
-    dependencyErrors?: () => Promise<string[]>;
+    setupGaps?: () => Promise<WindowsSetupGap[]>;
     startInBackground?: boolean;
     /** Hold srt's initialize until the returned open is called. */
     holdInitialize?: boolean;
@@ -1574,7 +1988,7 @@ async function windowsSandbox(
     secretPaths: [secrets, path.join(root, "never-created")],
     runtime,
     platform: "win32",
-    windows: { bash, session: s.session, profile: root, dependencyErrors: options.dependencyErrors },
+    windows: { bash, session: s.session, profile: root, setupGaps: options.setupGaps },
     toolPath: async () => "",
     ...(options.startInBackground ? { startInBackground: true } : {}),
   });
@@ -1803,7 +2217,7 @@ describe("ProcessSandbox on Windows", () => {
     await assert.rejects(
       windowsSandbox({
         initializeError: new Error(`Sandbox dependencies not available: ${unprovisioned}`),
-        dependencyErrors: async () => [unprovisioned],
+        setupGaps: async () => [{ need: WindowsSetupNeed.Sandbox, detail: unprovisioned }],
       }),
       (error: unknown) => {
         if (!(error instanceof SandboxUnavailableError)) return false;
@@ -1813,9 +2227,9 @@ describe("ProcessSandbox on Windows", () => {
       },
     );
     // A failure the check does not explain, or a check that fails itself, stays the error it was.
-    for (const dependencyErrors of [async () => [], async () => Promise.reject(new Error("srt-win missing"))]) {
+    for (const setupGaps of [async () => [], async () => Promise.reject(new Error("srt-win missing"))]) {
       await assert.rejects(
-        windowsSandbox({ initializeError: new Error("proxy port in use"), dependencyErrors }),
+        windowsSandbox({ initializeError: new Error("proxy port in use"), setupGaps }),
         (error: unknown) => !(error instanceof SandboxUnavailableError) && /proxy port in use/.test(String(error)),
       );
     }
@@ -1823,10 +2237,10 @@ describe("ProcessSandbox on Windows", () => {
 });
 
 describe("ProcessSandbox on Windows, started in the background", () => {
-  const ready = async () => [];
+  const ready = async (): Promise<WindowsSetupGap[]> => [];
 
   it("is created while srt still initializes, and a run waits for the start", async () => {
-    const w = await windowsSandbox({ startInBackground: true, holdInitialize: true, dependencyErrors: ready });
+    const w = await windowsSandbox({ startInBackground: true, holdInitialize: true, setupGaps: ready });
     let finished = false;
     const run = w.sandbox.run({ command: "printf started", cwd: w.workspace }).then((result) => {
       finished = true;
@@ -1846,21 +2260,41 @@ describe("ProcessSandbox on Windows, started in the background", () => {
   it("still refuses at once what Set up fixes: no sandbox user, no Git for Windows", async () => {
     const unprovisioned = "Sandbox user is not provisioned (user=false, cred=false).";
     await assert.rejects(
-      windowsSandbox({ startInBackground: true, dependencyErrors: async () => [unprovisioned] }),
+      windowsSandbox({
+        startInBackground: true,
+        setupGaps: async () => [{ need: WindowsSetupNeed.Sandbox, detail: unprovisioned }],
+      }),
       (error: unknown) =>
         error instanceof SandboxUnavailableError && error.problem.code === SandboxProblemCode.NotProvisioned,
     );
     await assert.rejects(
-      windowsSandbox({ startInBackground: true, bash: null, dependencyErrors: ready }),
+      windowsSandbox({ startInBackground: true, bash: null, setupGaps: ready }),
       (error: unknown) =>
         error instanceof SandboxUnavailableError && error.problem.code === SandboxProblemCode.GitMissing,
+    );
+  });
+
+  it("refuses at once a disabled Secondary Logon service, as a setup screen that names it", async () => {
+    const off = "The Secondary Logon service (seclogon) is disabled.";
+    await assert.rejects(
+      windowsSandbox({
+        startInBackground: true,
+        setupGaps: async () => [{ need: WindowsSetupNeed.LogonService, detail: off }],
+      }),
+      (error: unknown) => {
+        if (!(error instanceof SandboxUnavailableError)) return false;
+        assert.equal(error.problem.code, SandboxProblemCode.NotProvisioned);
+        assert.deepEqual(error.problem.windowsNeeds, [WindowsSetupNeed.LogonService]);
+        assert.deepEqual(error.problem.details, [off]);
+        return true;
+      },
     );
   });
 
   it("a start that failed behind the window is tried again by the next run", async () => {
     const w = await windowsSandbox({
       startInBackground: true,
-      dependencyErrors: ready,
+      setupGaps: ready,
       failInitializeIn: { subcommand: "acl", code: "acl_grant_failed" },
     });
     // The start behind the window fails first; a run that came during it would report that failure.
@@ -1875,13 +2309,48 @@ describe("ProcessSandbox on Windows, started in the background", () => {
 
 describe("what is not set up yet", () => {
   const set = { provisioned: true, credPresent: true };
+  const on = ServiceStartType.Demand;
+  const needs = (gaps: WindowsSetupGap[]) => gaps.map((gap) => gap.need);
+
   it("names a missing sandbox user or credential, then missing filters, and nothing on a set-up PC", () => {
-    assert.equal(setupGaps({ user: { provisioned: false, credPresent: false }, wfp: { state: "absent" } }).length, 1);
-    assert.equal(setupGaps({ user: { provisioned: true, credPresent: false }, wfp: { state: "installed" } }).length, 1);
-    assert.equal(setupGaps({ user: set, wfp: { state: "absent" } }).length, 1);
-    assert.deepEqual(setupGaps({ user: set, wfp: { state: "installed" } }), []);
+    const missing = { provisioned: false, credPresent: false };
+    assert.equal(setupGaps({ user: missing, wfp: { state: "absent" }, logonService: on }).length, 1);
+    const noCred = { provisioned: true, credPresent: false };
+    assert.equal(setupGaps({ user: noCred, wfp: { state: "installed" }, logonService: on }).length, 1);
+    assert.equal(setupGaps({ user: set, wfp: { state: "absent" }, logonService: on }).length, 1);
+    assert.deepEqual(setupGaps({ user: set, wfp: { state: "installed" }, logonService: on }), []);
     // Reading the filters needs an administrator; srt treats it as informational, and so do we.
-    assert.deepEqual(setupGaps({ user: set, wfp: { state: "cannot-read" } }), []);
+    assert.deepEqual(setupGaps({ user: set, wfp: { state: "cannot-read" }, logonService: on }), []);
+  });
+
+  it("names a disabled Secondary Logon service beside whatever else is missing", () => {
+    const off = ServiceStartType.Disabled;
+    const missing = { provisioned: false, credPresent: false };
+    assert.deepEqual(needs(setupGaps({ user: set, wfp: { state: "installed" }, logonService: off })), [
+      WindowsSetupNeed.LogonService,
+    ]);
+    assert.deepEqual(needs(setupGaps({ user: missing, wfp: { state: "absent" }, logonService: off })), [
+      WindowsSetupNeed.Sandbox,
+      WindowsSetupNeed.LogonService,
+    ]);
+    // Manual, automatic, or a start type `sc` could not say: Windows starts it when asked, or we cannot tell.
+    for (const logonService of [ServiceStartType.Demand, ServiceStartType.Auto, null]) {
+      assert.deepEqual(setupGaps({ user: set, wfp: { state: "installed" }, logonService }), [], String(logonService));
+    }
+  });
+
+  it("asks srt-win and `sc` together; srt-win's failure is the start's own error, an unread service is no gap", async () => {
+    const status = async () => ({ user: set, wfp: { state: "installed" } });
+    const off = async () => ServiceStartType.Disabled;
+    assert.deepEqual(needs(await windowsSetupGaps({ status, logonService: off })), [WindowsSetupNeed.LogonService]);
+    const unread = async () => {
+      throw new Error("sc.exe: Access is denied");
+    };
+    assert.deepEqual(await windowsSetupGaps({ status, logonService: unread }), []);
+    const failing = async () => {
+      throw new Error("srt-win missing");
+    };
+    await assert.rejects(windowsSetupGaps({ status: failing, logonService: off }), /srt-win missing/);
   });
 });
 

@@ -3,10 +3,12 @@
  * view per game in Play's own session, across the whole window, and above it the bar's layer, a
  * transparent view of the studio's own page (`renderer/play-bar.html`) made once and kept. The game's
  * page may move between Genex games' addresses and Genex's sign-in hop; any other link opens in the
- * browser. Play's session grants only mouse lock, full screen and clipboard writes, and the microphone
- * to a game's own page just after the viewer told it to open it (the bar's mic switch, `mic.ts`). Its
- * one preload (`preload/play-mic.ts`) gives the page the app's microphone and carries the mic's word
- * between the page and main; the menu of microphones is a native one.
+ * browser, except a coin purchase the game asks for, which the viewer shows as its own sheet
+ * (`purchase-window.ts`). Play's session grants only mouse lock, full screen and clipboard writes, and
+ * the microphone to a game's own page just after the viewer told it to open it (the bar's mic switch,
+ * `mic.ts`); a purchase's hidden popup gets nothing. Its one preload (`preload/play-mic.ts`) gives the
+ * page the app's microphone and carries the mic's word between the page and main; the menu of
+ * microphones is a native one.
  */
 import {
   type BrowserWindow,
@@ -19,6 +21,7 @@ import {
   systemPreferences,
   type WebContents,
   WebContentsView,
+  webContents,
 } from "electron";
 import { StudioPlatform } from "../../shared/boot.ts";
 import type { PlayPoint, PlayViewerEvent } from "../../shared/play.ts";
@@ -29,11 +32,13 @@ import { GAME_DISABLED_BLINK_FEATURES } from "../game-view.ts";
 import { createReloadPolicy, ReloadDecision } from "../app-lifecycle.ts";
 import { pushToRenderer } from "../ipc-handle.ts";
 import type { PlayComments } from "./comments.ts";
+import type { SheetInput, ViewerCoin } from "./viewer-purchase.ts";
 import { linkGate, playAddress, playNavigationAllowed } from "./game-address.ts";
 import type { PlayGallery } from "./gallery.ts";
 import { playPermissionShown, playPermitted } from "./game-permissions.ts";
 import { type MicGate, micGate, micGateFor } from "./mic.ts";
 import { closePage, closeWithWindow, dropGameView } from "./view-drop.ts";
+import { isPurchaseWindow, wirePurchaseCapture } from "./purchase-window.ts";
 import type { PlayMicStore } from "./mic-store.ts";
 import { playViewer, type PlayViewer } from "./viewer.ts";
 
@@ -51,6 +56,13 @@ const GAME_BACKGROUND = "#000000";
 const TRANSPARENT = "#00000000";
 /** A navigation the browser itself aborted (a new one replaced it): not a failure. */
 const ERR_ABORTED = -3;
+/** Node's timers, for the viewer and for catching a purchase's popup. */
+const TIMERS = {
+  setTimeout: (run: () => void, ms: number): unknown => setTimeout(run, ms),
+  clearTimeout: (handle: unknown): void => clearTimeout(handle as ReturnType<typeof setTimeout>),
+};
+/** Keyboard input as Electron's `input-event` names it: the bar's keys are heard before they land instead. */
+const KEY_INPUTS: ReadonlySet<string> = new Set(["rawKeyDown", "keyDown", "keyUp", "char"]);
 /** HTTP answers that mean the game is not there to play. */
 const GONE_STATUS = 404;
 const SERVER_ERROR = 500;
@@ -92,29 +104,45 @@ export interface PlayViewDeps {
   barPreload: string;
   /** The game's comments on genex.games. */
   comments: PlayComments;
+  /** genex.games' coin, for a game's purchase sheet. */
+  coin: ViewerCoin;
+  /** The app's Genex account: the purchase sheet's Sign in. */
+  account: { signIn(): void };
+  /** A genex.games page the purchase sheet opens (Get coin): to the browser. */
+  openPage(url: string): void;
+  /**
+   * Where genex.games confirms a game's purchase (`purchaseConfirmOrigin`): the game's popup for it is
+   * caught and shown as the viewer's sheet. Null catches nothing: every open is a link.
+   */
+  confirmOrigin: string | null;
 }
 
 /**
- * Play's session, granting only what Play allows and only to a game's own page (never to a frame
- * inside it), and refusing every download. The microphone is its view's gate's to grant: once, just
- * after the viewer told the page to open it; a camera never.
+ * Give `play` Play's rules, once: grant only what Play allows and only to a game's own page (never to a
+ * frame inside it, nor to a purchase's hidden popup), and refuse every download. The microphone is its
+ * view's gate's to grant: once, just after the viewer told the page to open it; a camera never.
+ * Exported for the Electron check of a purchase popup (`tests/e2e/play-purchase-electron.ts`).
  */
-function playSession(): Session {
-  const play = session.fromPartition(PLAY_PARTITION);
+export function preparePlaySession(play: Session): Session {
   if (prepared.has(play)) return play;
   prepared.add(play);
   play.setPermissionRequestHandler((contents, permission, callback, details) => {
+    if (isPurchaseWindow(contents)) return callback(false);
     const mediaTypes = "mediaTypes" in details ? (details.mediaTypes ?? []) : [];
     const request = { mediaTypes, isMainFrame: details.isMainFrame };
     callback(playPermitted(permission, request, micGates.get(contents), Date.now()));
   });
   play.setPermissionCheckHandler((contents, permission, _origin, details) => {
+    if (contents && isPurchaseWindow(contents)) return false;
     const gate = contents ? micGates.get(contents) : undefined;
     return playPermissionShown(permission, { mediaType: details.mediaType, isMainFrame: details.isMainFrame }, gate);
   });
   play.on("will-download", (event) => event.preventDefault());
   return play;
 }
+
+/** Play's own session, with its rules. */
+const playSession = (): Session => preparePlaySession(session.fromPartition(PLAY_PARTITION));
 
 /** The viewer's views in a window: its bar's layer once made, and the game's view while a game is open. */
 export interface PlayViews {
@@ -125,13 +153,22 @@ export interface PlayViews {
 /** `win`'s Play views, for the development control; null before the viewer is wired. */
 export const playViewsOf = (win: BrowserWindow): PlayViews | null => viewsOf.get(win) ?? null;
 
-/** What the game's view reports to the viewer: its keys and pointer, how its page loads, and its microphone. */
+/**
+ * What the game's view reports to the viewer: its keys and pointer, how its page loads, its
+ * microphone and the purchases it asks for; and what it asks the viewer before catching one.
+ */
 interface ViewerEvents {
   key(input: FullScreenKey): void;
   pointer(x: number, y: number): void;
   loaded(): void;
   failed(): void;
+  /** The page committed a new document: it reloaded, or moved to another Genex game. */
+  navigated(): void;
   mic(report: PlayMicReport): void;
+  /** The game asked to pay for the purchase `intentId`. */
+  purchase(intentId: string): void;
+  /** Whether the viewer may show a purchase sheet now: a popup for one is made only then. */
+  mayReserve(): boolean;
 }
 
 /**
@@ -184,10 +221,12 @@ function showMicMenu(
 /**
  * Keep a game's page on its own addresses. A link it follows or opens elsewhere goes to the browser
  * (without its fragment, at most one every few seconds); a server redirect elsewhere goes nowhere,
- * since it may carry the sign-in ticket. The game's own frames may go where they like.
+ * since it may carry the sign-in ticket. The game's own frames may go where they like. A window it
+ * opens is a link too, unless it is the popup of a coin purchase (`purchase-window.ts`).
  */
-function guardNavigation(contents: WebContents, offline: boolean, openExternal: (url: string) => void): void {
-  const sendOut = linkGate(openExternal);
+function guardNavigation(contents: WebContents, play: Session, deps: PlayViewDeps, events: ViewerEvents): void {
+  const offline = deps.offline !== null;
+  const sendOut = linkGate(deps.openExternal);
   contents.on("will-navigate", (event, target) => {
     if (playNavigationAllowed(target, offline)) return;
     event.preventDefault();
@@ -197,9 +236,13 @@ function guardNavigation(contents: WebContents, offline: boolean, openExternal: 
     if (!event.isMainFrame || playNavigationAllowed(event.url, offline)) return;
     event.preventDefault();
   });
-  contents.setWindowOpenHandler(({ url }) => {
-    sendOut(url);
-    return { action: "deny" };
+  wirePurchaseCapture(play, contents, {
+    confirmOrigin: deps.confirmOrigin,
+    sendOut,
+    mayReserve: events.mayReserve,
+    purchase: events.purchase,
+    page: (id) => webContents.fromId(id),
+    clock: TIMERS,
   });
 }
 
@@ -225,12 +268,23 @@ function hearMic(contents: WebContents, mine: () => boolean, hear: (report: Play
 }
 
 /**
+ * Every press in the bar's layer, for the purchase sheet's Pay (`viewer-purchase.ts`): a key before it
+ * lands, with whether it repeats, and a pointer or touch going down.
+ */
+function hearBarInput(contents: WebContents, hear: (input: SheetInput) => void): void {
+  contents.on("before-input-event", (_event, input) => hear({ type: input.type, isAutoRepeat: input.isAutoRepeat }));
+  contents.on("input-event", (_event, input) => {
+    if (!KEY_INPUTS.has(input.type)) hear({ type: input.type });
+  });
+}
+
+/**
  * The bar's layer over the game: the studio's own page in a transparent view, made ahead of the first
  * game (`warm`) and kept, drawn over each new game's view. It hears the viewer's news as the studio's
  * page does; a page that loads late says so once it has mounted (`PlayBarHold.ready`) and is drawn
- * the bar again. A layer whose page went away loads it again.
+ * the bar again. A layer whose page went away loads it again. Its input is heard for the purchase sheet.
  */
-function barLayer(win: BrowserWindow, deps: PlayViewDeps, lost: () => void) {
+function barLayer(win: BrowserWindow, deps: PlayViewDeps, lost: () => void, heard: (input: SheetInput) => void) {
   let view: WebContentsView | null = null;
   // A page that dies on load does not spin: past a couple of reloads a minute the viewer closes, since
   // a game with no bar has no way out but a held Esc.
@@ -245,6 +299,7 @@ function barLayer(win: BrowserWindow, deps: PlayViewDeps, lost: () => void) {
     const contents = layer.webContents;
     contents.on("will-navigate", (event) => event.preventDefault());
     contents.setWindowOpenHandler(() => ({ action: "deny" }));
+    hearBarInput(contents, heard);
     contents.on("render-process-gone", (_event, details) => {
       const decision = reloads.decide(details.reason);
       if (decision === ReloadDecision.GiveUp) lost();
@@ -327,7 +382,12 @@ function gameView(win: BrowserWindow, deps: PlayViewDeps, events: ViewerEvents, 
     micGates.set(contents, micGate());
     hearMic(contents, mine, events.mic);
     hearPointer(contents, mine, events.pointer);
-    guardNavigation(contents, deps.offline !== null, deps.openExternal);
+    // A purchase is caught only for the game on screen.
+    guardNavigation(contents, play, deps, {
+      ...events,
+      purchase: (intentId) => mine() && events.purchase(intentId),
+      mayReserve: () => mine() && events.mayReserve(),
+    });
     contents.on("did-finish-load", () => mine() && events.loaded());
     contents.on("did-fail-load", (_event, code, _description, _url, isMainFrame) => {
       if (mine() && isMainFrame && code !== ERR_ABORTED) events.failed();
@@ -336,6 +396,7 @@ function gameView(win: BrowserWindow, deps: PlayViewDeps, events: ViewerEvents, 
       if (!mine()) return;
       // Each page starts with its own gate; a page off the game's origin never gets the microphone.
       micGates.set(contents, micGateFor(page, url));
+      events.navigated();
       if (status === GONE_STATUS || status >= SERVER_ERROR) events.failed();
     });
     contents.on("render-process-gone", () => mine() && events.failed());
@@ -375,9 +436,17 @@ export function wirePlayViewer(deps: PlayViewDeps): PlayViewer {
     pointer: (x, y) => viewer?.pointer(x, y),
     loaded: () => viewer?.loaded(),
     failed: () => viewer?.failed(),
+    navigated: () => viewer?.navigated(),
     mic: (report) => viewer?.mic(report),
+    purchase: (intentId) => viewer?.purchase(intentId),
+    mayReserve: () => viewer?.mayReserve() === true,
   };
-  const bar = barLayer(win, deps, () => viewer?.close());
+  const bar = barLayer(
+    win,
+    deps,
+    () => viewer?.close(),
+    (input) => viewer?.barInput(input),
+  );
   const game = gameView(win, deps, events, bar.raise);
   viewsOf.set(win, { bar: bar.view, game: game.view });
   const made = playViewer({
@@ -399,16 +468,16 @@ export function wirePlayViewer(deps: PlayViewDeps): PlayViewer {
     // The game's view loses the keyboard to the bar, and with it any mouse lock it held.
     bar,
     comments: deps.comments,
+    coin: deps.coin,
+    account: deps.account,
+    openPage: deps.openPage,
     clipboard: (text) => clipboard.writeText(text),
     web: deps.web,
     emit: (event) => {
       deps.emit(event);
       bar.tell(event);
     },
-    clock: {
-      setTimeout: (run, ms) => setTimeout(run, ms),
-      clearTimeout: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-    },
+    clock: { ...TIMERS, now: () => Date.now() },
     // A fixture launch never asks the system or opens its settings: its stand-in page holds no microphone.
     mic: {
       access: () => (offline ? Promise.resolve(true) : microphoneAccess()),
@@ -422,6 +491,9 @@ export function wirePlayViewer(deps: PlayViewDeps): PlayViewer {
   });
   viewer = made;
   win.on("resize", () => made.resized());
+  // A click that brings the window back never lands on a purchase's Pay: it waits again.
+  win.on("focus", () => made.focusChanged());
+  win.on("blur", () => made.focusChanged());
   closeWithWindow(win, () => made.close());
   win.on("closed", () => bar.destroy());
   return made;

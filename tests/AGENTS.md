@@ -75,6 +75,9 @@ through the JS API imports `@typescript/typescript6`.
   (Live and the pooled windows, each logging what it was asked, over a page the test scripts), a
   real core over them (`observeHost`) and budgets on a clock the test holds (`heldClock`).
 - `director-run.ts`: a director's run without a rig (`fakeLoopRun`, `fakeClock`, `lead`).
+- `play-viewer-rig.ts`: Play's viewer over recording fakes (the game's view, the bar's layer, the
+  gallery, comments, the coin client, the sign-in, the browser) on a clock the test moves, every call
+  in `log`; `sheet()` is the purchase sheet as last drawn.
 - `project-fixtures.ts`: the synthetic project folders in `fixtures/projects/` (`copyProject`
   copies one into a test's folder and adds the files its engine writes while it runs), reads of a
   listed game's facts, a fake harness `ctx` whose `game.*` calls reach a `coreLite`, and a plugin
@@ -115,6 +118,8 @@ through the JS API imports `@typescript/typescript6`.
 - `claude-rules.ts`: whether Claude Code would deny a path by an absolute rule, matched as CLI
   2.1.281 does (node-ignore, case-blind) for the shapes `claude-permissions.ts` writes.
 - `leftover-children.ts`: the runners' per-file check for child processes left running (above).
+- `pe-image.ts`: minimal Windows PE images naming the DLLs a test gives (import and delay-load
+  tables, a machine type), for the package's Visual C++ runtime checks.
 - `processes.ts`: `running(pid)`, whether a process still runs. A test that proves a stop left
   nothing behind asks it, not `process.kill(pid, 0)`, which also finds a process that exited but
   is not reaped yet.

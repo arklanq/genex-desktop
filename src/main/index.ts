@@ -126,7 +126,8 @@ import {
 import { devStandAccountPort } from "./dev/dev-stand-account.ts";
 import { fixtureAccountPort } from "./dev/fixture-genex-account.ts";
 import { openGenexPage } from "./genex-browser.ts";
-import { fixtureGamePage, fixturePlayRequest } from "./dev/fixture-play.ts";
+import { fixtureGamePage, fixtureGetCoin, fixturePlayRequest } from "./dev/fixture-play.ts";
+import { FIXTURE_CONFIRM_ORIGIN } from "./dev/fixture-coin.ts";
 import { launchFixtureAccount } from "./dev/fixture-people.ts";
 import {
   fixtureUpload,
@@ -158,7 +159,9 @@ import { type MentionSources, vendorAssetModule } from "./core/mention-tags.ts";
 import type { PlayViewer } from "./play/viewer.ts";
 import { playMicStore } from "./play/mic-store.ts";
 import { playViewsOf, wirePlayViewer } from "./play/viewer-view.ts";
+import { purchaseConfirmOrigin } from "./play/purchase-window.ts";
 import { type PlayComments, playComments } from "./play/comments.ts";
+import { type PlayCoin, playCoin } from "./play/coin.ts";
 import { playOrigins } from "./play/origins.ts";
 import { PLAY_ORIGIN, type PlayPoint } from "../shared/play.ts";
 import { registerRunsIpc } from "./ipc/runs.ts";
@@ -194,7 +197,8 @@ import { windowControlsPainter } from "./window-chrome.ts";
 import { appUserModelId, installedWorkingDir, runSquirrelStep, squirrelStartup } from "./windows-install.ts";
 import { BootPhase, type SandboxProblem, StartStep, StudioPlatform } from "../shared/boot.ts";
 import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
-import { longPath } from "../substrate/windows-sandbox.ts";
+import { type Painter, paintWhileUsed } from "../substrate/paint-while-used.ts";
+import { longPath, takeBackSandboxEntries } from "../substrate/windows-sandbox.ts";
 import { installWindowsSandbox } from "../substrate/windows-sandbox-setup.ts";
 import { toolchain } from "../substrate/toolchain.ts";
 import { errorMessage } from "../shared/errors.ts";
@@ -301,6 +305,12 @@ const resources = resourcesDir();
 // anything else runs: no profile, no window (main/windows-install.ts).
 const squirrelStep = squirrelStartup(process.platform, process.argv, process.execPath);
 if (squirrelStep) {
+  // The sandbox's grants and denies outlive each launch; an uninstall takes them back.
+  if (squirrelStep.takeBackSandbox)
+    takeBackSandboxEntries(
+      (file, args, env) => spawn(file, args, { env, detached: true, stdio: "ignore", windowsHide: true }),
+      os.homedir(),
+    );
   await runSquirrelStep(squirrelStep, (file, args) =>
     spawn(file, args, { detached: true, stdio: "ignore", windowsHide: true }),
   );
@@ -910,7 +920,8 @@ function attachPreviews(studio: StudioCore, win: BrowserWindow): void {
   // normal compositor never fires requestAnimationFrame, whatever backgroundThrottling says,
   // so a game in it stood still — the computer-smoke fixture reported frame 0 after a
   // 600 ms W hold. Offscreen rendering paints the frames itself at 60 fps, so a worker's
-  // window keeps simulating while the worker plays in it.
+  // window keeps simulating while the worker plays in it — and only then: a window nobody has
+  // called for a minute stops painting until the next call (`paint-while-used.ts`).
   const used = new Set<number>();
   studio.options.createHeadlessPreview = async () => {
     let slot = 1;
@@ -1102,6 +1113,29 @@ function playCommentsFor(studio: StudioCore): PlayComments {
   });
 }
 
+/**
+ * genex.games' coin for a game's purchase sheet, as the Genex account. Only its reads end the sign-in
+ * on a refused token (`refused`): a confirm or cancel genex.games refuses refuses Studio's sheet, not
+ * the account, so the request is not wrapped in `refusingRequest` here.
+ */
+function playCoinFor(studio: StudioCore): PlayCoin {
+  const account = genexAccountFor(studio);
+  return playCoin({
+    request: fixtureNativePolicy ? fixturePlayRequest : networkRequest(globalThis.fetch, playOrigin.api),
+    token: account.token,
+    now: Date.now,
+    localImages: fixtureNativePolicy,
+    refused: account.refused,
+  });
+}
+
+/** The purchase sheet's Sign in: the app's own Genex sign-in in the browser; how it went shows on the sheet's next read. */
+function signInToGenex(studio: StudioCore): void {
+  void genexAccountFor(studio)
+    .signIn()
+    .catch(() => undefined);
+}
+
 /** Play's full-screen viewer in `win`: a published game, the studio's bar over its top edge. */
 function attachPlay(studio: StudioCore, win: BrowserWindow): void {
   playView = wirePlayViewer({
@@ -1118,6 +1152,15 @@ function attachPlay(studio: StudioCore, win: BrowserWindow): void {
     barPage: path.join(distRoot, "renderer", "play-bar.html"),
     barPreload: path.join(distRoot, "preload", "play-bar.cjs"),
     comments: playCommentsFor(studio),
+    coin: playCoinFor(studio),
+    account: { signIn: () => signInToGenex(studio) },
+    // Get coin: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
+    openPage: (url) => {
+      if (fixtureNativePolicy) fixtureGetCoin();
+      else void openOutside(studio, win, url);
+    },
+    // A fixture launch's stand-in game confirms on a website that resolves nowhere (`fixture-coin.ts`).
+    confirmOrigin: fixtureNativePolicy ? FIXTURE_CONFIRM_ORIGIN : purchaseConfirmOrigin(playOrigin),
   });
 }
 
@@ -1171,7 +1214,22 @@ function createFacetPreview(studio: StudioCore, index: number, released: () => v
     else facetWin.setSize(width, height);
     port.setBounds({ x: 0, y: 0, width, height });
   };
-  return port;
+  return paintWhileUsed(port, facetPainter(port));
+}
+
+/** A facet window's painting, on whichever page its view holds now (`create` can replace it). */
+function facetPainter(port: GamePreview): Painter {
+  const page = (): Electron.WebContents | null => {
+    const wc = port.view?.webContents;
+    return wc && !wc.isDestroyed() ? wc : null;
+  };
+  return {
+    start: () => {
+      const wc = page();
+      if (wc && !wc.isPainting()) wc.startPainting();
+    },
+    stop: () => page()?.stopPainting(),
+  };
 }
 
 /** Collected before the first load so a renderer that fails on boot is diagnosable. */
