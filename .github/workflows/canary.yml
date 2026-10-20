@@ -176,6 +176,10 @@ jobs:
           - { machine: windows-10, image: "MicrosoftWindowsDesktop:Windows-10:win10-22h2-pro-g2:latest" }
     env:
       TAG: ${{ needs.plan.outputs.tag }}
+      # azure.ts signs az in again with fresh OIDC tokens: a run outlasts the sign-in azure/login made.
+      AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:

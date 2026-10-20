@@ -1,10 +1,18 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readdir } from "node:fs/promises";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, test } from "node:test";
-import { AGENT_CHECKS, agentChecksDone, agentVerdict, readSelfTest } from "../../scripts/canary/agent-command.ts";
-import { sizesWithRoom } from "../../scripts/canary/azure.ts";
+import {
+  AGENT_CHECKS,
+  agentChecksDone,
+  agentChecksFor,
+  agentVerdict,
+  CLAUDE_WORKER_CHECKS,
+  readSelfTest,
+} from "../../scripts/canary/agent-command.ts";
+import { CLAUDE_WORKER_CHECK } from "../../src/main/smoke/claude-worker-check.ts";
+import { gitHubSignIn, gitHubToken, ownerResult, signInDue, sizesWithRoom } from "../../scripts/canary/azure.ts";
 import { readStart } from "../../scripts/canary/first-start.ts";
 import {
   assetTag,
@@ -23,8 +31,11 @@ import {
   machinePassed,
   mergeMachines,
   Persona,
+  RESULT_FILE,
+  readResult,
   StepOutcome,
 } from "../../scripts/canary/results.ts";
+import { MINUTE_MS } from "../../src/shared/duration.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const ASSETS = "https://github.com/genex-games/genex-desktop/releases/download";
@@ -238,6 +249,23 @@ describe("release canary agent command", () => {
     const missing = agentVerdict(readSelfTest(""), "runner exited 1");
     assert.match(missing.detail, /never reported: a chat turn completes end to end/);
   });
+
+  test("on Windows a release whose runner has the Claude worker stage also waits for that worker's checks", () => {
+    const runner = 'const claudeWorker = process.argv.includes("--claude-worker");';
+    const checks = agentChecksFor("win32", runner);
+    assert.deepEqual(checks, [...AGENT_CHECKS, ...CLAUDE_WORKER_CHECKS]);
+    assert.deepEqual(agentChecksFor("win32", "// an older runner"), AGENT_CHECKS, "an older release never had it");
+    assert.deepEqual(agentChecksFor("darwin", runner), AGENT_CHECKS, "Claude Code's own sandbox runs elsewhere");
+    assert.equal(agentChecksDone(readSelfTest(passed), checks), false, "the worker has not reported yet");
+    const refused = `${passed}\n[selftest] PASS ${CLAUDE_WORKER_CHECKS[0]}: claude.exe\n[selftest] FAIL ${CLAUDE_WORKER_CHECKS[1]}: sandbox_unavailable\n[selftest] FAIL ${CLAUDE_WORKER_CHECKS[2]}: file missing`;
+    const verdict = agentVerdict(readSelfTest(refused), "stopped", checks);
+    assert.equal(verdict.outcome, StepOutcome.Fail);
+    assert.match(verdict.detail, /failed: a Claude worker ran its turn without being refused: sandbox_unavailable/);
+  });
+
+  test("the canary waits for the Claude worker checks by the names the self test prints", () => {
+    assert.deepEqual([...CLAUDE_WORKER_CHECKS], Object.values(CLAUDE_WORKER_CHECK));
+  });
 });
 
 describe("release canary Azure size", () => {
@@ -257,6 +285,115 @@ describe("release canary Azure size", () => {
     assert.deepEqual(sizesWithRoom([usage("cores", 8, 10), usage("standardDASv5Family", 0, 10)]), ["Standard_D2as_v5"]);
     assert.deepEqual(sizesWithRoom([usage("cores", 10, 10), usage("standardDASv5Family", 0, 10)]), []);
     assert.deepEqual(sizesWithRoom([]), []);
+  });
+});
+
+describe("release canary Azure owner run", () => {
+  const standardUser: MachineResult = {
+    machine: "windows-10",
+    kind: PackageKind.Exe,
+    tag: "v0.1.12",
+    steps: [
+      {
+        step: CanaryStep.AgentCommand,
+        outcome: StepOutcome.Fail,
+        persona: Persona.StandardUser,
+        detail: "never reported: harness boots inside the sandbox",
+      },
+    ],
+  };
+
+  /** A VM's evidence as azure.ts unzips it: one folder per persona that wrote a result. */
+  async function evidence(results: Partial<Record<Persona, MachineResult>>): Promise<string> {
+    const dir = await tmpDir("canary-azure-");
+    for (const [persona, result] of Object.entries(results)) {
+      await mkdir(path.join(dir, persona), { recursive: true });
+      await writeFile(path.join(dir, persona, RESULT_FILE), JSON.stringify(result));
+    }
+    return dir;
+  }
+
+  test("an owner run that left no result fails the machine as the owner's, not as Genex's", async () => {
+    const dir = await evidence({ [Persona.StandardUser]: standardUser });
+    const owner = await ownerResult(dir, "windows-10", "v0.1.12");
+    assert.equal(machinePassed(owner), false);
+    assert.deepEqual(
+      owner.steps.map((step) => [step.persona, step.step, step.outcome]),
+      [[Persona.Owner, CanaryStep.Link, StepOutcome.Fail]],
+    );
+    assert.match(owner.steps[0]?.detail ?? "", /owner run did not start/);
+    assert.deepEqual(await readResult(path.join(dir, Persona.Owner, RESULT_FILE)), owner, "the report reads it");
+  });
+
+  test("an owner run that wrote its result is left as it was, passing or not", async () => {
+    const passed: MachineResult = {
+      ...standardUser,
+      steps: [{ step: CanaryStep.FirstStart, outcome: StepOutcome.Pass, persona: Persona.Owner, detail: "ok" }],
+    };
+    const dir = await evidence({ [Persona.Owner]: passed });
+    assert.deepEqual(await ownerResult(dir, "windows-10", "v0.1.12"), passed);
+    assert.deepEqual(await readResult(path.join(dir, Persona.Owner, RESULT_FILE)), passed);
+  });
+});
+
+describe("release canary Azure sign-in", () => {
+  const actions = {
+    ACTIONS_ID_TOKEN_REQUEST_URL: "https://token.actions.example/id?api-version=2.0",
+    ACTIONS_ID_TOKEN_REQUEST_TOKEN: "request-token",
+    AZURE_CLIENT_ID: "client",
+    AZURE_TENANT_ID: "tenant",
+    AZURE_SUBSCRIPTION_ID: "subscription",
+  };
+
+  test("a job signs in again with a token of its own; outside Actions or without the IDs, nothing does", () => {
+    assert.deepEqual(gitHubSignIn(actions), {
+      requestUrl: actions.ACTIONS_ID_TOKEN_REQUEST_URL,
+      requestToken: "request-token",
+      clientId: "client",
+      tenantId: "tenant",
+      subscriptionId: "subscription",
+    });
+    assert.equal(gitHubSignIn({}), null);
+    assert.equal(gitHubSignIn({ ...actions, AZURE_CLIENT_ID: "" }), null);
+    assert.equal(gitHubSignIn({ ...actions, ACTIONS_ID_TOKEN_REQUEST_TOKEN: undefined }), null);
+  });
+
+  test("the fresh token is asked for Azure's audience with the job's request token", async () => {
+    const asked: Array<{ url: string; authorization: string | null }> = [];
+    const fetchImpl = async (url: string | URL | Request, init?: RequestInit) => {
+      asked.push({ url: String(url), authorization: new Headers(init?.headers).get("authorization") });
+      return Response.json({ value: "oidc-token" });
+    };
+    const signIn = gitHubSignIn(actions);
+    assert.ok(signIn);
+    assert.equal(await gitHubToken(signIn, fetchImpl), "oidc-token");
+    const url = new URL(asked[0]?.url ?? "");
+    assert.equal(url.searchParams.get("api-version"), "2.0");
+    assert.equal(url.searchParams.get("audience"), "api://AzureADTokenExchange");
+    assert.equal(asked[0]?.authorization, "bearer request-token");
+  });
+
+  test("a refused or empty answer is an error, never a sign-in with no token", async () => {
+    const signIn = gitHubSignIn(actions);
+    assert.ok(signIn);
+    await assert.rejects(
+      gitHubToken(signIn, async () => new Response("no", { status: 403 })),
+      /HTTP 403/,
+    );
+    await assert.rejects(
+      gitHubToken(signIn, async () => Response.json({ value: "" })),
+      /no token/,
+    );
+    await assert.rejects(
+      gitHubToken(signIn, async () => Response.json({})),
+      /no token/,
+    );
+  });
+
+  test("az signs in again once the last sign-in is a few minutes old, the first time always", () => {
+    assert.equal(signInDue(null, 0), true);
+    assert.equal(signInDue(0, 4 * MINUTE_MS), false);
+    assert.equal(signInDue(0, 5 * MINUTE_MS), true);
   });
 });
 

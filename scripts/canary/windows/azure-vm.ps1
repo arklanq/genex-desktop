@@ -39,6 +39,17 @@ $Upload = Join-Path $Root "upload"
 $Node = Join-Path $Root "node\node.exe"
 $Evidence = Join-Path $Root "evidence"
 $Winlogon = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Winlogon"
+# How long an account's task may take to start. A first sign-in's desktop can still be getting ready
+# after its explorer.exe runs, and a task started then ends at once without running its script.
+$TaskStartMinutes = 10
+# How long between starting a task and asking whether it started.
+$TaskStartPollSeconds = 15
+# How long an account's run may take, and the margin the wait leaves Task Scheduler to end it.
+$TaskRunMinutes = 80
+$TaskEndMarginMinutes = 5
+# Task Scheduler's result for a task that never ran (SCHED_S_TASK_HAS_NOT_RUN), and this script's
+# for a run whose script never started.
+$TaskHasNotRun = 267011
 [Environment]::SetEnvironmentVariable("CANARY_DISPOSABLE", "1", "Machine")
 $env:CANARY_DISPOSABLE = "1"
 
@@ -61,7 +72,42 @@ function Wait-Desktop([string] $Name) {
   throw "$Name never reached a desktop"
 }
 
-# Run a script as `Name` in its logged-on desktop with its ordinary (unelevated) token; its exit code.
+# Whether `Task` started at or after `Since`: running now, or already run (a short run ends between polls).
+function Test-TaskStarted([string] $Task, [datetime] $Since) {
+  if ((Get-ScheduledTask -TaskName $Task).State -eq "Running") { return $true }
+  return (Get-ScheduledTaskInfo -TaskName $Task).LastRunTime -ge $Since
+}
+
+# Wait while `Task` runs, at most its time limit and a margin.
+function Wait-TaskEnd([string] $Task) {
+  $deadline = (Get-Date).AddMinutes($TaskRunMinutes + $TaskEndMarginMinutes)
+  while ((Get-ScheduledTask -TaskName $Task).State -eq "Running" -and (Get-Date) -lt $deadline) { Start-Sleep -Seconds 5 }
+}
+
+# Start `Task` and wait for it to end; whether its script ran (it left `Log`, which its command
+# line opens first). A task that never started, or ended without its script running, ran nothing:
+# it is started again until $TaskStartMinutes have passed.
+function Start-TaskRun([string] $Task, [string] $Log) {
+  $deadline = (Get-Date).AddMinutes($TaskStartMinutes)
+  while ((Get-Date) -lt $deadline) {
+    $since = (Get-Date).AddSeconds(-2)
+    try { Start-ScheduledTask -TaskName $Task | Out-Null } catch { Write-Host "starting ${Task}: $_" }
+    Start-Sleep -Seconds $TaskStartPollSeconds
+    $started = (Test-Path $Log) -or (Test-TaskStarted $Task $since)
+    if (-not $started) {
+      Write-Host "$Task has not started yet ($((Get-ScheduledTask -TaskName $Task).State)); starting it again"
+      continue
+    }
+    Wait-TaskEnd $Task
+    if (Test-Path $Log) { return $true }
+    Write-Host "$Task ended with result $((Get-ScheduledTaskInfo -TaskName $Task).LastTaskResult) before its script ran; starting it again"
+  }
+  Stop-ScheduledTask -TaskName $Task -ErrorAction SilentlyContinue | Out-Null
+  return $false
+}
+
+# Run a script as `Name` in its logged-on desktop with its ordinary (unelevated) token; its exit
+# code, or $TaskHasNotRun when the script never started.
 function Invoke-Interactive([string] $Name, [string] $Script, [string] $Log) {
   $file = Join-Path $Root "$((Get-Random)).ps1"
   Set-Content -Path $file -Value $Script -Encoding UTF8
@@ -69,13 +115,14 @@ function Invoke-Interactive([string] $Name, [string] $Script, [string] $Log) {
   $action = New-ScheduledTaskAction -Execute "powershell.exe" -WorkingDirectory $Root `
     -Argument "-NoProfile -ExecutionPolicy Bypass -Command `"& '$file' *> '$Log'; exit `$LASTEXITCODE`""
   $principal = New-ScheduledTaskPrincipal -UserId "$env:COMPUTERNAME\$Name" -LogonType Interactive -RunLevel Limited
-  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 80) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+  $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes $TaskRunMinutes) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
   Register-ScheduledTask -TaskName $task -Action $action -Principal $principal -Settings $settings -Force | Out-Null
-  Start-ScheduledTask -TaskName $task
-  do { Start-Sleep -Seconds 5 } while ((Get-ScheduledTask -TaskName $task).State -eq "Running")
-  $code = (Get-ScheduledTaskInfo -TaskName $task).LastTaskResult
+  Remove-Item $Log -Force -ErrorAction SilentlyContinue
+  $code = $TaskHasNotRun
+  if (Start-TaskRun $task $Log) { $code = (Get-ScheduledTaskInfo -TaskName $task).LastTaskResult }
   Unregister-ScheduledTask -TaskName $task -Confirm:$false
-  Get-Content $Log -ErrorAction SilentlyContinue | Select-Object -Last 40 | Write-Output
+  # To the host, not the pipeline: the function's output is its exit code alone.
+  Get-Content $Log -ErrorAction SilentlyContinue | Select-Object -Last 40 | Write-Host
   return $code
 }
 
@@ -123,9 +170,16 @@ switch ($Phase) {
     ) -join "`n"
     $code = Invoke-Interactive $OwnerName $script (Join-Path $Evidence "owner.out.log")
     Set-AutoLogon $UserName $UserPassword
+    if ($code -eq $TaskHasNotRun) { Write-Output "owner run did not start in $TaskStartMinutes minutes" }
     Write-Output "owner run exit $code; $UserName logs on next"
   }
   "Standard" {
+    # The owner's first start sets the sandbox up: without it this run could only fail on that, and
+    # azure.ts reports the owner's missing run instead.
+    if (-not (Test-Path "$Evidence\owner\result.json")) {
+      Write-Output "standard user run skipped: the owner's run left no result"
+      break
+    }
     Wait-Desktop $UserName
     $env:Path = "$(Split-Path $Node);$env:Path"
     & "$Upload\scripts\canary\windows\standard-user.ps1" -Machine $Machine -Tag $Tag `

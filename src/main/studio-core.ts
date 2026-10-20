@@ -1307,6 +1307,10 @@ export class StudioCore {
         onModelsChanged: () => this.emit(UiEvent.EnginesChanged, { engine: EngineId.ClaudeCode }),
         engineHome: path.join(this.layout.engineHomes, EngineId.ClaudeCode),
         protectedPaths: this.#protectedPaths(),
+        // Windows: Genex's sandbox runs a worker's or builder's commands (`studioShell`), its scratch
+        // inside the studio's own, which every sandboxed process there is already granted.
+        scratchRoot: path.join(this.layout.scratch, EngineId.ClaudeCode),
+        toolPath: async () => (await this.sandbox.toolPath()) ?? process.env.PATH ?? "",
         // Beside the engine's home, never in it: that can be the CLI's own config folder.
         sessionCosts: path.join(this.layout.engineHomes, "session-costs", `${EngineId.ClaudeCode}.json`),
         // The app is the one caller that owns the homes the boot sweep touches.
@@ -1421,6 +1425,8 @@ export class StudioCore {
    * Resolves whether the self that booted was rewound (or reset) rather than the one on disk.
    */
   async #bootHarness(notice: BootNotice, resetHarness: boolean): Promise<boolean> {
+    // A sandbox fault cannot be repaired by rewinding the harness's code.
+    await this.sandbox.ensureReady();
     if (!resetHarness) await this.#recovery.migrateHarnessLayout();
     let rewound = false;
     const bootedCode = resetHarness ? null : await this.#recovery.codeAboutToBoot();

@@ -2237,6 +2237,40 @@ describe("ProcessSandbox on Windows", () => {
 });
 
 describe("ProcessSandbox on Windows, started in the background", () => {
+  it("lets the core await sandbox readiness before trying to boot or recover the harness", async () => {
+    const w = await windowsSandbox({ startInBackground: true, holdInitialize: true });
+    let ready = false;
+    const waiting = w.sandbox.ensureReady().then(() => {
+      ready = true;
+    });
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(ready, false, "the initialization in flight still owns readiness");
+    } finally {
+      w.openInitialize();
+      await waiting;
+      await w.sandbox.dispose();
+    }
+    assert.equal(ready, true);
+  });
+
+  it("reports a failed background start through readiness and allows a later explicit retry", async () => {
+    const w = await windowsSandbox({
+      startInBackground: true,
+      holdInitialize: true,
+      failInitializeIn: { subcommand: "acl", code: "acl_stamp_failed" },
+    });
+    const refused = assert.rejects(w.sandbox.ensureReady(), { code: "acl_stamp_failed" });
+    w.openInitialize();
+    try {
+      await refused;
+      await w.sandbox.ensureReady();
+      assert.equal(w.session.runtime.calls.filter((call) => call === "initialize").length, 2);
+    } finally {
+      await w.sandbox.dispose();
+    }
+  });
+
   const ready = async (): Promise<WindowsSetupGap[]> => [];
 
   it("is created while srt still initializes, and a run waits for the start", async () => {

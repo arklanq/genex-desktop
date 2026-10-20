@@ -568,6 +568,11 @@ export class ProcessSandbox {
     return this.#initError;
   }
 
+  /** Wait for sandbox initialization before booting or recovering code that must run inside it. */
+  async ensureReady(): Promise<void> {
+    if (this.enabled) await this.#initialize();
+  }
+
   /**
    * Open another folder the agent may write. Idempotent, and a no-op when `dir` already sits
    * inside a writable root (the default library covers `~/AI Games/...`).

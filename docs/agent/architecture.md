@@ -520,15 +520,16 @@ its harness half only when it differs from the last healthy one in files that ne
 (`RUNS_AS_CODE`); a "both" record keeps its game half healthy with `harness_healthy: false` until
 then. Snapshots around a seed upgrade or the migration follow the same rule.
 
-**Recovery.** `HarnessHost.start`/`restart` take `{callerRecovers}`: a death before `ready` goes only
-to the caller. `core.start` stops the host on a boot failure, runs `recover()` (rewind to the newest
-healthy harness snapshot) and throws only if the harness is still not ready; `main/index.ts` then
-offers **Reset harness to shipped version** or Quit. If a rewind target exists but restore or
-restart fails, `recover()` reseeds and restarts (`harness_reseeded`); `watchdog.failed` is emitted
-only if that fails too. A self-update pending during a rewind is recorded failed and never marked
-healthy. The wedge watchdog ignores time the Mac was asleep (a tick more than three intervals late
-resets the silence clock) and a host call in flight; page and record calls end at their deadline
-(`substrate/rpc-deadlines.ts`). Three exits in five minutes or ten silent minutes trigger recovery.
+**Recovery.** Before migration or boot, `core.start` awaits sandbox readiness. Initialization faults
+report their original error without rewinding or reseeding harness code; a later retry can
+initialize again. `HarnessHost.start`/`restart` accept `{callerRecovers}`: deaths before `ready`
+go only to their caller. Once sandboxed, a failed harness boot rewinds to the newest healthy
+snapshot. Failed restore/restart falls back to reseeding (`harness_reseeded`); failure there emits
+`watchdog.failed` and offers **Reset harness to shipped version** or Quit. A self-update pending
+during rewind fails and is never marked healthy. The wedge watchdog ignores sleep (a tick over
+three intervals resets its clock) and in-flight host calls; page/record calls retain
+`substrate/rpc-deadlines.ts` deadlines. Three exits in five minutes or ten silent minutes trigger
+recovery.
 
 **A harness child dying mid-run** is repaired without an app restart (`onUnexpectedExit`,
 [feature map](feature-map.md)): StudioCore aborts every delegation, `run.settled` per open run

@@ -11,7 +11,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { cp, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { after, before, describe, it } from "node:test";
+import { after, afterEach, before, describe, it } from "node:test";
 import { EventStore } from "../../src/substrate/event-store.ts";
 import { HarnessHost, UpdateJournal } from "../../src/substrate/harness-host.ts";
 import { ProcessSandbox } from "../../src/substrate/spawn.ts";
@@ -36,6 +36,10 @@ interface Rig {
 
 let sandbox: ProcessSandbox;
 let root: string;
+/** Every rig a test made, so one whose assertion failed still stops its harness. */
+const rigs: Rig[] = [];
+/** How long a rig's harness gets to stop when its test is over. */
+const RIG_STOP_GRACE_MS = 200;
 
 before(async () => {
   root = await tmpDir("studio-host-");
@@ -44,6 +48,12 @@ before(async () => {
     scratchDir: path.join(root, "scratch"),
     secretPaths: [path.join(root, "secrets")],
   });
+});
+
+// A harness left running holds its folders open (Windows refuses to remove them) and keeps this
+// file's process alive.
+afterEach(async () => {
+  for (const r of rigs.splice(0)) await r.host.stop(RIG_STOP_GRACE_MS).catch(() => {});
 });
 
 // The last sandbox out releases sandbox-runtime, whose Linux bridges would keep this file running.
@@ -106,6 +116,7 @@ async function rig(
     },
     ...(now ? { now } : {}),
   });
+  rigs.push(state);
   return state;
 }
 

@@ -1,7 +1,7 @@
 // A Windows canary machine on Azure, for one run: a resource group holding one VM from a Windows
 // client image and a storage account for its evidence, driven by Run Command from a GitHub-hosted
-// job signed in through OIDC (azure/login), and deleted afterwards. No runner and no inbound port
-// exist on the VM; it only calls out.
+// job signed in through OIDC, and deleted afterwards. No runner and no inbound port exist on the VM;
+// it only calls out.
 //
 //   node scripts/canary/azure.ts run --machine windows-11 --image <urn> --tag v0.1.11 \
 //     --source <zip> --evidence <dir> [--size <vm size>] [--location <region>[,<region>…]]
@@ -9,12 +9,22 @@
 //
 // The phases on the VM are scripts/canary/windows/azure-vm.ps1.
 import { randomBytes } from "node:crypto";
-import { mkdir, readdir, writeFile } from "node:fs/promises";
+import { access, mkdir, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { HOUR_MS, MINUTE_MS } from "../../src/shared/duration.ts";
-import { machinePassed, RESULT_FILE, readResult } from "./results.ts";
+import { PackageKind } from "./links.ts";
+import {
+  CanaryStep,
+  type MachineResult,
+  machinePassed,
+  Persona,
+  RESULT_FILE,
+  readResult,
+  recorder,
+  StepOutcome,
+} from "./results.ts";
 import { sh } from "./shell.ts";
 
 /** Every canary resource group carries this tag, and an expiry the sweep honours. */
@@ -28,7 +38,20 @@ const OWNER_NAME = "genexowner";
  */
 const AZURE_PROFILE_FILES = 60_000;
 const USER_NAME = "canary-user";
+/**
+ * How old a sign-in may be before the next az call signs in again. GitHub's OIDC token lasts five
+ * minutes and the Azure token az gets with it about an hour, after which az signs in again with the
+ * expired OIDC token and fails; a call made on a sign-in this fresh therefore has most of an hour,
+ * and each phase on the VM finishes well within it.
+ */
+const SIGN_IN_MAX_AGE_MS = 5 * MINUTE_MS;
+/** The audience Azure's federated credentials for GitHub expect. */
+const AZURE_AUDIENCE = "api://AzureADTokenExchange";
 const CONTAINER = "evidence";
+const MESSAGE = {
+  ownerDidNotStart:
+    "owner run did not start: it left no result.json (owner.out.log has what it printed), so the sandbox was never set up",
+} as const;
 /**
  * Two-core, 8 GB sizes (a modest laptop) by preference, with the quota family each draws on. A new
  * subscription has room in some families and none in others, so the run takes the first with room.
@@ -124,7 +147,82 @@ export function storageName(runId: string, attempt: string, machine: string): st
   return `gxc${digits}${tagged}`.slice(0, 24);
 }
 
+/** What a GitHub job needs to sign az in with an OIDC token of its own. */
+export interface GitHubSignIn {
+  requestUrl: string;
+  requestToken: string;
+  clientId: string;
+  tenantId: string;
+  subscriptionId: string;
+}
+
+/**
+ * The job's sign-in from its environment (Actions sets the request URL and token for a job with
+ * `id-token: write`; the workflow passes the IDs), or null outside Actions, where the person's own
+ * `az login` is used as it is.
+ */
+export function gitHubSignIn(env: NodeJS.ProcessEnv): GitHubSignIn | null {
+  const signIn = {
+    requestUrl: env.ACTIONS_ID_TOKEN_REQUEST_URL ?? "",
+    requestToken: env.ACTIONS_ID_TOKEN_REQUEST_TOKEN ?? "",
+    clientId: env.AZURE_CLIENT_ID ?? "",
+    tenantId: env.AZURE_TENANT_ID ?? "",
+    subscriptionId: env.AZURE_SUBSCRIPTION_ID ?? "",
+  };
+  return Object.values(signIn).every(Boolean) ? signIn : null;
+}
+
+/** A fresh GitHub OIDC token for Azure. */
+export async function gitHubToken(signIn: GitHubSignIn, fetchImpl: typeof fetch = fetch): Promise<string> {
+  const url = new URL(signIn.requestUrl);
+  url.searchParams.set("audience", AZURE_AUDIENCE);
+  const response = await fetchImpl(url, { headers: { Authorization: `bearer ${signIn.requestToken}` } });
+  if (!response.ok) throw new Error(`GitHub refused an OIDC token: HTTP ${response.status}`);
+  const { value } = (await response.json()) as { value?: unknown };
+  if (typeof value !== "string" || value === "") throw new Error("GitHub's OIDC answer held no token");
+  return value;
+}
+
+/** Whether a sign-in made at `signedInAt` (null: none yet) is too old for an az call at `now`. */
+export function signInDue(signedInAt: number | null, now: number): boolean {
+  return signedInAt === null || now - signedInAt >= SIGN_IN_MAX_AGE_MS;
+}
+
+let signedInAt: number | null = null;
+
+/** In a GitHub job, sign az in again with a fresh OIDC token once the last sign-in is old. */
+async function freshSignIn(): Promise<void> {
+  const signIn = gitHubSignIn(process.env);
+  if (!signIn || !signInDue(signedInAt, Date.now())) return;
+  const token = await gitHubToken(signIn);
+  console.log(`::add-mask::${token}`);
+  const login = await sh("az", [
+    "login",
+    "--service-principal",
+    "-u",
+    signIn.clientId,
+    "-t",
+    signIn.tenantId,
+    "--federated-token",
+    token,
+    "--allow-no-subscriptions",
+    "-o",
+    "none",
+  ]);
+  if (login.code !== 0) throw new Error(`az login failed:\n${login.stderr || login.stdout}`);
+  const account = await sh("az", ["account", "set", "-s", signIn.subscriptionId]);
+  if (account.code !== 0) throw new Error(`az account set failed:\n${account.stderr || account.stdout}`);
+  signedInAt = Date.now();
+}
+
+/** Delete resource group `name` without waiting; a failure is left to the sweep. */
+async function deleteGroup(name: string): Promise<void> {
+  await freshSignIn().catch((error: unknown) => console.log(`signing in to delete ${name}: ${String(error)}`));
+  await sh("az", ["group", "delete", "-n", name, "--yes", "--no-wait"]);
+}
+
 async function az(args: string[], timeoutMs = 30 * MINUTE_MS): Promise<string> {
+  await freshSignIn();
   const ran = await sh("az", [...args, "--only-show-errors"], { timeoutMs });
   // The CLI sometimes buries Azure's own error under a traceback of its own; keep all of it, since
   // the retries read the reason from it.
@@ -308,7 +406,7 @@ async function createSomewhere(
         console.log(`trying ${size} in ${location}`);
         return { group, storage: await create(group, account, { ...options, size, location }, ownerPassword) };
       } catch (error) {
-        await sh("az", ["group", "delete", "-n", group, "--yes", "--no-wait"]);
+        await deleteGroup(group);
         if (!TRY_ELSEWHERE.test(String(error))) throw error;
         console.log(`${location} refused ${size}: ${azureReason(String(error))}`);
       }
@@ -360,13 +458,37 @@ async function runMachine(
       "-o": "none",
     });
     await sh("unzip", ["-q", "-o", zip, "-d", options.evidence]);
+    await ownerResult(options.evidence, options.machine, options.tag);
     if (!(await allPassed(options.evidence))) process.exitCode = 1;
   } catch (error) {
     await writeFile(path.join(options.evidence, "azure-error.txt"), String(error));
     throw error;
   } finally {
-    if (group) await sh("az", ["group", "delete", "-n", group, "--yes", "--no-wait"]);
+    if (group) await deleteGroup(group);
   }
+}
+
+/**
+ * The owner's result in a VM's evidence (azure-vm.ps1 keeps it in a folder named after the persona),
+ * or a failed stand-in written in its place when the owner's run left none: its first start is what
+ * sets the sandbox up, so a machine whose owner never ran fails as such, not as the standard user's.
+ */
+export async function ownerResult(evidence: string, machine: string, tag: string): Promise<MachineResult> {
+  const dir = path.join(evidence, Persona.Owner);
+  const file = path.join(dir, RESULT_FILE);
+  const written = await access(file).then(
+    () => true,
+    () => false,
+  );
+  if (written) return readResult(file);
+  const record = recorder(dir, { machine, kind: PackageKind.Exe, tag });
+  await record.add({
+    step: CanaryStep.Link,
+    outcome: StepOutcome.Fail,
+    persona: Persona.Owner,
+    detail: MESSAGE.ownerDidNotStart,
+  });
+  return record.result;
 }
 
 /** Whether every result.json the VM sent back passed (none at all is a failure). */
@@ -393,7 +515,7 @@ async function sweep(now = Date.now()): Promise<void> {
   for (const { name, expires } of groups) {
     if (expires && Date.parse(expires) > now) continue;
     console.log(`deleting expired ${name}`);
-    await sh("az", ["group", "delete", "-n", name, "--yes", "--no-wait"]);
+    await deleteGroup(name);
   }
 }
 

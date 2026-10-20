@@ -19,6 +19,10 @@ the setup screen opens on `git-missing`. What differs from macOS:
   `initialize()` is tried a second time only when srt-win's egress check (`wfp`) times out; a
   timed-out ACL step fails at once, since a retry would repeat its walk under each folder srt-win
   grants and each denied path's parent.
+- Core startup awaits `ProcessSandbox.ensureReady()` before migrating or booting the harness.
+  A failed background sandbox start reports its original error without rewinding or reseeding
+  valid harness edits. A later Try again can retry initialization; broken harness code still
+  uses its existing recovery once the sandbox is ready.
 - The version-guarded [SRT patch](../scripts/patch-sandbox-runtime.mjs) runs initialization,
   failed-initialization rollback, launcher rollback and session reset ACL commands asynchronously.
   Revoke and restore each keep their holder PID, SID and best-effort outcomes; a slow cleanup must
@@ -150,10 +154,13 @@ exist itself; a missing one outside every grant is not sent.
 ## Residual risks
 
 srt-win is alpha. Every srt host on the machine shares the
-`srt-sandbox` SID and so each other's grants and denies. Claude Code's tool-less sessions (usage,
-model list, judge) run without its own sandbox on Windows (`toollessSandbox`); a worker's session
-needs it, and where the CLI cannot run it the worker is refused rather than run unboxed
-([harness runtime](harness-runtime.md#a-workers-engine-that-cannot-run-its-sandbox)). DNS still resolves; the proxy token is on the
+`srt-sandbox` SID and so each other's grants and denies. Claude Code's own sandbox is off on Windows: its tool-less sessions (usage,
+model list, judge) need none (`toollessSandbox`), and a worker's or unattended builder's commands run
+in Genex's sandbox through the studio's `run_command`, as the `srt-sandbox` user like every other
+agent command ([harness runtime](harness-runtime.md#a-workers-engine-that-cannot-run-its-sandbox)).
+The CLI process itself runs as the person, like Codex, so its sign-in and its network to Anthropic
+are its own; its file tools are held by the never-touch hook and the permission rules, as on every
+platform. DNS still resolves; the proxy token is on the
 runner's command line. A folder opened while the harness runs is writable only after it next
 stops. srt-win's stamp of a missing deny path (or a per-command one) re-propagates permissions
 under that path's parent, holding each folder open meanwhile. Genex's own entries stay between
