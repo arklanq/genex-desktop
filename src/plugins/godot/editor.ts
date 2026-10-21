@@ -14,9 +14,13 @@ import type { BridgeClock } from "./editor-bridge.ts";
 import type { GodotInstall } from "./find-godot.ts";
 import { PROJECT_FILE } from "./game-project.ts";
 
-/** Godot's own download page, the only address Get Godot opens. */
+/** Godot's own download pages, for a Mac and for Windows: the only addresses Get Godot opens. */
 export const GODOT_DOWNLOAD_URL = "https://godotengine.org/download/macos/";
+export const GODOT_WINDOWS_DOWNLOAD_URL = "https://godotengine.org/download/windows/";
 const MAC_OPEN = "/usr/bin/open";
+/** Windows's own folder when the environment names none, and its program that opens a page in the browser. */
+const WINDOWS_ROOT = "C:\\Windows";
+const WINDOWS_EXPLORER = "explorer.exe";
 const PS = "/bin/ps";
 /** How long `open` and `ps` may take. */
 const COMMAND_TIMEOUT_MS = 10 * SECOND_MS;
@@ -47,8 +51,18 @@ export function openEditorLaunch(install: GodotInstall, project: string): Launch
   return { command: install.binary, args, detached: true };
 }
 
-/** Godot's download page in the person's browser. */
-export const getGodotLaunch = (): Launch => ({ command: MAC_OPEN, args: [GODOT_DOWNLOAD_URL], detached: false });
+/** Windows's own folder: the one its environment names when that is a whole path, so neither PATH nor the current folder stands in. */
+function windowsRoot(env: NodeJS.ProcessEnv): string {
+  const named = env.SystemRoot;
+  return named && path.win32.isAbsolute(named) ? named : WINDOWS_ROOT;
+}
+
+/** Godot's download page for this computer in the person's browser: `open` on a Mac, Windows's explorer on Windows. */
+export function getGodotLaunch(platform: NodeJS.Platform, env: NodeJS.ProcessEnv = process.env): Launch {
+  if (platform !== "win32") return { command: MAC_OPEN, args: [GODOT_DOWNLOAD_URL], detached: false };
+  const explorer = path.win32.join(windowsRoot(env), WINDOWS_EXPLORER);
+  return { command: explorer, args: [GODOT_WINDOWS_DOWNLOAD_URL], detached: true };
+}
 
 /** This computer's: `open` and detached starts for real, and the process list from `ps`. */
 export function systemEditorEnv(): EditorEnv {
@@ -59,7 +73,7 @@ export function systemEditorEnv(): EditorEnv {
         return;
       }
       await new Promise<void>((resolve, reject) => {
-        const child = spawn(launch.command, launch.args, { detached: true, stdio: "ignore" });
+        const child = spawn(launch.command, launch.args, { detached: true, stdio: "ignore", windowsHide: true });
         child.once("error", reject);
         child.once("spawn", () => {
           child.unref();

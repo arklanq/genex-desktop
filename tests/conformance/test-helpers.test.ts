@@ -127,20 +127,40 @@ describe("leftover children", { skip: process.platform === "win32" && "reads pro
   /** A cap on the nested run, so a check that stopped working fails here instead of hanging. */
   const RUN_CAP_MS = 60 * SECOND_MS;
 
+  /** A cap for a file whose leak the check should name at once, so a missed one fails quickly. */
+  const LEAK_CAP_MS = 15 * SECOND_MS;
+  /** The start of a file whose tests come before and after a top-level await. */
+  const LATE_FILE = [
+    'import assert from "node:assert/strict";',
+    'import { spawn } from "node:child_process";',
+    'import { once } from "node:events";',
+    'import { test } from "node:test";',
+    'const child = (code) => spawn(process.execPath, ["-e", code], { stdio: "ignore" });',
+    'test("registered first", () => {});',
+    "// native-launch awaits its Xcode check here, after its first tests.",
+    'await once(child("setTimeout(() => {}, 300)"), "exit");',
+  ];
+
   /** Run one test file the way the runners do, with the check preloaded. */
-  async function runFile(name: string, body: string, env: NodeJS.ProcessEnv = {}) {
+  async function runSource(name: string, source: string, env: NodeJS.ProcessEnv = {}, cap = RUN_CAP_MS) {
     const dir = await tmpDir("leftover-children-");
     const file = path.join(dir, name);
-    await writeFile(
-      file,
-      `import { spawn } from "node:child_process";\nimport { test } from "node:test";\ntest("starts a child", () => {\n${body}\n});\n`,
-    );
+    await writeFile(file, source);
     return spawnSync(process.execPath, [...TEST_PRELOAD, "--test", "--test-reporter=spec", file], {
       cwd: dir,
       env: { ...testEnv(), ...env },
       encoding: "utf8",
-      timeout: RUN_CAP_MS,
+      timeout: cap,
     });
+  }
+
+  /** Run a file of one test whose body is `body`. */
+  function runFile(name: string, body: string, env: NodeJS.ProcessEnv = {}) {
+    return runSource(
+      name,
+      `import { spawn } from "node:child_process";\nimport { test } from "node:test";\ntest("starts a child", () => {\n${body}\n});\n`,
+      env,
+    );
   }
 
   it("fails a file that leaves a child running, names both, and kills the child so the file exits", async () => {
@@ -164,6 +184,41 @@ describe("leftover children", { skip: process.platform === "win32" && "reads pro
     );
     assert.equal(exiting.error, undefined);
     assert.equal(exiting.status, 0, exiting.stdout);
+  });
+
+  it("waits for the tests a file registers after a top-level await, and leaves their children running", async () => {
+    const late = await runSource(
+      "late.test.mjs",
+      [
+        ...LATE_FILE,
+        'test("registered after the await", async () => {',
+        '  const ended = await once(child("setTimeout(() => {}, 1000)"), "exit");',
+        '  assert.deepEqual(ended, [0, null], "its child ended by itself");',
+        "});",
+      ].join("\n"),
+      { [EXIT_GRACE_ENV]: "0" },
+    );
+    assert.equal(late.error, undefined, "the file exited on its own");
+    assert.equal(late.status, 0, late.stdout);
+  });
+
+  it("still fails a file whose test registered after a top-level await leaves a child running", async () => {
+    const leaks = await runSource(
+      "late-leaks.test.mjs",
+      [
+        ...LATE_FILE,
+        'test("registered after the await", () => {',
+        '  child("setInterval(() => {}, 1000)");',
+        "});",
+      ].join("\n"),
+      { [EXIT_GRACE_ENV]: "0" },
+      LEAK_CAP_MS,
+    );
+    assert.equal(leaks.error, undefined, "the file exited on its own");
+    assert.equal(leaks.status, 1, leaks.stdout);
+    const pid = Number(/pid (\d+): .*setInterval/.exec(leaks.stdout)?.[1]);
+    assert.ok(pid > 0, leaks.stdout);
+    assert.equal(running(pid), false, "the child it named is gone");
   });
 });
 

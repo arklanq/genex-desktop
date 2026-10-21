@@ -6,6 +6,7 @@ import type { HookContext, PluginHook, PluginLock } from "./plugin-hooks.ts";
 import { ENGINE_FACT, type FactRule, type GameKind, scopeReaches } from "./project-facts.ts";
 import type { WorkerIsolation } from "./workers.ts";
 import type { CaptureSource, StillExposure, StillMimeType } from "./preview-contract.ts";
+import { MINUTE_MS } from "./duration.ts";
 
 /** Where a plugin's native runtime stands on this Mac (`PluginNativeStatus.state`). */
 export const NativeRuntimeState = {
@@ -26,23 +27,55 @@ export const NativeJobState = {
 } as const;
 export type NativeJobState = (typeof NativeJobState)[keyof typeof NativeJobState];
 
+/**
+ * The computers a pinned runtime download is for (`PluginRuntimePin.platform`): operating system and
+ * processor, as Node names them. Published in plugin manifests: never rename a value.
+ */
+export const NativePlatform = {
+  MacArm64: "darwin-arm64",
+  WindowsX64: "win32-x64",
+  WindowsArm64: "win32-arm64",
+} as const;
+export type NativePlatform = (typeof NativePlatform)[keyof typeof NativePlatform];
+
+/** The archive a pinned runtime comes in. Published in plugin manifests: never rename a value. */
+export const RuntimeArchive = { Dmg: "dmg", TarGz: "tar.gz", Zip: "zip" } as const;
+export type RuntimeArchive = (typeof RuntimeArchive)[keyof typeof RuntimeArchive];
+
+/** One pinned runtime download behind a confirmed setup action, for one kind of computer. */
+export interface PluginRuntimePin {
+  action: string;
+  url: string;
+  sha256: string;
+  bytes: number;
+  unpackedBytes: number;
+  format: RuntimeArchive;
+  entry: string;
+  executable: string;
+  notices: string[];
+  /** The computer this download runs on; left out, a Mac with Apple silicon. */
+  platform?: NativePlatform;
+}
+
 /** API 3. Runtime names and launch recipes come from reviewed plugin code, never tool inputs. */
 export interface PluginNativeRuntime {
   id: string;
   label: string;
   candidates: string[];
   version: { args: string[]; pattern: string; minimum: string };
-  install?: {
-    action: string;
-    url: string;
-    sha256: string;
-    bytes: number;
-    unpackedBytes: number;
-    format: "dmg" | "tar.gz";
-    entry: string;
-    executable: string;
-    notices: string[];
-  };
+  /** The pinned download, for a Mac with Apple silicon unless it names another `platform`. */
+  install?: PluginRuntimePin;
+  /** Pinned downloads for other computers, one per `platform`. */
+  installs?: PluginRuntimePin[];
+}
+
+/** The pinned download of `runtime` for `platform` (this computer's by default), if it has one. */
+export function runtimePinFor(
+  runtime: Pick<PluginNativeRuntime, "install" | "installs">,
+  platform: string,
+): PluginRuntimePin | undefined {
+  const pins = [...(runtime.install ? [runtime.install] : []), ...(runtime.installs ?? [])];
+  return pins.find((pin) => (pin.platform ?? NativePlatform.MacArm64) === platform);
 }
 export type PluginNativeArg = string | { source: "package" | "input" | "output" | "value"; name: string };
 export interface PluginNativeJob {
@@ -62,6 +95,8 @@ export interface PluginNativeStatus {
   path?: string;
   version?: string;
   detail: string;
+  /** The pinned download for this computer, when the runtime has one: its setup action and size. */
+  download?: { action: string; url: string; bytes: number };
 }
 export interface PluginRuntimeInstall {
   runtime: string;
@@ -1043,8 +1078,68 @@ export const PluginService = {
    * has a desktop and its driver, and the plugin's engine declares apps here. Asks the person nothing.
    */
   GameEngineCanAssist: "game.engine.canAssist",
+  /**
+   * `game-engine`: a long job of the plugin's (an engine's build or package) started in Genex's
+   * process sandbox, writing only folders inside the bound game; answers its id at once, and the
+   * host owns the job from then on.
+   */
+  SandboxRun: "sandbox.run",
+  /** `game-engine`: how one of the plugin's sandbox jobs stands, or null for one the host doesn't know. */
+  SandboxResult: "sandbox.result",
+  /** `game-engine`: ends one of the plugin's sandbox jobs with its process tree. */
+  SandboxStop: "sandbox.stop",
 } as const;
 export type PluginService = (typeof PluginService)[keyof typeof PluginService];
+
+/** The longest a plugin's sandbox job may be given: an Unreal plugin's package takes up to 45 minutes. */
+export const PLUGIN_SANDBOX_MAX_TIMEOUT_MS = 60 * MINUTE_MS;
+/** The shortest deadline a sandbox job may ask for. */
+export const PLUGIN_SANDBOX_MIN_TIMEOUT_MS = 1000;
+/** How much of each of a sandbox job's stdout and stderr the host keeps, in characters, from its end. */
+export const PLUGIN_SANDBOX_OUTPUT_CHARS = 4 * 1024 * 1024;
+
+/** Where a plugin's sandbox job is (`PluginSandboxJob.state`). Published to plugins: never rename a value. */
+export const SandboxJobState = {
+  Running: "running",
+  /** The program ended by itself: `exitCode` says how. */
+  Exited: "exited",
+  /** Ended at its deadline. */
+  TimedOut: "timed-out",
+  /** Ended by `sandbox.stop`, or because its plugin stopped, turned off or was removed. */
+  Stopped: "stopped",
+  /** Never started: `reason` says why. */
+  Failed: "failed",
+} as const;
+export type SandboxJobState = (typeof SandboxJobState)[keyof typeof SandboxJobState];
+
+/**
+ * `sandbox.run`'s arguments: the program (inside one of `reads`), its arguments, the folders it
+ * reads (the engine, the project), the folders inside the bound game it writes, the variables that
+ * name a scratch folder of the job's own (`scratchEnv`), further variables, and its deadline.
+ * Mirrors `PluginSandboxRunArgs` in `src/plugin-sdk/index.d.ts`.
+ */
+export interface PluginSandboxRunArgs {
+  program: string;
+  args: string[];
+  reads: string[];
+  writes: string[];
+  scratchEnv?: string[];
+  env?: Record<string, string>;
+  timeoutMs: number;
+}
+
+/** One sandbox job as `sandbox.result` answers it. Mirrors `PluginSandboxJob` in the SDK. */
+export interface PluginSandboxJob {
+  id: string;
+  state: SandboxJobState;
+  exitCode?: number | null;
+  stdout?: string;
+  stderr?: string;
+  /** Whether either output stream was cut at {@link PLUGIN_SANDBOX_OUTPUT_CHARS}. */
+  truncated?: boolean;
+  seconds?: number;
+  reason?: string;
+}
 
 /** The longest task a plugin may hand to the chat with `game.engine.assist`. */
 export const ENGINE_ASSIST_TASK_MAX_CHARS = 300;

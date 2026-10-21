@@ -46,12 +46,24 @@ const MESSAGE = {
   timedOut: (ms: number) => `the still did not finish within ${Math.round(ms / SECOND_MS)} s`,
 } as const;
 
+/**
+ * How a leased window gets the page a view is taken of, or why it did not: the game served
+ * ({@link openGame}) unless another page stands in for it, such as an engine game's cover reel.
+ */
+export type ViewOpener = (
+  port: PreviewPort,
+  binding: PluginBinding,
+  abandoned: AbortSignal,
+) => Promise<PluginStillProblem | null>;
+
 /** The still's budget and its clock: a test seam (`StudioCoreOptions.pluginStill`). */
 export interface ViewStillOptions {
   /** The whole still's budget; {@link STILL_TIMEOUT_MS} unless a test gives another. */
   timeoutMs?: number;
   /** Resolves once `ms` have passed and rejects when `signal` aborts: the budget's clock. */
   wait?: (ms: number, signal: AbortSignal) => Promise<unknown>;
+  /** The page the view is taken of, when it is not the game served. */
+  open?: ViewOpener;
 }
 
 /** The parts of the core's previews a still or a clip uses. */
@@ -222,6 +234,12 @@ export async function openGame(
   return null;
 }
 
+/** The opener of the game itself, served as Live serves it and put in play. */
+export const servedGame =
+  (previews: ViewPreviews): ViewOpener =>
+  (port, binding, abandoned) =>
+    openGame(previews, port, binding, abandoned);
+
 /** What one lease of a hidden window is: its label, its budget and its clock, and what it does inside. */
 export interface Lease<A> {
   label: string;
@@ -286,7 +304,7 @@ async function photograph(port: StillPort, order: PluginStillOrder): Promise<Plu
  * may load, probe, play or photograph in it again, inside a step or between two.
  */
 async function shoot(
-  previews: ViewPreviews,
+  open: ViewOpener,
   pool: PreviewPool,
   session: SessionPort,
   { binding, order, abandoned }: { binding: PluginBinding; order: PluginStillOrder; abandoned: AbortSignal },
@@ -294,7 +312,7 @@ async function shoot(
   const window = await sizedWindow(pool, session, order, STILL_NEED);
   if ("refused" in window) return { stillProblem: window.refused };
   const port = untilAbandoned(window.port, abandoned);
-  const unopened = await openGame(previews, port, binding, abandoned);
+  const unopened = await open(port, binding, abandoned);
   if (unopened) return { stillProblem: unopened };
   const placed = order.demo !== undefined ? await runDemo(port, order.demo) : await placeCamera(port, order.camera);
   abandoned.throwIfAborted();
@@ -313,11 +331,12 @@ export async function viewStill(
   options: ViewStillOptions = {},
 ): Promise<PluginStillAnswer> {
   const timeoutMs = options.timeoutMs ?? STILL_TIMEOUT_MS;
+  const open = options.open ?? servedGame(previews);
   return leased(previews, {
     label: `still:${binding.project}`,
     timeoutMs,
     ...(options.wait ? { wait: options.wait } : {}),
-    run: (pool, session, abandoned) => shoot(previews, pool, session, { binding, order, abandoned }),
+    run: (pool, session, abandoned) => shoot(open, pool, session, { binding, order, abandoned }),
     unavailable: () => problem(PluginStillProblemCode.Unavailable, { reason: MESSAGE.noHiddenWindow }),
     late: () => problem(PluginStillProblemCode.Timeout, { reason: MESSAGE.timedOut(timeoutMs) }),
   });

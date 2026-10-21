@@ -25,6 +25,7 @@ import { WorkerStopCode } from "../shared/workers.ts";
 import { type PackageManager, type SandboxProblemCode, type StartStep, StudioPlatform } from "../shared/boot.ts";
 import { ChatFileOpen } from "../shared/chat-files.ts";
 import { sizeWords } from "../shared/byte-size.ts";
+import { homePath, pathLeaf } from "../shared/path-label.ts";
 import { freeableBytes, StorageKind, type StorageFreed, type StorageSpace } from "../shared/storage-space.ts";
 import { SkippedBy, type SkippedFile } from "../shared/chat-rewind.ts";
 import { LiveBehindReason } from "../shared/live-behind.ts";
@@ -36,6 +37,8 @@ import { COMPUTER_SETTING_QUESTION, type GithubLookupProblem } from "../shared/p
 import { computerControlOffered, desktopStopShortcut } from "../shared/computer-control.ts";
 import type { GenexPublishPhase } from "../shared/genex.ts";
 import { PlayCategory, PlayNote, PlayShelf, RemixStep } from "../shared/play.ts";
+import { InstallFailure, LaunchFailure, NativeArch, NativePlatform } from "../shared/play-native.ts";
+import { PublishTarget } from "../shared/publish-platforms.ts";
 import { CreditKind } from "../shared/play-credits.ts";
 import { PurchaseProblem } from "../shared/play-purchase.ts";
 import { AvatarBody, AvatarEyes, AvatarGear, BlockState } from "../shared/avatar-recipe.ts";
@@ -74,7 +77,7 @@ import {
   JobTool,
 } from "../shared/jobs.ts";
 import { type ScreenAct, ScreenDeed } from "../shared/agent-screen.ts";
-import { HOUR_MS, MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
+import { DAY_MS, HOUR_MS, MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { type ConnectorStep, StepAction } from "./chat/connector-steps.ts";
 import { MentionMiss } from "../shared/prompt-mention.ts";
 import { AssetScope, LibraryKind } from "../shared/asset-library.ts";
@@ -1579,32 +1582,54 @@ const KEY_WORD: Record<string, string> = {
   option: "⌥",
 };
 
-function keyWord(key: string): string {
+/** The keys a Windows or Linux keyboard names in words where the Mac's carries a glyph. */
+const KEY_WORD_OFF_MAC: Record<string, string> = {
+  cmd: "Win",
+  command: "Win",
+  meta: "Win",
+  super: "Win",
+  alt: "Alt",
+  option: "Alt",
+};
+
+function keyWord(key: string, platform: string): string {
   const lower = key.toLowerCase();
+  const offMac = platform !== "" && platform !== StudioPlatform.Mac;
+  if (offMac && Object.hasOwn(KEY_WORD_OFF_MAC, lower)) return KEY_WORD_OFF_MAC[lower] ?? key;
   if (Object.hasOwn(KEY_WORD, lower)) return KEY_WORD[lower] ?? key;
   return key.length === 1 ? key.toUpperCase() : key.charAt(0).toUpperCase() + key.slice(1);
 }
 
-/** Keys as a player reads them: "space" is Space, "ArrowRight" is →, "shift+w" is Shift+W. */
-export function keysWords(keys: readonly string[]): string {
+/**
+ * Keys as a player reads them: "space" is Space, "ArrowRight" is →, "shift+w" is Shift+W; "meta"
+ * is ⌘ on the Mac (or before main answers) and Win elsewhere, "alt" ⌥ or Alt.
+ */
+export function keysWords(keys: readonly string[], platform = ""): string {
   return keys
     .flatMap((combo) => (combo === "+" ? [combo] : combo.split("+").filter(Boolean)))
-    .map(keyWord)
+    .map((key) => keyWord(key, platform))
     .join("+");
 }
 
 /** A deed and, for a press, its keys. */
-function screenWords(act: ScreenAct | undefined, words: Record<ScreenDeed, string>, unknown: string): string {
+function screenWords(
+  act: ScreenAct | undefined,
+  words: Record<ScreenDeed, string>,
+  unknown: string,
+  platform: string,
+): string {
   if (!act || !Object.hasOwn(words, act.deed)) return unknown;
-  const keys = act.deed === ScreenDeed.Press && act.keys?.length ? ` ${keysWords(act.keys)}` : "";
+  const keys = act.deed === ScreenDeed.Press && act.keys?.length ? ` ${keysWords(act.keys, platform)}` : "";
   return `${words[act.deed]}${keys}`;
 }
 
 /** What an agent is doing at its screen, as its node says it: "Pressing Space", "Looking around". */
-export const screenDoing = (act: ScreenAct | undefined): string => screenWords(act, SCREEN_DOING, SCREEN_PLAYING.doing);
+export const screenDoing = (act: ScreenAct | undefined, platform = ""): string =>
+  screenWords(act, SCREEN_DOING, SCREEN_PLAYING.doing, platform);
 
 /** The same, done, as a step of its trail says it: "Pressed →", "Opened". */
-export const screenDone = (act: ScreenAct | undefined): string => screenWords(act, SCREEN_DONE, SCREEN_PLAYING.done);
+export const screenDone = (act: ScreenAct | undefined, platform = ""): string =>
+  screenWords(act, SCREEN_DONE, SCREEN_PLAYING.done, platform);
 
 /** A frame this recent is happening now. */
 const SCREEN_NOW_MS = 2 * SECOND_MS;
@@ -2341,6 +2366,9 @@ export const NOTICE_WORDS = {
   buildNothingNew: "Build finished without a new version.",
   newGame: "New game",
   harness: "Harness",
+  /** A game from Play, installed while the person was elsewhere, and a newer build of one installed. */
+  readyToPlay: "Ready to play on this Mac.",
+  newVersion: (size: string) => `New version · ${size}. It updates when you play.`,
 } as const;
 
 /** A plugin's permission question as a row: its own prompt when it wrote one. */
@@ -2825,7 +2853,8 @@ function permissionAsker(event: Partial<ToolPermissionEvent>): string {
 function toolAskWords(event: Partial<ToolPermissionEvent>, tool: string): string {
   const who = permissionAsker(event);
   if (PERMISSION_EDIT_TOOLS.has(tool)) {
-    const name = permissionPath(event)?.split("/").filter(Boolean).pop();
+    const path = permissionPath(event);
+    const name = path ? pathLeaf(path) : undefined;
     return name ? `${who} wants to edit ${name}` : `${who} wants to edit a file`;
   }
   if (PERMISSION_READ_TOOLS.has(tool)) {
@@ -2880,9 +2909,6 @@ function parsedRule(rule: string): { tool: string; content: string } {
 
 /** `npm test:*` and `npm test *` both allow every command that starts with the prefix. */
 const commandPrefix = (content: string): string | undefined => /^(.+?)(?::\*| \*)$/.exec(content)?.[1]?.trim();
-
-/** A path in a person's home, as `~/…`. */
-const homePath = (path: string): string => path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
 
 /** What one rule allows, and where. */
 function ruleGrantWords(rule: string, scope: RuleScope): string {
@@ -3023,6 +3049,102 @@ export const STORAGE_WORDS = {
   none: "None",
   keep: "Keep",
   freedNothing: "There was nothing to free.",
+} as const;
+
+/** Settings → Storage's games from Play (`panels/InstalledGamesSection.tsx`). */
+export const INSTALLED_GAMES_WORDS = {
+  title: "Games from Play",
+  total: (count: number, size: string) => `${count === 1 ? "1 game" : `${count} games`} · ${size}`,
+  /** When a game was last played here: "Played today", "Played 3 days ago", "Not played yet". */
+  played: (at: string | null, now: number) => {
+    if (!at) return "Not played yet";
+    const days = Math.floor((now - Date.parse(at)) / DAY_MS);
+    if (days < 1) return "Played today";
+    return days === 1 ? "Played yesterday" : `Played ${days} days ago`;
+  },
+  remove: "Remove",
+  savesStay: "Saves stay when you remove a game. Getting it again starts where you left off.",
+} as const;
+
+/** The Publish dialog's platform rows (`panels/plugins/genex/PublishPlatforms.tsx`). */
+export const PUBLISH_PLATFORM_WORDS = {
+  label: "Platforms",
+  name: {
+    [PublishTarget.Web]: "Web",
+    [PublishTarget.Mac]: "Mac app",
+    [PublishTarget.Windows]: "Windows app",
+  } satisfies Record<PublishTarget, string>,
+  /** The players a native row is for, in the ask and the reach line: "Mac", "Windows". */
+  players: { [PublishTarget.Mac]: "Mac", [PublishTarget.Windows]: "Windows" },
+  webReady: "Plays right away",
+  webMissing: "Not set up for the web",
+  /** An Unreal game: Unreal has no web export. */
+  webUnavailable: "Unreal games don’t run in a browser",
+  /** What a build runs on, by its processors. */
+  arch: {
+    [PublishTarget.Mac]: {
+      [NativeArch.Universal]: "Apple silicon and Intel",
+      [NativeArch.Arm64]: "Apple silicon",
+      [NativeArch.X64]: "Intel",
+    },
+    [PublishTarget.Windows]: {
+      [NativeArch.Universal]: "64-bit PCs",
+      [NativeArch.Arm64]: "Arm PCs",
+      [NativeArch.X64]: "64-bit PCs",
+    },
+  } satisfies Record<typeof PublishTarget.Mac | typeof PublishTarget.Windows, Record<NativeArch, string>>,
+  /** When a build was made: "built just now", "built 5 min ago", "built 3 hours ago". */
+  built: (at: string, now: number) => {
+    const ms = Math.max(0, now - Date.parse(at));
+    if (ms < MINUTE_MS) return "built just now";
+    if (ms < HOUR_MS) return `built ${Math.floor(ms / MINUTE_MS)} min ago`;
+    if (ms < DAY_MS) return `built ${plural(Math.floor(ms / HOUR_MS), "hour")} ago`;
+    return `built ${plural(Math.floor(ms / DAY_MS), "day")} ago`;
+  },
+  stale: "Built before your last change",
+  missing: "Not made yet",
+  /** A built app genex.games does not take yet: it shows, and Publish sends the web version. */
+  soon: "Coming soon",
+  soonLabel: (name: string) => `${name}: publishing it is coming soon`,
+  make: "Make with agent",
+  makeLabel: (name: string) => `Make the ${name} with the agent`,
+  /** The web row's press, for a screen reader, and what it sends through the game's chat. */
+  makeWebLabel: "Make the web version with the agent",
+  makeWebAsk: (title: string) => `Make a web version of ${title} so I can publish it on the web.`,
+  /** The row once Make with agent sent its ask. */
+  asked: "Asked the agent",
+  /** What "Make with agent" sends through the game's chat. */
+  makeAsk: (players: string, title: string) =>
+    `Make a ${players} app of ${title} so I can publish it for ${players} players.`,
+  /** Who plays what once it is published: "Mac and Windows players get the web version." */
+  reach: (players: string) => `${players} players get the web version.`,
+  /** The apps Publish sends too: "Mac app", "Mac and Windows apps". */
+  apps: (players: readonly string[]) =>
+    players.length > 1 ? `${NATIVE_WORDS.platforms(players)} apps` : `${players[0] ?? ""} app`,
+  alsoSends: (apps: string) => `Publish also sends the ${apps}.`,
+  sending: "Sending…",
+  sent: "On Genex",
+  sentLabel: (name: string) => `${name}: on Genex for desktop players`,
+  failed: "Not sent",
+  failedLine: (name: string, error: string) => `Couldn’t send the ${name}: ${error}`,
+  /** A game with only apps: its main press, who can play it, and how its listing went. */
+  publishApps: (apps: string) => `Publish ${apps}`,
+  onlyPlayers: (players: string) => `Only ${players} players can play it.`,
+  held: "Genex is reviewing the game before it shows in the gallery.",
+  /** The quiet line under the press of a game with only apps. */
+  appsHint: "People playing in the Genex app can install it.",
+  /** A game made in an engine with nothing Publish can send yet: no app, or none Studio can send. */
+  makeFirst: "Make a Mac or Windows app first, then publish it here.",
+  makeAnyFirst: "Make a web version or a Mac or Windows app first, then publish it here.",
+  appsSoon: "Publishing Mac and Windows apps comes with the next Genex update.",
+  /** A built app older than the game's last change: the agent builds it again. */
+  rebuild: "Build again",
+  rebuildLabel: (name: string) => `Build the ${name} again with the agent`,
+  rebuildAsk: (players: string, title: string) => `Build the ${players} app of ${title} again so I can publish it.`,
+  rebuildFirst: (app: string) => `The ${app} is older than your last change: build it again, then publish.`,
+  /** The installed Genex plugin is from before apps: its update sends them. */
+  updateGenex: "Update the Genex plugin in Plugins to publish apps.",
+  notListed: "The apps are on Genex, but the game isn’t in the gallery yet. Publish again to list it.",
 } as const;
 
 /** Each kind of space freeing deletes: its name and what it is. */
@@ -3379,12 +3501,12 @@ export const SANDBOX_SETUP_WORDS = {
   windows: {
     settingUp: {
       title: "Setting up Genex",
-      line: "Windows will ask you to allow this once. Agents work in their own protected space, away from your files.",
+      line: "Windows will ask you to allow this once. If it asks for a password, an administrator of this PC can enter theirs. Agents work in their own protected space, away from your files.",
       step: "Waiting for your OK",
     },
     needsOk: {
       title: "Genex needs your OK to set up",
-      line: "Agents only run in a protected space that Windows has to allow once. On a work PC, an admin may need to approve it.",
+      line: "Agents only run in a protected space that Windows has to allow once. If you aren’t an administrator of this PC, ask one to enter their password when Windows asks, then press Set up.",
       setUp: "Set up",
     },
     failed: {
@@ -3408,6 +3530,7 @@ export const SANDBOX_SETUP_WORDS = {
     title: "Starting Genex",
     line: "Getting your games and the protected workspace ready.",
     step: {
+      agents: "Preparing your agents",
       games: "Reading your games",
       workspace: "Starting the protected workspace",
       studio: "Opening the studio",
@@ -3422,6 +3545,11 @@ export const SANDBOX_SETUP_WORDS = {
   },
   stillFailing: "Studio still couldn’t start:",
   details: "Details",
+  /** A new version downloaded before the studio opened; the button is the sidebar's (`UPDATE_WORDS`). */
+  update: {
+    ready: (version: string | null) =>
+      version ? `Genex ${version} is ready and may fix this.` : "A new version of Genex is ready and may fix this.",
+  },
 } as const;
 
 // ── the Plugins tab ───────────────────────────────────────────────────────────────────────
@@ -3555,11 +3683,15 @@ export const PLUGINS_WORDS = {
     missingTitle: "Blender isn’t installed",
     missingText: (version: string, size: string) =>
       `Download Blender ${version} (about ${size}) for Studio. A Blender you installed yourself stays as it is.`,
+    missingOwnText:
+      "Genex has no download of Blender for this computer. Install Blender 4.2 or newer, then check again.",
     oldTitle: (version: string) => `Blender ${version} is too old`,
     oldText: (version: string, size: string) =>
       `Download Blender ${version} (about ${size}) for Studio. The Blender you have stays as it is.`,
     failedTitle: "Blender couldn’t start",
     download: "Download Blender",
+    choose: "Choose Blender…",
+    chooseTitle: "Choose blender.exe",
     downloading: (version: string) => `Downloading Blender ${version}`,
     installing: (version: string) => `Installing Blender ${version}`,
     progress: (done: string, total: string) => `${done} of ${total}`,
@@ -3887,15 +4019,19 @@ export const GENEX_WORDS = {
     anotherCoverLabel: "Make another cover",
     coverWantLabel: "What the new cover should show",
     coverWantPlaceholder: "What should it show? Or leave it empty",
-    coverMake: "Make",
+    coverMake: "Ask agent",
     coverKeep: "Keep this cover",
     coverPrevious: "Previous cover",
     coverNext: "Next cover",
     coverOf: (at: number, of: number) => `Cover ${at} of ${of}`,
-    /** While Studio or the agent is making a cover: the banner's busy pill. */
+    /** While Studio takes a cover, or the agent makes one: the banner's busy pill. */
     coverTaking: "Taking a cover",
-    coverMaking: "New cover",
-    coverMakingSoon: "The new one shows here when it’s ready.",
+    coverMaking: "Making a cover",
+    coverMakingClip: "Making a clip",
+    /** Beside the pill: roughly how long is left, from how long this game's last one took. */
+    coverLeft: (minutes: number) => `~${minutes} min`,
+    /** Under the presses while the agent makes it: who is making it, and where it shows. */
+    coverMakingSoon: "The agent is making it in the chat. It shows here when it’s ready.",
     /** What Another cover sends in the game's chat, with what the person typed. */
     coverAnotherPrompt: (want: string) =>
       want
@@ -4556,6 +4692,91 @@ export const PLAY_CARD_MENU_WORDS = {
     } satisfies Record<PlayCoverRefusal, string>,
     failed: "Couldn’t change the cover.",
   },
+} as const;
+
+/** A native game: its card's badge, its own page and its card menu's local items (`play/GamePage.tsx`). */
+export const NATIVE_WORDS = {
+  platform: {
+    [NativePlatform.Mac]: "Mac",
+    [NativePlatform.Windows]: "Windows",
+    [NativePlatform.Linux]: "Linux",
+  } satisfies Record<NativePlatform, string>,
+  /** The systems a game was built for, read aloud and on its tile: "Mac and Windows". */
+  platforms: (names: readonly string[]) =>
+    names.length < 2 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`,
+  /** What is left of a download: "2 min left", "under a minute left". */
+  left: (etaMs: number | null) => {
+    if (etaMs === null) return "";
+    const minutes = Math.ceil(etaMs / MINUTE_MS);
+    return minutes <= 1 ? "under a minute left" : `${minutes} min left`;
+  },
+  downloading: (percent: number, left: string) => (left ? `${percent}% · ${left}` : `${percent}%`),
+  installedHere: "On this Mac",
+  update: (size: string) => `Update · ${size}`,
+  /** A profile's card for a game this computer has no build of. */
+  onlyOn: (platform: string) => `Only on ${platform}`,
+  // The game page.
+  by: "By",
+  stats: (plays: string, likes: string, updated: string | null) =>
+    [`${plays} plays`, `${likes} likes`, updated ? `Updated ${updated}` : null].filter(Boolean).join(" · "),
+  about: "About",
+  install: "Install",
+  installLabel: (title: string, size: string) => `Install ${title}, ${size}`,
+  installing: (percent: number) => `Installing… ${percent}%`,
+  installingLabel: (title: string) => `Installing ${title}`,
+  waiting: "Waiting for another install…",
+  checking: "Checking…",
+  cancel: "Cancel",
+  play: "Play",
+  playLabel: (title: string) => `Play ${title}`,
+  readyHere: (size: string) => `On this Mac · ${size}`,
+  showGame: "Show game",
+  quit: "Quit",
+  opening: "Opening in its own window…",
+  playingFor: (minutes: number) => `Playing in its own window · ${minutes} min`,
+  updateAndPlay: "Update and play",
+  playVersion: (version: string) => `Play version ${version} instead`,
+  onlyOnTitle: (platform: string) => `Only on ${platform}`,
+  noVersionFor: (platform: string) => `There’s no ${platform} version of this game yet.`,
+  notForThisMac: "Not for this Mac",
+  needsMacOs: (version: string) => `It needs macOS ${version} or later.`,
+  tryAgain: "Try again",
+  /** Why an install failed, one sentence each; no space says how much to free. */
+  installFailed: {
+    [InstallFailure.NoSpace]: (free: string) => `Couldn’t install: free ${free} on this Mac and try again.`,
+    [InstallFailure.Checksum]: () => "Couldn’t install: the download was damaged. Try again.",
+    [InstallFailure.Network]: () => "Couldn’t install: the download stopped. Check your connection and try again.",
+    [InstallFailure.Stalled]: () => "Couldn’t install: the download stopped. Check your connection and try again.",
+    [InstallFailure.UnsafeArchive]: () => "Couldn’t install: this game’s files aren’t safe to open.",
+    [InstallFailure.Unsigned]: () => "Couldn’t install: this game isn’t signed.",
+    [InstallFailure.TooLarge]: () => "Couldn’t install: this game is larger than it says.",
+    [InstallFailure.UnsupportedOs]: () => "Couldn’t install: this game doesn’t run on this Mac.",
+    [InstallFailure.EntryMissing]: () => "Couldn’t install: the download doesn’t hold the game.",
+    [InstallFailure.NotOffered]: () => "There’s no version of this game for this Mac.",
+    [InstallFailure.Failed]: () => "Couldn’t install. Try again.",
+  } satisfies Record<InstallFailure, (free: string) => string>,
+  launchFailed: {
+    [LaunchFailure.NotInstalled]: "It isn’t on this Mac any more. Install it again.",
+    [LaunchFailure.StartFailed]: "It couldn’t start on this Mac.",
+    [LaunchFailure.QuitEarly]: "It closed before it opened. Try again.",
+  } satisfies Record<LaunchFailure, string>,
+  singlePlayer: "Single player",
+  multiplayer: "Multiplayer",
+  madeWith: (engine: string) => `Made with ${engine}`,
+  /** Engine ids as people say them; another id is shown as it is spelled. */
+  engine: { unity: "Unity", godot: "Godot", unreal: "Unreal" } as Readonly<Record<string, string>>,
+  appleSiliconOnly: "Apple silicon only",
+  failedToLoad: "Couldn’t load this game.",
+  // The card menu's local items.
+  showInFinder: "Show in Finder",
+  removeFromMac: "Remove from this Mac",
+  removed: (title: string) => `${title} is removed from this Mac. Its saves stay.`,
+  removeFailed: "Couldn’t remove the game. Quit it first if it’s running.",
+  /** The viewer bar's pill for a web game's native app: "Mac app", "Mac app 38%", "Play Mac app". */
+  app: (platform: string) => `${platform} app`,
+  appInstalling: (platform: string, percent: number) => `${platform} app ${percent}%`,
+  playApp: (platform: string) => `Play ${platform} app`,
+  installAppLabel: (platform: string, size: string) => `Install the ${platform} app, ${size}`,
 } as const;
 
 /** Who took a check, for the sources that played the build. */

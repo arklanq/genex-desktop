@@ -1,8 +1,8 @@
 /**
- * Play's viewer: a game fills the whole window and the studio's own bar (Back, the game's name and
- * facts, Like, Comments, Share, Invite a friend, Remix, Exit) lies over its top edge, in a layer of
- * its own. The bar is up while the game loads, fades a few seconds into play and comes back at the
- * top edge or on Esc; its Comments covers the window and takes the keyboard. The viewer signs the
+ * Play's viewer: the studio's own bar (Back, the game's name and facts, Like, Comments, Share, Invite
+ * a friend, Remix, Exit) is a strip of its own across the window's top, in a layer of its own, and the
+ * game fills the window below it, never under it. The bar stays up for the whole game; only the game's
+ * own full screen gives it the whole window. Its Comments covers the window and takes the keyboard. The viewer signs the
  * player in with a ticket when there is a Genex account, shows the cover until the page has loaded
  * (or long enough), and closes from Back, Exit, the guest card's Sign in, Remix or the maker's name.
  * A held Esc in the game moves the keyboard to the bar; Esc there gives it back. A guest with no
@@ -20,15 +20,22 @@ import {
   playAddress,
   playNavigationAllowed,
 } from "../../src/main/play/game-address.ts";
-import { BAR_FADE_MS, BAR_LINGER_MS, BAR_SHOWN_MS } from "../../src/main/play/bar-reveal.ts";
 import { closePage, closeWithWindow, dropGameView } from "../../src/main/play/view-drop.ts";
-import { BAR_EDGE_PX, NOTE_MS, SHOW_GAME_AFTER_MS } from "../../src/main/play/viewer.ts";
+import { NOTE_MS, SHOW_GAME_AFTER_MS } from "../../src/main/play/viewer.ts";
 import type { PlayComment } from "../../src/shared/play-comments.ts";
+import { NativeAppOffer, NativePlatform, type PlayBarNative } from "../../src/shared/play-native.ts";
 import { PLAY_BAR_HEIGHT, PlayControl, PlayNote, PlayViewerPhase } from "../../src/shared/play.ts";
 import { esc, MINTED, NOT_MINTED, rig, SIGNED_OUT, saved, settle, WINDOW, WORLD } from "../helpers/play-viewer-rig.ts";
 
 /** A long session in a game: longer than any of the viewer's own timers. */
 const LONG_PLAY_MS = 30 * 60_000;
+/** Where the game lies: the window below the bar's strip. */
+const UNDER_BAR = `0,${PLAY_BAR_HEIGHT} ${WINDOW.width}x${WINDOW.height - PLAY_BAR_HEIGHT}`;
+/** The bar's strip across the window's top. */
+const BAR_STRIP = `0,0 ${WINDOW.width}x${PLAY_BAR_HEIGHT}`;
+/** Long past any delay the bar ever had before it moved. */
+const BAR_SETTLED_MS = 10_000;
+
 describe("Play viewer", () => {
   it("opens a game signed in, its header drawn with the game's likes and facts", async () => {
     const { viewer, events, opened, bar } = rig();
@@ -40,7 +47,6 @@ describe("Play viewer", () => {
       phase: PlayViewerPhase.Loading,
       bar: {
         title: "Lost Cathedral",
-        shown: true,
         liked: false,
         likes: 0,
         remixable: false,
@@ -52,13 +58,13 @@ describe("Play viewer", () => {
         comments: null,
         signedIn: null,
         remixing: false,
+        nativeApp: null,
         purchase: null,
       },
     });
     assert.deepEqual(opened, ["game:lost-cathedral:T1"]);
     assert.deepEqual(bar(), {
       title: "Lost Cathedral",
-      shown: true,
       liked: false,
       likes: 3,
       remixable: true,
@@ -70,6 +76,7 @@ describe("Play viewer", () => {
       comments: 2,
       signedIn: true,
       remixing: false,
+      nativeApp: null,
       purchase: null,
     });
     assert.equal(viewer.showing(), "lost-cathedral");
@@ -84,14 +91,15 @@ describe("Play viewer", () => {
     }
   });
 
-  it("puts the game across the whole window once its page has loaded, the bar over its top edge from the start", async () => {
+  it("puts the game below the bar once its page has loaded, the bar's strip up from the start", async () => {
     const { viewer, events, log } = rig();
     viewer.open("lost-cathedral", "Lost Cathedral");
-    assert.equal(log[0], `bar.show 0,0 ${WINDOW.width}x${PLAY_BAR_HEIGHT}`, "the bar is up over the cover");
+    assert.equal(log[0], `bar.show ${BAR_STRIP}`, "the bar is up over the cover");
     await settle();
+    assert.ok(log.includes(`game.open ${UNDER_BAR}`), "the page boots at the size it plays at");
     viewer.loaded();
     assert.equal(events.findLast((event) => event.phase !== PlayViewerPhase.Loading)?.phase, PlayViewerPhase.Playing);
-    assert.ok(log.includes(`game.show 0,0 ${WINDOW.width}x${WINDOW.height}`));
+    assert.ok(log.includes(`game.show ${UNDER_BAR}`));
     assert.equal(log.at(-1), "game.focus");
   });
 
@@ -125,10 +133,7 @@ describe("Play viewer", () => {
     viewer.loaded();
     log.length = 0;
     viewer.resized();
-    assert.deepEqual(log, [
-      `game.show 0,0 ${WINDOW.width}x${WINDOW.height}`,
-      `bar.show 0,0 ${WINDOW.width}x${PLAY_BAR_HEIGHT}`,
-    ]);
+    assert.deepEqual(log, [`game.show ${UNDER_BAR}`, `bar.show ${BAR_STRIP}`]);
   });
 
   it("likes at once and keeps what the server answered", async () => {
@@ -400,7 +405,7 @@ describe("Play viewer", () => {
   });
 });
 
-describe("Play viewer's bar over the game", () => {
+describe("Play viewer's bar above the game", () => {
   /** A viewer playing Lost Cathedral, its page loaded. */
   async function playing(overrides: Parameters<typeof rig>[0] = {}) {
     const made = rig(overrides);
@@ -410,130 +415,102 @@ describe("Play viewer's bar over the game", () => {
     return made;
   }
 
-  it("stays up while the game loads, however long, and fades a few seconds into play", async () => {
+  it("stays up for the whole game, loading, playing or failed, never fading, the window's buttons kept", async () => {
     const { viewer, bar, log, advance } = rig();
     viewer.open("lost-cathedral", "Lost Cathedral");
     await settle();
     advance(SHOW_GAME_AFTER_MS - 1);
-    assert.equal(bar()?.shown, true, "loading");
     viewer.loaded();
-    advance(BAR_SHOWN_MS - 1);
-    assert.equal(bar()?.shown, true);
-    advance(1);
-    assert.equal(bar()?.shown, false, "faded up and out");
-    assert.ok(!log.includes("bar.hide"), "its layer waits for the fade");
-    advance(BAR_FADE_MS);
-    assert.deepEqual(log.slice(-2), ["bar.hide", "buttons hidden"], "the window's buttons go with it");
-  });
-
-  it("stays up over a game that could not load", async () => {
-    const { viewer, bar, log, advance } = rig();
-    viewer.open("lost-cathedral", "Lost Cathedral");
+    advance(LONG_PLAY_MS);
+    assert.ok(bar(), "drawn");
+    assert.ok(!log.includes("bar.hide"));
+    assert.ok(!log.includes("buttons hidden"));
+    const failed = rig();
+    failed.viewer.open("lost-cathedral", "Lost Cathedral");
     await settle();
-    viewer.failed();
-    advance(LONG_PLAY_MS);
-    assert.equal(bar()?.shown, true);
-    assert.ok(!log.includes("bar.hide"));
+    failed.viewer.failed();
+    failed.advance(LONG_PLAY_MS);
+    assert.ok(!failed.log.includes("bar.hide"), "it stays over a game that could not load");
   });
 
-  it("comes back when the pointer reaches the top edge, and only there", async () => {
-    const { viewer, bar, log, advance } = await playing();
-    advance(BAR_SHOWN_MS);
-    advance(BAR_FADE_MS);
+  it("stays put for Esc in the game, a tap or a hold", async () => {
+    const { viewer, log, advance } = await playing();
     log.length = 0;
-    viewer.pointer(300, BAR_EDGE_PX + 1);
-    assert.equal(bar()?.shown, false, "below the edge the game keeps the pointer");
-    viewer.pointer(310, BAR_EDGE_PX);
-    assert.equal(bar()?.shown, true);
-    assert.deepEqual(log, [`bar.show 0,0 ${WINDOW.width}x${PLAY_BAR_HEIGHT}`, "buttons shown"]);
-    advance(BAR_SHOWN_MS);
-    assert.equal(bar()?.shown, false);
+    viewer.key(esc("keyDown"));
+    viewer.key(esc("keyUp"));
+    advance(BAR_SETTLED_MS);
+    assert.ok(!log.some((line) => line.startsWith("bar.show") || line.startsWith("bar.hide")));
   });
 
-  it("takes no moves at one frozen point for the pointer reaching the edge: a game holding the mouse", async () => {
-    const { viewer, bar, advance } = await playing();
-    viewer.pointer(400, 2);
-    assert.equal(bar()?.shown, true, "a pointer that moved to the edge");
-    advance(BAR_SHOWN_MS);
-    for (let move = 0; move < 5; move += 1) viewer.pointer(400, 2);
-    assert.equal(bar()?.shown, false, "the lock began near the top: its moves never bring the bar back");
-    viewer.pointer(420, 2);
-    assert.equal(bar()?.shown, true, "along the edge, the pointer moves again");
-  });
-
-  it("stays up while playing where the window's own controls can't go with it", async () => {
-    const { viewer, bar, advance, log } = await playing({ barFades: false });
-    advance(LONG_PLAY_MS);
-    assert.equal(bar()?.shown, true);
-    assert.ok(!log.includes("bar.hide"));
-    viewer.pointer(10, 1);
-    assert.equal(bar()?.shown, true);
-  });
-
-  it("gives the game the keyboard back when the bar is put away holding it (a menu it opened)", async () => {
-    let focused = true;
-    const { log, advance } = await playing({ barFocused: () => focused });
+  it("gives the game the whole window while its page is full screen, and the bar its strip back after", async () => {
+    const { viewer, log } = await playing();
     log.length = 0;
-    advance(BAR_SHOWN_MS);
-    advance(BAR_FADE_MS);
-    assert.deepEqual(log.slice(-3), ["bar.hide", "buttons hidden", "game.focus"]);
-    focused = false;
-    const quiet = await playing({ barFocused: () => focused });
+    viewer.fullScreen(true);
+    assert.deepEqual(log, ["bar.hide", "buttons hidden", `game.show 0,0 ${WINDOW.width}x${WINDOW.height}`]);
+    log.length = 0;
+    viewer.resized();
+    assert.deepEqual(log, [`game.show 0,0 ${WINDOW.width}x${WINDOW.height}`], "the bar stays away while it is");
+    log.length = 0;
+    viewer.fullScreen(false);
+    assert.deepEqual(log, [`bar.show ${BAR_STRIP}`, "buttons shown", `game.show ${UNDER_BAR}`]);
+  });
+
+  it("gives the game the keyboard back when full screen puts the bar away holding it", async () => {
+    const { viewer, log } = await playing({ barFocused: () => true });
+    log.length = 0;
+    viewer.fullScreen(true);
+    assert.ok(log.includes("game.focus"));
+    const quiet = await playing();
     quiet.log.length = 0;
-    quiet.advance(BAR_SHOWN_MS);
-    quiet.advance(BAR_FADE_MS);
+    quiet.viewer.fullScreen(true);
     assert.ok(!quiet.log.includes("game.focus"), "the game has the keyboard already");
   });
 
-  it("comes back on Esc in the game, a tap or a hold, without taking a tap from the game", async () => {
-    const { viewer, bar, log, advance } = await playing();
-    advance(BAR_SHOWN_MS);
-    advance(BAR_FADE_MS);
-    viewer.key(esc("keyDown"));
-    viewer.key(esc("keyUp"));
-    assert.equal(bar()?.shown, true);
-    assert.ok(!log.includes("bar.focus"), "a tap is the game's");
-    viewer.key({ type: "keyDown", key: "Escape", isAutoRepeat: true });
-    advance(BAR_SHOWN_MS);
-    assert.equal(bar()?.shown, false, "a key held down does not keep it up by repeating");
+  it("shows a game that went full screen while loading across the whole window, and the next game below the bar", async () => {
+    const { viewer, log } = rig();
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    viewer.fullScreen(true);
+    assert.ok(!log.some((line) => line.startsWith("game.show")), "nothing on screen before it loads");
+    viewer.loaded();
+    assert.ok(log.includes(`game.show 0,0 ${WINDOW.width}x${WINDOW.height}`));
+    viewer.control(PlayControl.Exit);
+    log.length = 0;
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    viewer.loaded();
+    assert.ok(log.includes(`bar.show ${BAR_STRIP}`));
+    assert.ok(log.includes(`game.show ${UNDER_BAR}`));
   });
 
-  it("stays while the pointer or the keyboard is on it, a moment past their leaving", async () => {
-    const { viewer, bar, advance } = await playing();
-    viewer.hold({ held: true, comments: false });
-    advance(LONG_PLAY_MS);
-    assert.equal(bar()?.shown, true);
-    viewer.hold({ held: false, comments: false });
-    advance(BAR_LINGER_MS - 1);
-    assert.equal(bar()?.shown, true);
-    advance(1);
-    assert.equal(bar()?.shown, false);
+  it("takes no full screen with no game open", () => {
+    const { viewer, log } = rig();
+    viewer.fullScreen(true);
+    assert.deepEqual(log, []);
   });
 
   it("lays its layer over the whole window for Comments with the keyboard, and gives the game it back after", async () => {
-    const { viewer, bar, log, advance } = await playing();
+    const { viewer, log } = await playing();
     log.length = 0;
-    viewer.hold({ held: true, comments: true });
+    viewer.hold({ comments: true });
     assert.deepEqual(log, [`bar.show 0,0 ${WINDOW.width}x${WINDOW.height}`, "buttons shown", "bar.focus"]);
-    advance(LONG_PLAY_MS);
-    assert.equal(bar()?.shown, true);
     log.length = 0;
-    viewer.hold({ held: false, comments: false });
-    assert.deepEqual(log, [`bar.show 0,0 ${WINDOW.width}x${PLAY_BAR_HEIGHT}`, "buttons shown", "game.focus"]);
+    viewer.hold({ comments: false });
+    assert.deepEqual(log, [`bar.show ${BAR_STRIP}`, "buttons shown", "game.focus"]);
   });
 
   it("leaves the keyboard with Comments opened while the game loads, and keeps it over the window if the game fails", async () => {
     const { viewer, log } = rig();
     viewer.open("lost-cathedral", "Lost Cathedral");
     await settle();
-    viewer.hold({ held: true, comments: true });
+    viewer.hold({ comments: true });
     log.length = 0;
     viewer.loaded();
     assert.ok(!log.includes("game.focus"), "the comment field keeps the keyboard");
     const failing = rig();
     failing.viewer.open("lost-cathedral", "Lost Cathedral");
     await settle();
-    failing.viewer.hold({ held: true, comments: true });
+    failing.viewer.hold({ comments: true });
     failing.log.length = 0;
     failing.viewer.failed();
     assert.ok(!failing.log.some((line) => line.startsWith("bar.")), "the layer stays over the whole window");
@@ -558,26 +535,24 @@ describe("Play viewer's bar over the game", () => {
     viewer.open("lost-cathedral", "Lost Cathedral");
     await settle();
     const before = events.length;
-    viewer.hold({ held: true, comments: false });
-    viewer.hold({ held: false, comments: false });
+    viewer.hold({ comments: false });
     assert.equal(events.length, before, "a hold alone draws nothing");
-    viewer.hold({ held: false, comments: false, ready: true });
+    viewer.hold({ comments: false, ready: true });
     assert.equal(events.length, before + 1);
     assert.equal(events.at(-1)?.bar?.title, "Lost Cathedral");
   });
 
-  it("reads only what holds it, as two booleans", async () => {
-    const { viewer, bar, advance } = await playing();
-    viewer.hold({ held: "yes", comments: 1 });
+  it("reads only what holds it, as booleans", async () => {
+    const { viewer, log } = await playing();
+    log.length = 0;
+    viewer.hold({ comments: 1 });
     viewer.hold(null);
-    advance(BAR_SHOWN_MS);
-    assert.equal(bar()?.shown, false);
+    assert.ok(!log.some((line) => line.startsWith("bar.")), "Comments is open only for a true");
   });
 
   it("puts its layer away and the window's buttons back when the viewer closes", async () => {
-    const { viewer, log, advance } = await playing();
-    advance(BAR_SHOWN_MS);
-    advance(BAR_FADE_MS);
+    const { viewer, log } = await playing();
+    viewer.fullScreen(true);
     log.length = 0;
     viewer.control(PlayControl.Exit);
     assert.deepEqual(log.slice(-2), ["buttons shown", "game.close"]);
@@ -849,5 +824,78 @@ describe("Play addresses", () => {
     gate("https://a.example/3");
     gate("http://a.example/4");
     assert.deepEqual(opened, ["https://a.example/1", "https://a.example/3"]);
+  });
+});
+
+describe("Play viewer: a web game's native app", () => {
+  const offer = (kind: PlayBarNative["offer"], percent = 0): PlayBarNative => ({
+    offer: kind,
+    platform: NativePlatform.Mac,
+    bytes: 1_400,
+    percent,
+  });
+
+  /** A viewer whose game has a native app offered as `current` says, every press recorded. */
+  function nativeRig(start: PlayBarNative | null) {
+    let current = start;
+    const presses: string[] = [];
+    const made = rig({
+      nativeApp: {
+        offer: async () => current,
+        press: async (slug) => {
+          presses.push(slug);
+        },
+      },
+    });
+    return { ...made, presses, set: (next: PlayBarNative | null) => (current = next) };
+  }
+
+  it("shows the app's pill once it is read, and follows an install as it goes", async () => {
+    const { viewer, bar, set } = nativeRig(offer(NativeAppOffer.Install));
+    viewer.open("skate", "SKATE");
+    await settle();
+    assert.deepEqual(bar()?.nativeApp, offer(NativeAppOffer.Install));
+    set(offer(NativeAppOffer.Installing, 38));
+    viewer.nativeChanged();
+    await settle();
+    assert.deepEqual(bar()?.nativeApp, offer(NativeAppOffer.Installing, 38));
+  });
+
+  it("installs from the pill while the web game keeps playing, and does nothing while it installs", async () => {
+    const { viewer, presses, events, set } = nativeRig(offer(NativeAppOffer.Install));
+    viewer.open("skate", "SKATE");
+    await settle();
+    viewer.control(PlayControl.NativeApp);
+    await settle();
+    assert.deepEqual(presses, ["skate"]);
+    assert.ok(!events.some((event) => event.phase === PlayViewerPhase.Closed), "the web game stays");
+    set(offer(NativeAppOffer.Installing, 10));
+    viewer.nativeChanged();
+    await settle();
+    viewer.control(PlayControl.NativeApp);
+    await settle();
+    assert.deepEqual(presses, ["skate"]);
+  });
+
+  it("plays the installed app in its own window: the viewer gives way first", async () => {
+    const { viewer, presses, events } = nativeRig(offer(NativeAppOffer.Ready));
+    viewer.open("skate", "SKATE");
+    await settle();
+    viewer.control(PlayControl.NativeApp);
+    await settle();
+    assert.equal(events.at(-1)?.phase, PlayViewerPhase.Closed);
+    assert.deepEqual(presses, ["skate"]);
+  });
+
+  it("offers no pill for a game with no app here, nor where Genex plays no native game", async () => {
+    const none = nativeRig(null);
+    none.viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    assert.equal(none.bar()?.nativeApp, null);
+    const plain = rig();
+    plain.viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    plain.viewer.control(PlayControl.NativeApp);
+    assert.equal(plain.bar()?.nativeApp, null);
   });
 });

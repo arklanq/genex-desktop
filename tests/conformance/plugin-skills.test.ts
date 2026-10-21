@@ -200,6 +200,13 @@ test("a Genex host tool on API 2 is refused", () => {
   assert.throws(() => validateManifest(raw), /host/);
 });
 
+test("every bundled plugin's manifest is valid, so a profile installs and updates it", async () => {
+  for (const name of await readdir("src/plugins")) {
+    const raw = JSON.parse(await readFile(path.join("src/plugins", name, "plugin.json"), "utf8"));
+    assert.doesNotThrow(() => validateManifest(raw), name);
+  }
+});
+
 test("a valid file skill and the bundled Genex host tools keep their canonical form", async () => {
   await withPackage(
     (_d, m) => {

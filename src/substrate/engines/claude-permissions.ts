@@ -32,6 +32,7 @@ import {
   RuleScope,
   WHOLE_TOOL_RULES,
 } from "../../shared/permissions.ts";
+import { stripTerminalCodes } from "../../shared/terminal.ts";
 import { isInside } from "../paths.ts";
 import {
   type NeverTouchHit,
@@ -163,10 +164,6 @@ const GLOB_CHARACTERS = /[[\]()|+^$*]/g;
 export function unspellable(name: string): boolean {
   return name.includes("?") || /[*\s]$/.test(name);
 }
-/** Terminal colour and cursor codes Claude Code leaves in a decision reason. */
-// biome-ignore lint/suspicious/noControlCharactersInRegex: matching terminal escapes is the point: they are removed.
-const ANSI_ESCAPES = /\u001b\[[0-?]*[ -/]*[@-~]|\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u001b[@-Z\\-_]/g;
-
 /** A host callback reports; it never ends the session it reports on. */
 export function quietly(call: () => void): void {
   try {
@@ -690,7 +687,7 @@ function answerResult(
 
 /** The optional words of Claude Code's question, without the ones it left out. */
 function askWords(options: Parameters<CanUseTool>[2]): Record<string, string> {
-  const reason = options.decisionReason?.replace(ANSI_ESCAPES, "").trim();
+  const reason = options.decisionReason && stripTerminalCodes(options.decisionReason).trim();
   const words: Record<string, string | undefined> = {
     title: options.title,
     displayName: options.displayName,

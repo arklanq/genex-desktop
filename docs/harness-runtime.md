@@ -531,11 +531,13 @@ Every Loop's close that is neither a yes nor a pause writes `run_finished.stillT
 the last no's `done` and `notDone`, why it stopped (`StopWhy`: its time, the no's, another end) and
 its hours (`loopHoursOf`); a time-out with no no lists nothing and still has the card. The chat's card
 reads only that, so a page that lost the run's start still shows it. A Stop pauses every Loop (a web
-finish then closing too), and a pause keeps its own reason and Resume. Keep building is offered on the
+finish whose landing it refused too; one after the landing ends nothing more), and a pause keeps its
+own reason and Resume. Keep building is offered on the
 chat's newest card until the person writes again, and on Builds' newest ended build, while nothing runs
 or waits paused. It sends through the composer's Loop (`loopOn`) marked `keepBuilding`, and goes once
-it went out. That mark reopens the finished build, or starts the next Loop on the last goal and what is
-left, with no turn deciding (chat-dispatch.ts `keepBuildingNow`). Yes ends the Loop, no
+it went out. That mark reopens the finished build, or launches the next Loop as the launch tool would (an
+Autopilot run on the base goal plus what is left, its reference, ∞ under `MAX_RUN_HOURS`), with no
+turn deciding (chat-dispatch.ts `keepBuildingNow`); a tap always takes a turn of its own. Yes ends the Loop, no
 goes back to the lead with both, and `MAX_FINISH_REJECTIONS` (3) no's in a row stop it, a timed Loop
 only once little time is left; after a row it went on past, a claim whose proof names no file made
 since the last no is turned back before any review (`freshProofIn`), and nothing is recorded. An answer

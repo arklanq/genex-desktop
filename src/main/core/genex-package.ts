@@ -18,6 +18,9 @@ import { detectProjectShape, TEMPLATE_SHAPE } from "../../substrate/project-shap
 import { git } from "../../substrate/snapshots.ts";
 import { GENEX_CLI_PROMPT } from "./genex-cli-prompts.ts";
 
+/** A Godot game's project, where the Godot plugin makes it (`godot/`): it takes Genex's multiplayer itself. */
+const GODOT_PROJECT = "godot/project.godot";
+
 const WORKTREE_LINE = "worktree ";
 
 /** What an install needs from Studio. */
@@ -128,8 +131,9 @@ export class GenexPackageService {
     const manifest = await stat(path.join(dir, "package.json")).catch(() => null);
     if (manifest?.isFile()) return { dir };
     const templatePage = await templatePageOf(dir);
-    if (!templatePage) throw new Error(GENEX_CLI_PROMPT.NoPackageJson);
-    return { dir, templatePage };
+    if (templatePage) return { dir, templatePage };
+    const godot = await lstat(path.join(dir, GODOT_PROJECT)).catch(() => null);
+    throw new Error(godot?.isFile() ? GENEX_CLI_PROMPT.GodotGame : GENEX_CLI_PROMPT.NoPackageJson);
   }
 
   /** The binding's folder by real path: the game's own, or a worktree of it under Studio's scratch. */

@@ -11,7 +11,12 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { describe, it } from "node:test";
 import { GodotTool } from "../../src/plugins/godot/backend.ts";
-import { isEditorOf } from "../../src/plugins/godot/editor.ts";
+import {
+  GODOT_DOWNLOAD_URL,
+  GODOT_WINDOWS_DOWNLOAD_URL,
+  getGodotLaunch,
+  isEditorOf,
+} from "../../src/plugins/godot/editor.ts";
 import { GodotJob } from "../../src/plugins/godot/godot-run.ts";
 import type { PluginManifest } from "../../src/shared/plugins.ts";
 import { HookEvent } from "../../src/shared/plugin-hooks.ts";
@@ -393,6 +398,34 @@ describe("the panel and the toolbar", () => {
       fixture.hostCalls.map((c) => [c.method, c.args]),
       [["game.create", { title: "Orbit" }]],
     );
+  });
+
+  it("tells the panel whether this computer is a Mac, the only one Genex builds Godot games on", async () => {
+    assert.equal((await action(await godotBackendFixture(), "status")).mac, true);
+    assert.equal((await action(await godotBackendFixture({ platform: "win32" }), "status")).mac, false);
+  });
+
+  it("sends Get Godot on Windows to Godot's Windows page", async () => {
+    const fixture = await godotBackendFixture({ platform: "win32" });
+    await action(fixture, "get-godot");
+    const [opened] = fixture.editor.opened;
+    assert.equal(opened?.command.endsWith("explorer.exe"), true, opened?.command);
+    assert.deepEqual(opened?.args, [GODOT_WINDOWS_DOWNLOAD_URL]);
+  });
+
+  it("opens Godot's Windows download page with Windows's own explorer, never macOS's open", () => {
+    assert.deepEqual(getGodotLaunch("win32", { SystemRoot: "D:\\Win" }), {
+      command: "D:\\Win\\explorer.exe",
+      args: [GODOT_WINDOWS_DOWNLOAD_URL],
+      detached: true,
+    });
+    for (const env of [{}, { SystemRoot: "Windows" }])
+      assert.equal(getGodotLaunch("win32", env).command, "C:\\Windows\\explorer.exe");
+    assert.deepEqual(getGodotLaunch("darwin", {}), {
+      command: "/usr/bin/open",
+      args: [GODOT_DOWNLOAD_URL],
+      detached: false,
+    });
   });
 
   it("knows a Godot editor by its project, never a headless job of Genex's or another project", () => {

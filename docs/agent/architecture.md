@@ -123,7 +123,8 @@ scope: Codex's cover pre-existing files, never directories; the Claude hook matc
 ### Residual risks
 
 - **A Codex contractor can read the whole disk.** `codex exec` runs under Codex's own sandbox
-  (`workspace-write`, one writable root, no network), which restricts writes but not reads, and
+  (`workspace-write`, one writable root, no network; on Windows unelevated, plus the
+  bridge's `req/`), which restricts writes but not reads, and
   Studio does not wrap the CLI in `ProcessSandbox`. The studio's secrets, both CLIs' sign-in homes
   and sibling games are named off limits in the brief only; the Claude path enforces the same list
   as `Read()` deny rules, and `ProcessSandbox` enforces it for the harness and Bonsai. A
@@ -416,8 +417,8 @@ login output removes auth URLs, credential patterns and terminal string controls
 
 **Embedded terminal.** [`src/main/terminal-service.ts`](../../src/main/terminal-service.ts) owns at
 most four sessions, each node-pty in its own utility process; xterm.js loads lazily. Project shells
-resolve cwd from the library, use the account shell and login PATH (on Windows Git Bash, else
-PowerShell: [`src/main/terminal-shell.ts`](../../src/main/terminal-shell.ts)) and run with the user's
+resolve cwd from the library, use the account shell and login PATH (on Windows Git Bash, installed or
+Genex's own, else PowerShell: [`src/main/terminal-shell.ts`](../../src/main/terminal-shell.ts)) and run with the user's
 normal permissions. Games, plugins and the harness get no terminal API. A command a game reply offers
 runs only when the user presses Run: `studio:terminal.run` takes one command line (`runnableCommand`)
 as a `command` session (`commandShell`: the shell's `-c`, or PowerShell's `-Command`) in the game
@@ -644,10 +645,10 @@ rewinding ([conversation lifecycle](../conversation-coordinator.md#sending-and-r
 notes are `docs/notes/NOTES.<facet>.md`.
 `.studio/` is gitignored; on the long turn the studio copies `.studio/DIRECTOR.md` to run and thread
 artifacts and restores it on resume, clamped to `MAX_DIRECTOR_MEMORY`. Adoption writes a real `.gitignore` before
-`git init`. Snapshot commits land on the user's checked-out branch with hooks disabled and are
-refused during a merge, rebase, cherry-pick or revert. `SnapshotEngine.restore` runs every check
-before any reset and refuses (`branch-changed`, `history-changed`, `operation-in-progress`,
-`rescue-failed`) leaving the folder untouched; the mandatory rescue snapshot is named on
+`git init`. `checkOutNewRepo` fast-imports the installed seed as the first harness repository; `ensureRepo` finishes an interrupted first commit. Snapshots commit to the checked-out branch, hooks off, never during a merge,
+rebase, cherry-pick or revert. `SnapshotEngine.restore` checks everything before any reset and
+refuses (`branch-changed`, `history-changed`, `operation-in-progress`, `rescue-failed`), folder
+untouched; the mandatory rescue snapshot is named on
 `workspace_restored`. Every loop shell command is built in `loop/git.ts`; model text goes through
 `shellQuote` and a commit reaches a command line only when `isCommit`.
 
@@ -1098,22 +1099,23 @@ managed local runtime; core has no Blender tool of its own.
   `OllamaEngine` pointed at a scripted host.
 - **Log and crash dumps.** Main keeps `<userData>/logs/studio.log`
   ([`src/main/logs.ts`](../../src/main/logs.ts)): rotated at 5 files of 5 MB, mode 0600, never
-  throws, and every line passes `scrubForLog` (`redactSecrets`, email addresses as `[email]`, the
-  home folder as `~` only as a whole path segment). It receives harness and core stderr, main errors
-  (`appendErrorDurably`, startup failures, uncaught errors), renderer console errors,
-  render-process-gone decisions and quit-step problems. `crashReporter` runs local-only
+  throws, and every line passes `scrubForLog` (`redactSecrets`, emails as `[email]`, the home
+  folder as `~`). It receives harness and core stderr, main errors
+  (`appendErrorDurably`, startup and uncaught), renderer console errors, render-process-gone
+  decisions and quit-step problems. `crashReporter` runs local-only
   (`uploadToServer: false`) with dumps in `<userData>/Crashpad`. Persisted writes stay immediate;
-  renderer harness-log messages coalesce for 50 ms (at most 65,536 characters) and flush before
+  renderer harness-log messages coalesce for 50 ms (at most 65,536 characters), flushed before
   other UI events or shutdown. Diagnostics read only a bounded log suffix.
 - **Lifecycle rules.** [`src/main/app-lifecycle.ts`](../../src/main/app-lifecycle.ts) holds the
-  Electron-free rules: process handlers log uncaught exceptions and rejections without exiting; the
-  reload policy reloads a crashed renderer at most twice in 60 s and never after a `clean-exit`;
+  Electron-free rules: process handlers log uncaught errors and rejections, never exiting; the
+  reload policy reloads a crashed renderer at most twice in 60 s, never after a `clean-exit`;
   `pageRecovery` notes each reload in the Studio chat and past the budget asks Reload/Quit (fixture
-  and smoke sessions leave the page dead). The Dock, a second launch or Keep running revive a dead
-  page; pushes skip it. `runShutdown` runs quit steps in order, each bounded (`shutdownSteps`), logs
-  a failed or hung step and moves on.
+  and smoke sessions leave the page dead). The Dock, a relaunch or Keep running revive a dead
+  page; pushes skip it. Mid-run, close hides the window on a Mac and asks to quit
+  elsewhere (`windowClose`). `runShutdown` runs quit steps in order, each bounded (`shutdownSteps`),
+  logging and passing a failed or hung one.
   `before-quit` calls `app.exit(0)` in a `finally`. `StudioCore.stop` stops the harness, then every
-  agent job, and logs a plugin lease release that fails instead of skipping what follows it.
+  agent job, and logs a failed plugin lease release, skipping nothing after it.
 - **Diagnostics.** [`src/main/diagnostics.ts`](../../src/main/diagnostics.ts) builds the redacted
   Settings → Harness → Copy diagnostics text (versions, OS, data and log paths, provider and CLI
   status, the last 100 log lines) served on `studio:diagnostics` (fixture-safe). The renderer's

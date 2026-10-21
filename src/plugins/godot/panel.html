@@ -158,10 +158,10 @@ svg{flex:none;fill:none;stroke:currentColor;stroke-linecap:round;stroke-linejoin
   <section id="get" hidden aria-labelledby="get-title">
     <div class="intro" data-panel-head><h2 id="get-title" class="title" tabindex="-1">Get Godot</h2><p id="get-why" class="quiet"></p></div>
     <div class="block">
-      <div class="pad"><p>Download Godot 4 from godotengine.org, then put Godot in Applications. It's free and open source, about 150 MB.</p></div>
+      <div class="pad"><p id="get-how">Download Godot 4 from godotengine.org, then put Godot in Applications. It's free and open source, about 150 MB.</p></div>
       <div class="foot"><button type="button" id="get-godot" class="primary external">Get Godot</button><button type="button" id="recheck">Check again</button></div>
     </div>
-    <p class="waiting"><span class="orb" aria-hidden="true"></span>Waiting for Godot in Applications. This page moves on by itself.</p>
+    <p id="get-waiting" class="waiting"><span class="orb" aria-hidden="true"></span>Waiting for Godot in Applications. This page moves on by itself.</p>
   </section>
 
   <section id="pick" hidden aria-labelledby="pick-title">
@@ -265,6 +265,9 @@ const Action = {
 const Tone = { Ok: "ok", Unset: "unset", Quiet: "" };
 const WORDS = {
   getWhy: "Genex builds Godot games with Godot 4.3 or newer.",
+  getHow: "Download Godot 4 from godotengine.org, then put Godot in Applications. It's free and open source, about 150 MB.",
+  notMacWhy: "Genex builds Godot games on a Mac only for now.",
+  notMacHow: "You can still download Godot 4 from godotengine.org and use it on its own. It's free and open source.",
   older: (v) => `This Mac has Godot ${v}. Genex builds with Godot 4.3 or newer in the 4 line: get a current Godot 4 and put it in Applications beside yours.`,
   notSetUp: "Not set up",
   notOpen: "Not open",
@@ -321,8 +324,18 @@ function show(id) {
   for (const section of ["checking", View.Get, View.Pick, View.New, View.Project]) $(section).hidden = section !== id;
 }
 
+/** Why Get Godot shows: the Godot Genex needs on a Mac; elsewhere, that Genex builds Godot games on a Mac only. */
+function getWhy(s) {
+  if (s.mac === false) return WORDS.notMacWhy;
+  return s.version ? WORDS.older(s.version) : WORDS.getWhy;
+}
+
+/** Get Godot: where to put Godot on a Mac, and the wait for it; elsewhere nothing to wait for. */
 function renderGet(s) {
-  setText($("get-why"), s.version ? WORDS.older(s.version) : WORDS.getWhy);
+  const mac = s.mac !== false;
+  setText($("get-why"), getWhy(s));
+  setText($("get-how"), mac ? WORDS.getHow : WORDS.notMacHow);
+  $("get-waiting").hidden = !mac;
 }
 
 /** A project's tag: In use, Outside game, or none. */

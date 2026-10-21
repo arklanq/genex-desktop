@@ -3,10 +3,8 @@ import assert from "node:assert/strict";
 import {
   canAskCover,
   clock,
-  COVER_MAKING_MS,
   coverCardPublish,
   coverChoices,
-  coverMaking,
   flipCover,
   GenexSetup,
   genexSetup,
@@ -461,17 +459,6 @@ test("the banner's arrows flip through the recent frames, wrapping round", () =>
   assert.equal(flipCover(coverChoices(cover({ shot: a })), 1), null, "a plugin older than candidates");
   assert.deepEqual(coverChoices(cover({ shot: a, candidates: [c, b] })).index, -1, "a kept shot no longer listed");
   assert.equal(flipCover(coverChoices(cover({ shot: a, candidates: [c, b] })), 1), b.sha256);
-});
-
-test("the banner says a new cover is on its way until a new frame arrives, and not forever", () => {
-  const at = 1_000_000;
-  const ask = { from: "a".repeat(64), at };
-  assert.equal(coverMaking(null, ask.from, at), false, "nothing asked");
-  assert.equal(coverMaking(ask, ask.from, at + 1000), true, "asked, the same frame still kept");
-  assert.equal(coverMaking(ask, "b".repeat(64), at + 1000), false, "a new frame arrived");
-  assert.equal(coverMaking(ask, ask.from, at + COVER_MAKING_MS), false, "given up after a while");
-  assert.equal(coverMaking({ from: null, at }, null, at), true, "asked with no frame yet");
-  assert.equal(coverMaking({ from: null, at }, "c".repeat(64), at), false, "the first frame arrived");
 });
 
 test("the chat's cover card leaves Publish out once Genex has answered for the kept frame", () => {

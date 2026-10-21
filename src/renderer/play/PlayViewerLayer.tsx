@@ -1,9 +1,9 @@
 /**
- * Play's game viewer in the app: across the whole window, while the game's page loads, its cover
- * developing as an ordered dither (`dither.ts`) under its title and a thin dot rail; when it cannot
- * load, what went wrong (offline, or the page itself) with Try again and Back to Play.
- * The game itself is a native view main lays over all of it once it has loaded, and the bar lies
- * over its top edge in a layer of its own (`PlayBarPage.tsx`).
+ * Play's game viewer in the app: in the game's place below the bar, while the game's page loads, its
+ * cover developing as an ordered dither (`dither.ts`) under its title and a thin dot rail; when it
+ * cannot load, what went wrong (offline, or the page itself) with Try again and Back to Play.
+ * The game itself is a native view main lays over that place once it has loaded, and the bar is a
+ * strip above it in a layer of its own (`PlayBarPage.tsx`).
  */
 import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";

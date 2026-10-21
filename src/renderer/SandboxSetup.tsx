@@ -6,16 +6,18 @@
  * Genex" over the installer's animation while Windows asks for approval, then the studio.
  * The same card says which step a Windows start is on ("Starting Genex"), and that the studio
  * would not start ("Genex couldn't start") with Try again, a report and Quit.
+ * Each of them offers a new version downloaded meanwhile (`BootUpdate`): it may fix what stopped the start.
  * `BootRoot` chooses between these, the studio itself, and nothing while main has not answered yet.
  */
 import { type JSX, type ReactNode, useState } from "react";
+import { type ReadyUpdate, UpdateAction } from "../shared/app-update.ts";
 import { type InstallCommand, type SandboxProblem, StartStep, toolPackage, WindowsSetupNeed } from "../shared/boot.ts";
 import { App } from "./App.tsx";
 import { useAppLoaderDismissal } from "./app-loader.ts";
 import { type Boot, BootView, bootView, canSetUp, SetupReport } from "./state/boot.ts";
 import { useBoot } from "./state/hooks.ts";
 import { Button } from "./ui/Button.tsx";
-import { SANDBOX_SETUP_WORDS as WORDS } from "./words.ts";
+import { UPDATE_WORDS, SANDBOX_SETUP_WORDS as WORDS } from "./words.ts";
 
 /** The studio, the setup screen, or nothing until main says which. */
 export function BootRoot({ boot }: { boot: Boot }): JSX.Element | null {
@@ -27,12 +29,14 @@ export function BootRoot({ boot }: { boot: Boot }): JSX.Element | null {
   const settingUp = useBoot(boot.store, (s) => s.settingUp);
   const report = useBoot(boot.store, (s) => s.report);
   const step = useBoot(boot.store, (s) => s.step);
+  const update = useBoot(boot.store, (s) => s.update);
+  const onUpdate = (): void => void boot.restartToUpdate();
   // The studio dismisses the startup loader once its own first screen is drawn; the others are drawn now.
   useAppLoaderDismissal(view !== BootView.Studio && view !== BootView.Loading);
   if (view === BootView.Studio) return <App />;
   // Try again starts the studio again: the card says so until it opens, or fails again.
   if (view === BootView.Starting || (view === BootView.Failed && retrying))
-    return <StartingCard step={step ?? StartStep.Studio} />;
+    return <StartingCard step={step ?? StartStep.Studio} update={update} onUpdate={onUpdate} />;
   if (view === BootView.Failed) {
     return (
       <StartFailed
@@ -41,6 +45,8 @@ export function BootRoot({ boot }: { boot: Boot }): JSX.Element | null {
         onRetry={() => void boot.retry()}
         onReport={() => void boot.report()}
         onQuit={() => void boot.quit()}
+        update={update}
+        onUpdate={onUpdate}
       />
     );
   }
@@ -54,10 +60,21 @@ export function BootRoot({ boot }: { boot: Boot }): JSX.Element | null {
         report={report}
         onSetUp={() => void boot.setUp()}
         onReport={() => void boot.report()}
+        update={update}
+        onUpdate={onUpdate}
       />
     );
   }
-  return <SandboxSetup problem={problem} retrying={retrying} error={error} onRetry={() => void boot.retry()} />;
+  return (
+    <SandboxSetup
+      problem={problem}
+      retrying={retrying}
+      error={error}
+      onRetry={() => void boot.retry()}
+      update={update}
+      onUpdate={onUpdate}
+    />
+  );
 }
 
 /** What the Windows card says: working through Set up, waiting for an OK it did not get, or failed. */
@@ -125,12 +142,36 @@ function WorkingLine({ text }: { text: string }): JSX.Element {
   );
 }
 
+/** A new version downloaded before the studio opened, and the press that installs it. */
+interface UpdateOffer {
+  update: ReadyUpdate | null;
+  onUpdate: () => void;
+}
+
+/**
+ * The new version, when one waits: a line saying it may fix this, and the sidebar's own Relaunch
+ * to update (or, on Linux, its Download).
+ */
+function BootUpdate({ update, onUpdate }: UpdateOffer): JSX.Element | null {
+  if (!update) return null;
+  const label = update.action === UpdateAction.Download ? UPDATE_WORDS.download(update.version) : UPDATE_WORDS.restart;
+  return (
+    <div data-boot-update={update.action} className="flex flex-wrap items-center gap-2 pt-2">
+      <p className="text-ink-2">{WORDS.update.ready(update.version)}</p>
+      <Button variant="default" onClick={onUpdate}>
+        {label}
+      </Button>
+    </div>
+  );
+}
+
 /** A Windows start before its studio opens: "Starting Genex" and the step it is on. */
-export function StartingCard({ step }: { step: StartStep }): JSX.Element {
+export function StartingCard({ step, update, onUpdate }: { step: StartStep } & UpdateOffer): JSX.Element {
   return (
     <AnimationCard selector={{ "data-boot-starting": step }} titleId="boot-starting-title" title={WORDS.starting.title}>
       <p className="text-ink-2">{WORDS.starting.line}</p>
       <WorkingLine text={WORDS.starting.step[step]} />
+      <BootUpdate update={update} onUpdate={onUpdate} />
     </AnimationCard>
   );
 }
@@ -142,17 +183,20 @@ export function StartFailed({
   onRetry,
   onReport,
   onQuit,
+  update,
+  onUpdate,
 }: {
   error: string | null;
   report: SetupReport;
   onRetry: () => void;
   onReport: () => void;
   onQuit: () => void;
-}): JSX.Element {
+} & UpdateOffer): JSX.Element {
   const words = WORDS.startFailed;
   return (
     <AnimationCard selector={{ "data-boot-failed": "" }} titleId="boot-failed-title" title={words.title}>
       <p className="text-orange">{words.line}</p>
+      <BootUpdate update={update} onUpdate={onUpdate} />
       <div className="flex flex-wrap items-center gap-2 pt-2">
         <Button variant="default" data-boot-try-again onClick={onRetry}>
           {words.tryAgain}
@@ -186,6 +230,8 @@ export function WindowsSetup({
   report,
   onSetUp,
   onReport,
+  update,
+  onUpdate,
 }: {
   problem: SandboxProblem;
   settingUp: boolean;
@@ -193,7 +239,7 @@ export function WindowsSetup({
   report: SetupReport;
   onSetUp: () => void;
   onReport: () => void;
-}): JSX.Element {
+} & UpdateOffer): JSX.Element {
   const step = windowsStep(settingUp, error);
   const words = WINDOWS_CARD[step];
   return (
@@ -204,6 +250,7 @@ export function WindowsSetup({
     >
       <p className={step === WindowsStep.Failed ? "text-orange" : "text-ink-2"}>{words.line}</p>
       {problem.windowsNeeds?.includes(WindowsSetupNeed.LogonService) && <LogonServiceLine step={step} />}
+      <BootUpdate update={update} onUpdate={onUpdate} />
       {step === WindowsStep.SettingUp && <WorkingLine text={WORDS.windows.settingUp.step} />}
       {step === WindowsStep.NeedsOk && (
         <div className="pt-2">
@@ -341,12 +388,14 @@ export function SandboxSetup({
   retrying,
   error,
   onRetry,
+  update,
+  onUpdate,
 }: {
   problem: SandboxProblem;
   retrying: boolean;
   error: string | null;
   onRetry: () => void;
-}): JSX.Element {
+} & UpdateOffer): JSX.Element {
   return (
     <div data-sandbox-setup={problem.code} className="relative flex h-full overflow-auto bg-canvas">
       {/* The window has no title bar of its own: the top strip moves it, as the headers do. */}
@@ -360,6 +409,7 @@ export function SandboxSetup({
         </h1>
         <p className="text-ink-2">{WORDS.intro}</p>
         <p className="text-ink-2">{WORDS.why[problem.code]}</p>
+        <BootUpdate update={update} onUpdate={onUpdate} />
         {problem.missingTools.length > 0 && (
           <ul className="flex flex-wrap gap-2 font-mono text-sm text-ink">
             {problem.missingTools.map((tool) => (

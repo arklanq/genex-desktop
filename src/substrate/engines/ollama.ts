@@ -57,6 +57,14 @@ const DEFAULT_CONTEXT_TOKENS = 8192;
 const MAX_REPLY_TOKENS = 32_768;
 /** The status Ollama answers for a model it does not have. */
 const HTTP_NOT_FOUND = 404;
+/**
+ * How many times one completion is sent while the model keeps writing a tool call Ollama cannot
+ * parse. The model's output is sampled, so another try often comes back well formed; a model that
+ * fails three times in a row is not going to manage it on this prompt.
+ */
+const TOOL_CALL_ATTEMPTS = 3;
+/** Ollama's words (a 500) for a model that wrote prose where its template expected a tool call. */
+const TOOL_CALL_PARSE_FAILURE = /error parsing tool call/i;
 /** How long `ensureRunning` waits for a started server, and how often it asks. */
 const SIDECAR_START_TIMEOUT_MS = 15 * SECOND_MS;
 const SIDECAR_POLL_MS = 400;
@@ -76,6 +84,8 @@ const MESSAGE = {
   ModelMissing: (model: string) =>
     `the model ${model} is not installed in Ollama — pull it from the Models tab or pick another`,
   NotInstalled: (model: string) => `${model || "This model"} is not installed in Ollama.`,
+  MalformedToolCall: (model: string) =>
+    `${model || "the local model"} wrote plain text where a tool call belonged, ${TOOL_CALL_ATTEMPTS} times in a row, so Ollama could not read it as a tool call. Ollama itself is running fine. Send the message again, or pick a model with stronger tool calling in the Models tab.`,
 } as const;
 
 /** A reply may use a quarter of its context, never more than the cap. */
@@ -252,6 +262,14 @@ function translateStreamFailure(
   );
 }
 
+/** The pi-ai provider and model a completion runs on, and what the model reports it can do. */
+interface OllamaProvider {
+  models: never;
+  model: never;
+  thinking: boolean;
+  tools: boolean;
+}
+
 /** What a failed completion had asked for. */
 interface StreamAttempt {
   model: string;
@@ -267,10 +285,21 @@ function cutConnection(engineId: string, message: string): EngineError {
   return failure;
 }
 
-/** An HTTP failure; a 404 is Ollama saying it does not have the model. */
+/** Failures that are the model's malformed tool call: the completion is sent again. */
+const MALFORMED_TOOL_CALLS = new WeakSet<EngineError>();
+
+/**
+ * An HTTP failure; a 404 is Ollama saying it does not have the model, and a tool call it could
+ * not parse is the model's output, not the server failing, whatever status it came back with.
+ */
 function httpFailure(engineId: string, status: number, body: string, model: string): EngineError {
   if (status === HTTP_NOT_FOUND && model)
     return new EngineError(EngineFailureKind.Unavailable, engineId, MESSAGE.ModelMissing(model));
+  if (TOOL_CALL_PARSE_FAILURE.test(body)) {
+    const failure = new EngineError(EngineFailureKind.Other, engineId, MESSAGE.MalformedToolCall(model));
+    MALFORMED_TOOL_CALLS.add(failure);
+    return failure;
+  }
   return classifyHttpFailure(engineId, status, body);
 }
 
@@ -378,7 +407,7 @@ export class OllamaEngine implements Engine {
   }
 
   /** Lazily build pi-ai's provider around this host. */
-  async #ensureProvider(modelId: string): Promise<{ models: never; model: never; thinking: boolean; tools: boolean }> {
+  async #ensureProvider(modelId: string): Promise<OllamaProvider> {
     const { createModels, createProvider } = await import("@earendil-works/pi-ai");
     const { openAICompletionsApi } = await import("@earendil-works/pi-ai/api/openai-completions.lazy");
 
@@ -446,14 +475,32 @@ export class OllamaEngine implements Engine {
     if (!modelId) {
       throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.NoModel);
     }
-    const { models, model, thinking, tools } = await this.#ensureProvider(modelId);
+    const provider = await this.#ensureProvider(modelId);
+    const { model, tools } = provider;
     if (request.tools?.length && !tools) {
       throw new EngineError(EngineFailureKind.Unavailable, this.id, MESSAGE.NoTools);
     }
     this.#checkVision(request, model);
     const context = piContext(request);
     const attempt: StreamAttempt = { model: modelId };
+    for (let tries = 1; ; tries++) {
+      try {
+        return await this.#completeOnce(request, provider, context, attempt);
+      } catch (err) {
+        const malformed = err instanceof EngineError && MALFORMED_TOOL_CALLS.has(err);
+        if (!malformed || tries >= TOOL_CALL_ATTEMPTS || request.signal?.aborted) throw err;
+      }
+    }
+  }
 
+  /** One completion request, its failure as an engine error the run policy can act on. */
+  async #completeOnce(
+    request: CompleteRequest,
+    { models, model, thinking }: OllamaProvider,
+    context: ReturnType<typeof piContext>,
+    attempt: StreamAttempt,
+  ): Promise<CompleteResponse> {
+    const modelId = attempt.model;
     try {
       const stream = (models as unknown as { stream: PiStreamFn }).stream(model, context, {
         fetch: longHaulFetch(request.signal),

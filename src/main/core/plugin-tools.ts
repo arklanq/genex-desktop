@@ -1050,7 +1050,7 @@ export class PluginToolService {
     // The manifest validator reserves `host-cli` for the id `genex`; an id is not a provenance, so
     // the code that actually starts it asks where the package came from as well.
     if (server.command !== "node" && source !== PluginSourceKind.Bundled) throw new Error(MESSAGE.bundledOnly);
-    const args = await pluginMcpArgs(server, launch.packageDir);
+    const args = await pluginMcpArgs(server, launch.packageDir, launch.seed);
     return {
       id: server.id,
       name: `${pluginName} · ${server.id}`,
@@ -1421,27 +1421,37 @@ export const requireFromHere = createRequire(import.meta.url);
  * How a plugin MCP server starts: a `node` server runs the package's own script (resolved through
  * the containment check an install uses), `host-cli` runs Studio's Genex CLI behind its preload.
  */
-async function pluginMcpArgs(server: PluginMcpServer, packageDir: string): Promise<string[]> {
+async function pluginMcpArgs(server: PluginMcpServer, packageDir: string, seed?: string): Promise<string[]> {
   if (server.command === "node") {
     const [script = "", ...rest] = server.args;
     return [await containedReal(packageDir, script), ...rest];
   }
   // A file URL: on Windows Node reads a bare `C:\…` after --import as a URL with the scheme `c:`.
   const preload = pathToFileURL(await containedReal(packageDir, "preload.mjs")).href;
-  return ["--import", preload, genexCliPath(packageDir), ...server.args];
+  return ["--import", preload, genexCliPath(packageDir, seed), ...server.args];
 }
 
 /**
- * The Genex CLI, resolved the way the asset adapter resolves it: the plugin's own copy when the
- * package ships one, Studio's otherwise, and rewritten out of the asar either way — a packaged
- * app cannot spawn a file that only exists inside the archive.
+ * The Genex CLI, resolved the way the asset adapter resolves it: its bundled seed's in the app
+ * (`seed`: a first launch no longer copies it, and the app's pin outranks an older profile's
+ * copy), then the plugin's own copy, then Studio's, and rewritten out of the asar either way — a
+ * packaged app cannot spawn a file that only exists inside the archive.
  */
-export function genexCliPath(packageDir: string): string {
-  let pkg: string;
-  try {
-    pkg = createRequire(path.join(packageDir, "package.json")).resolve("@genex-ai/cli-demo/package.json");
-  } catch {
-    pkg = requireFromHere.resolve("@genex-ai/cli-demo/package.json");
-  }
+export function genexCliPath(packageDir: string, seed?: string): string {
+  const pkg =
+    (seed ? resolveCliPackage(createRequire(path.join(seed, "package.json"))) : undefined) ??
+    resolveCliPackage(createRequire(path.join(packageDir, "package.json"))) ??
+    requireFromHere.resolve(CLI_PACKAGE_JSON);
   return path.join(path.dirname(pkg), "dist/index.js").replace(/app\.asar([\\/])/, "app.asar.unpacked$1");
+}
+
+const CLI_PACKAGE_JSON = "@genex-ai/cli-demo/package.json";
+
+/** Where `require` finds the CLI's package.json, or undefined when it finds none. */
+function resolveCliPackage(require: NodeJS.Require): string | undefined {
+  try {
+    return require.resolve(CLI_PACKAGE_JSON);
+  } catch {
+    return undefined;
+  }
 }

@@ -3,7 +3,7 @@
 ## What a folder holds
 
 A project is any folder, several kinds at once: web, Unreal game or plugin, Roblox, Godot, Unity,
-Blender assets or a plugin's kind. Facts suggest; the first message or the person decides. The
+Blender assets or a plugin's kind. Facts suggest; the first message or you decide. The
 sidebar names a non-game's kind (**Unreal plugin**, **Blender assets**).
 
 New game makes an empty folder; the first message picks its kind. A vague ask builds a web game;
@@ -12,11 +12,11 @@ the web files as reference.
 
 ## Plugins on or off
 
-Engine buttons show only on their games. Asked for an engine whose plugin is off, the chat shows its
+Engine buttons show only on their games. Asked for an engine whose plugin is off, chat shows its
 card (**Turn on Unity** or **Install…**; × hides it); your click turns it on, then the chat goes
 on. A missing engine gets a setup card. Told to, agents go on without: jobs, `app_look`, docs.
 
-A plugin from a folder on this Mac starts off and runs with your access. Each tool asks first;
+A plugin from a folder on this Mac starts off, runs with your access, and asks before each tool;
 Always allow lists it under **Runs without asking** until new code or turning it off; its steps at
 Genex's moments never ask.
 
@@ -32,19 +32,19 @@ game; Unreal and Godot projects outside it get no Loop or Rewind.
 
 The lead works in the open editor through Genex's helper, one holder at a time; while you play
 the chat reads “Waiting for you to finish in Unreal”. Rewind saves, closes and reopens Unreal.
-Agents and blind judges play it. Mac games skip hardware ray tracing. Agents set up projects they
-link; Undo reverts both. An **Unreal plugin** project
+Agents and blind judges play it. Mac games skip hardware ray tracing. Agents set up linked projects;
+Undo reverts both. An **Unreal plugin** project
 is a host project with the plugin in `Plugins/`; its tools build, test and package it.
 
 ## Godot, Roblox, Unity
 
-Godot 4.3+: its button gets Godot, makes a **New Godot game** (2D/3D, `godot/`) and opens your
-editor, which saves at save points, reloads after Rewind; **Change project** links one anywhere.
-Its `web/` build plays in Live.
+Godot 4.3+, Mac only (on Windows, Get Godot opens its download page): makes a **New Godot game**
+(2D/3D, `godot/`), opens your editor (saving at save points, reloading after Rewind); **Change
+project** links one. `web/` plays in Live; **Multiplayer** joins web, native.
 
 **Roblox Studio** sets up your Studio; **New Roblox game** writes a Baseplate place, **Use in this
 game** links one per game. Unity sets up and opens its project; agents add packages, build and
-play (keys and mouse need Input System).
+play (keys, mouse: Input System). Publish lists Web, Mac and Windows builds.
 
 ## Live's views
 

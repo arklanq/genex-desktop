@@ -66,7 +66,7 @@ export function useChatPanel(props: ChatPanelProps) {
     await sendAnswered(text, extras, preserveDraft);
   };
   useKeepBuilding(chat.threadId, sendAnswered, props.onNotice, composerRef);
-  useComposeInChat(chat.threadId, chat.project, composer.drafts, composerRef, submit);
+  useComposeInChat(chat.threadId, chat.project, composer.drafts, composerRef, sendAnswered);
   const report = useReport(props, chat, composer);
   useLaunchHandover(chat.threadId, loading, submit, composerRef);
   useCommandResults(chat.threadId ?? null, !chat.isStudioThread, report, props.onNotice);

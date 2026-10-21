@@ -691,7 +691,8 @@ testing <Part>: <signal> in <frame>", crash: {signal, frames}}` (the top eight f
 path or address; the frame named is the game module's first). The runner then calls `reopen-editor`
 (`editor-reopen.ts`): `{answering: true}` when Unreal answers, else `{started: true}` and a job that
 ends this project's leftover editor and crash reporter only (normal quit when it is the only editor,
-then `SIGTERM`, then `SIGKILL`; processes are listed on a Mac only), rebuilds the game's module with
+then `SIGTERM`, then `SIGKILL`; on Windows only the editors are listed, by WMI with their command
+lines, and each is ended with its process tree; the crash reporter is looked for on a Mac only), rebuilds the game's module with
 UnrealBuildTool (a hot reload leaves `UnrealEditor.modules` on a numbered library; a failed build
 fails the job with its errors) and opens the project, waiting up to 5 minutes. `editor-state`
 answers `{answering, running, reopening: {state: idle|reopening|done|failed, error?, seconds?},
@@ -1782,6 +1783,26 @@ Available services are capability checked and scoped to the calling plugin:
   on this computer: a desktop with its driver, and apps its `engine.apps` declares here (computer
   control that is off still counts, since its card offers to turn it on). It asks nothing and
   needs no bound game; offer Do it for me only when it answers true, and the click path otherwise.
+- `sandbox.run {program, args, reads, writes, scratchEnv?, env?, timeoutMs}` / `sandbox.result {id}` /
+  `sandbox.stop {id}` (capability `game-engine`, `substrate/plugins/sandbox-jobs.ts`): a long job of
+  the plugin's (Unreal's package on Windows) run in the studio's ProcessSandbox. `sandbox.run` checks
+  the request by real path (the program inside a folder it `reads`, no drive root or folder holding
+  the home folder read, each folder it `writes` a real folder strictly inside the bound game and
+  outside its hidden folders, no network share or device path, at most two running jobs per plugin,
+  a deadline from 1 s to `PLUGIN_SANDBOX_MAX_TIMEOUT_MS`, 60 minutes), starts it and answers `{id}`
+  at once; the host owns the job past the call, as `runtime.install` owns a download, and ends it
+  with its process tree at its deadline, on `sandbox.stop`, and when the plugin's backend stops, the
+  plugin is turned off or removed, or the studio stops. `sandbox.result` answers `running`, `exited`
+  (with `exitCode` and each output stream's last 4 MiB, where a log's verdict is), `timed-out`,
+  `stopped` or `failed` (an error code), or null for a job the host doesn't know (another plugin's
+  included). The writes go to ProcessSandbox as the run's confinement and `scratchEnv` names
+  variables set to folders in the job's own scratch. A `.bat` or `.cmd` program runs as `cmd.exe /d /v:off /s /c %GENEX_COMMAND_LINE%`:
+  Git Bash would quote a prepared line again, so the host builds the line (`quotedScriptLine`: the
+  file and every non-plain argument whole in double quotes, `-Name="value"`) and cmd.exe expands it;
+  a quote, `%`, `!`, a control character or a backslash ending a quoted argument is refused. On
+  Windows, srt-win grants writes for its whole session and refuses a per-command read grant, so the
+  confinement there is the request rather than a fence, and the engine is read with the sandbox
+  user's own rights ([Windows sandbox](windows-sandbox.md#residual-risks)).
 - `credentials.read/write/clear`: plugin-scoped protected storage. Reserved account actions
   `unlock`, `connect`, `disconnect` authorize these operations; agents cannot invoke actions.
   Cache unlocked credentials only in the backend session. Background status must never unlock.
@@ -1827,8 +1848,10 @@ run at its moments, their observers feed its finish check and their worker types
 `web` is `web-game` at the root. A game New game made lists `awaitingFirstBuild` until an answer
 in any of its chats, or a run on it, ends with the folder holding a kind (`core/build-ends.ts`);
 it stays built after. `multiplayer` is set while the game's package.json names
-`@genex-ai/multiplayer` or its page maps Studio's copy (`usesGenexMultiplayer`); a build's end tells the game list when it changed. The stage strip's
-Multiplayer shows only on a built game that is not multiplayer (`showsMultiplayer`).
+`@genex-ai/multiplayer`, its page maps Studio's copy, or its Godot project carries Genex's
+multiplayer addon (`godot/addons/genex_multiplayer/plugin.cfg`) (`usesGenexMultiplayer`); a build's end tells the game list when it changed. The stage strip's
+Multiplayer shows only on a built game that is not multiplayer (`showsMultiplayer`), and on an
+engine's web export only for a Godot game (`takesEngineMultiplayer`), whose project takes it.
 
 ### Workspace rules
 
@@ -2351,7 +2374,8 @@ raised, not returned).
 `unreal__plugin-build` needs the editor lock and asks first: the call saves the person's work through
 the Genex editor helper, quits Unreal and waits, then the host's editor target is built as the
 plugin's background job, which opens Unreal again after a good build and leaves it closed after a
-failed one. `unreal__plugin-test {filter?, stop?}` runs `UnrealEditor-Cmd` headless
+failed one. `unreal__plugin-test {filter?, stop?}` runs `UnrealEditor-Cmd` headless (the engine's
+`Binaries/Mac/UnrealEditor-Cmd`, or `Binaries\Win64\UnrealEditor-Cmd.exe` on Windows)
 (`automation-tests.ts`: `Automation RunTests <filter>`, the plugin's name by default, no shell, a
 small environment, its own process group, 30 minutes) and keeps Epic's report and a `summary.md` in
 `unreal/Saved/Genex/Tests/<Plugin>/`. Like `open-editor`, it runs outside ProcessSandbox and
@@ -2359,11 +2383,17 @@ UnrealBuildTool's Seatbelt profile: it loads the same host project and plugin bi
 person's own editor loads after every `plugin-build` (so the plugin's code gains no access it lacks
 there), and the editor needs what that profile denies (its per-user engine folders, the derived data
 cache, its shader workers). Its last lines and failure messages reach an agent with the project's
-and engine's folders taken out and any other absolute path cut to its base name (`ubt.ts`
-`pathScrubber`). `unreal__plugin-package {stop?}` runs `RunUAT.sh BuildPlugin`
+and engine's folders taken out and any other absolute path cut to its base name, Windows paths
+(`C:\…`, `C:/…`, `\\server\…`) included and compared without case (`ubt.ts` `pathScrubber`). `unreal__plugin-package {stop?}` runs `RunUAT.sh BuildPlugin`
 (`uat.ts`) in UnrealBuildTool's sandbox, which may also write the package folder (`extraWrites`), with
-UAT's logs in the sandbox's scratch; the package goes to `unreal/Saved/Genex/Packages/<Plugin>/` and a
-note beside it (`<Plugin>.md`: path, version, files, platforms, or the errors; a new run removes the
+UAT's logs in the sandbox's scratch. On Windows it needs no Xcode: it hands `RunUAT.bat BuildPlugin
+-Plugin=… -Package=… -TargetPlatforms=Win64 -NoP4` to Genex's own process sandbox as a host job
+(`sandbox.run`, reading the engine and the project, writing the package folder, UAT's logs in the
+job's scratch through `uebp_LogFolder`, within 45 minutes); the record stays running until a later
+call of the plugin's tools sees the host's job ended, and that call writes the note (a job the host
+no longer knows reads as failed). A game whose path holds a quote, `%` or `!`, or lies on a network
+share, is refused before the package folder is made or emptied. Either way the package goes to `unreal/Saved/Genex/Packages/<Plugin>/` and a
+note beside it (`<Plugin>.md`: path, version, files, platforms (`Mac` or `Win64`), or the errors; a new run removes the
 last one first; the note is written only in the packages folder as it is when the job ends, never
 through a link swapped in meanwhile, and the packaged descriptor is read only as a plain file within
 its cap). One job runs at a time per project, reserved before anything is touched, and each job is
@@ -2371,7 +2401,8 @@ its plugin's own (a call naming another plugin never reads, answers for or stops
 reads as Genex's own restart from before Unreal is quit and is refused while Genex reopens Unreal or
 adds its C++ module; a call stopped before its job starts changes nothing (a build stopped once
 Unreal was quit opens it again); and the backend stopping (Genex quits, the plugin is turned off)
-ends every running job's process group. A headless editor that exits badly before Automation wrote
+ends every running job's process group (on Windows its tree, by `taskkill /T /F`: Genex closes the
+backend's channel there instead of a SIGTERM, which would end the backend before it could). A headless editor that exits badly before Automation wrote
 its report is a failed run, its summary naming the exit code, the counts so far and its last lines.
 `unreal__plugin-status` answers each job's state and results and `proof`: the summary, the note and
 `unreal/Saved/Genex/Shots/<Plugin>-window.jpg` (kept by `app_look`'s `save`) that exist, the summary
@@ -2595,7 +2626,9 @@ agent-supplied C# remains subject to the connector's existing gate.
 Whether an editor has a project open is read from the computer's processes (`processes.ts`: a
 Unity editor whose command line names the project with `-projectPath`, in either spelling), and
 from the Pipeline descriptor's process only while the list shows it as a Unity editor that names
-this project or none (Windows' task list, `tasklist`, names Unity.exe without a command line).
+this project or none. On Windows the editors are listed by WMI with their command lines
+(`substrate/windows-processes.ts`; paths compared case-blind, either separator), else by the task
+list, `tasklist`, which names Unity.exe without a command line; an editor is ended with its tree.
 A stale descriptor whose id another app got blocks no Open, and that app is never signalled.
 Unity's lock file (`Temp/UnityLockfile`) is no sign: a killed editor leaves it and its descriptor
 behind. Installed
@@ -2995,7 +3028,10 @@ Genex:
   It can't be removed. A finished sign-in turns it on unless the person turned it off themselves
   (the record's `turnedOff`, set only by `setEnabled(false)`).
 - `host-cli` MCP servers run Studio's own bundled Genex CLI (`@genex-ai/cli-demo`, an app
-  dependency unpacked from the asar) behind `src/genex-host/preload.mjs`. The manifest validator
+  dependency unpacked from the asar) behind `src/genex-host/preload.mjs`. A bundled seed is copied
+  into the profile without its `node_modules` (Windows 11 held the CLI's 2,394 fresh files past the
+  start budget), so the CLI resolves from the seed in the app first (`genexCliPath`), and a bundled
+  plugin's backend is told that seed's folder in `STUDIO_PLUGIN_SEED`. The manifest validator
   reserves the command for the id `genex`, and the launcher also requires source `bundled`.
 - For `host-cli`, `credential-file` renders the `GENEX_TOKEN=` env-file line and a virtual env path.
   The preload answers only the CLI's per-origin sign-in record beside that path, for the origin in
@@ -3015,6 +3051,46 @@ Genex:
   refuses the same games (`assertPublishable`, `PublishRefusedError` code `unreal-game` or
   `not-web-game`): the dialog's review and publish, `genex__publish`
   before its consent card, and `export.stage` (a panel's or toolbar's publish) before it exports.
+- For a game linked to an engine, or one whose folder holds a player build, the dialog lists its
+  platforms above the presses (`PublishPlatforms.tsx`, `publish-platforms-view.ts`; read by
+  `studio:plugins.genex-publish-platforms` from `main/core/publish-platforms.ts`): Web, Mac app and
+  Windows app. `main/core/native-builds.ts` finds the builds from the binaries themselves (a
+  `.app`'s Mach-O program, a PE `.exe` beside its data; never through a link, engine caches skipped,
+  the walk capped). A row says what its build runs on, when it was built and its size; "Built
+  before your last change" with Build again when the game's sources changed more than a minute after
+  it (builds, caches, history, hidden files, notes and logs, and Unity's `UserSettings` do not count);
+  or "Not made yet" with Make with agent, which sends "Make a <Platform> app
+  of <Game> so I can publish it for <Platform> players." through the game's chat at once (as Another
+  cover does) and keeps the dialog open, the row then saying "Asked the agent". A Unity or Godot
+  game's missing web row offers the same for a web version (`webOfferFor`, `makeWebAsk`); an Unreal
+  game's says Unreal games don't run in a browser. A ready app goes
+  with Publish (`publishedApps`, passed as `native` in `publish-gallery`'s arguments; the line under
+  the rows says "Publish also sends the Mac app."): once the web build is public, the plugin sends
+  each with `genex native publish <the .app, or the .exe's folder> --json` in the publish workspace
+  (`publishApps`, `native-publish.ts`, one hour each), one at a time, after resolving each by real
+  path inside the game folder. An app that fails never fails the publish; its row says "Not sent"
+  and a line under the rows says why in the CLI's words. Each result is kept in the workspace's
+  `native.json` and answered as `GenexPublishState.native` (Sending…, On Genex). A draft sends no app,
+  and a stale build stays. While the pinned CLI is older than `genex native` (1.36.11), nothing is
+  sent and a built app says "Coming soon" (`uploads: false`), its players getting the web version.
+  The dialog sends apps only through an installed Genex plugin whose record says it can
+  (`native.supported`, `gateByPlugin`): a profile still on a plugin from before apps is told to
+  update it in Plugins. The plugin's `publishing-apps` skill tells the game's agent how to build an
+  app or a web version (in `web/`) for Publish, how to make an app open in a window, and never to
+  send the person to another store.
+  A game with no web build but a ready app (an Unreal or Unity game built for the Mac) gets Publish
+  on the strip too (`stripEntries`' `apps`, read through the same channel); its press says "Publish
+  Mac app" and runs `studio:plugins.genex-publish-apps` (`publishAppsFromDialog`, no web copy, no
+  `assertPublishable`) → the plugin's `publish-apps` (`publishAppsOnly`): the hosted project is made
+  the first time, each app goes with `genex native publish`, the first that goes carrying
+  `--gallery --title <name>` (a refused listing exits 1 with its answer; the app is live either way).
+  Listed, the record turns public with the game's genex.games page as its link; held for review or
+  not listed, a line under the rows says so; refused, the publish fails in Genex's words. Multiplayer
+  stays off for it. Like a web publish, it takes the cover again as it starts and sends it once its
+  apps are on Genex (`#reshoot`, then the cover step). Its clip names as its build the first 40
+  characters of a sent app's archive sha256 (`appClipCommit`, from `native.json`), which Genex
+  matches as a prefix where a web game's names its staging commit; a stand that refuses it leaves a
+  `failed` clip record, sent again by the next publish, and the picture stands. A web game with no app shows no rows. L4: `npm run test:ui -- publish-platforms-ui`.
 - Every published copy gets a `<head>` tag when `deployment.ts` marks it (`withHead`): the games
   host injects its environment (`window.__GENEX__`), mobile kit, crash watchdog and cover
   responder only into one, and the marker never goes ahead of the doctype. A game whose
@@ -3034,11 +3110,28 @@ Genex:
   turns settle (`use-cover-after-turns.ts`), and it records the `genex-clip` demo's clip when there is
   one. The banner flips between the record's `candidates` (the last four frames; `cover-pick` makes
   one the kept shot, pinned, which a publish sends without shooting again), shows a kept clip behind
-  a Picture / Clip switch, and Another cover (`[data-genex-another-cover]`) opens a field whose Make
-  sends "Make another Genex cover for this game: …" through the chat's own send
-  (`renderer/compose-in-chat.ts`); the banner says a new one is coming until a new frame arrives. A
+  a Picture / Clip switch, and Another cover (`[data-genex-another-cover]`) opens a field whose Ask
+  agent sends "Make another Genex cover for this game: …" through the chat's own send
+  (`renderer/compose-in-chat.ts`) and closes the dialog there. Once the chat really sent it, the ask
+  is kept per game on this Mac (`genex/cover-asks.ts`), so the banner opened again says one is being
+  made until the agent's own frame arrives: the record's `agentTook` (`covers/<project>/agent.json`,
+  set only by `genex__cover` shoot and clip, never by Studio's takes or a publish's shot). Roughly how
+  long is left shows once that game's last ask was timed (ask to `agentTook`; no number before one,
+  none once it runs over). A
   Genex plugin older than covers answers no record, and none of this shows. Genex-specific core UI, accepted
   by the owner; a second plugin with a cover would need a declared host surface instead.
+- A game that runs as its own program (a Unity, Godot or Unreal fact, or nothing served as a web
+  page: `takenFromReel` in `main/core/cover-reel.ts`) cannot be photographed, so its builder renders
+  the cover inside the engine: the session that owns its build is told to (`appCoverGuidance`,
+  `cover-reel-prompts.ts`, added to the brief in `core/delegation.ts`), with no Genex tool needed:
+  `.studio/cover/cover.png` (1920x1080) and `.studio/cover/clip/0001.png` onward (five seconds at
+  30 fps, 960x540), or one `clip.mp4`/`clip.webm`. A plugin's `observe` with a `still` or a `clip`
+  of such a game takes it of its cover reel (`throughCoverReel`, through `ViewStillOptions.open`):
+  the media copied, by `lstat` and never through a link, sniffed and capped, into a folder of the
+  host's scratch (`cover-reels/`) beside a page whose `__studio` answers the `genex-cover` demo with
+  the picture and `genex-clip` with the frames played from `start()`, removed when the take ends.
+  So `cover-auto`, the banner and a publish work on it as on a web game. With no media, or for a
+  web game, the game is served as before.
 - The chat shows the game's kept Genex cover as one card (`chat/GenexCoverCard.tsx`) for the
   thread's latest `genex__cover` call from plugin `genex` whose operation is `shoot` and whose
   answer carried a picture (`chat-entries.ts`, the tool read with or without `genex__` and
@@ -3093,7 +3186,8 @@ Genex:
   `package.json`: for `@genex-ai/embed-sdk` the tool maps Studio's copy in its page's import map
   (`/vendor/genex/embed-sdk/index.js`, which the build copies from the pinned devDependency) and
   loads `/vendor/genex/connect.js` after the map (`withGenexSdkImport`); its page must be a
-  regular file, never a link. Multiplayer is refused there. The paid tool and the package tool need consent; fixture profiles refuse
+  regular file, never a link. Multiplayer is refused there. A Godot game (`godot/project.godot`)
+  is refused with a pointer to `godot__multiplayer`: its multiplayer goes into its project. The paid tool and the package tool need consent; fixture profiles refuse
   both host steps (`studio:plugins.host-cli`, `studio:plugins.host-package`).
 - `genex__asset` accepts only each lane's own options (`LANE_OPTIONS`, `plugins/genex/request.ts`),
   and a refusal names them (`Unsupported Genex option for <op>`). Each lane's provider is fixed and
@@ -3126,6 +3220,12 @@ Local Blender:
 - `blender__model`'s `script` is the path of a `.py` in the game (`assets/src/<name>.py` when left
   out). Code passed as the script, a path the host would refuse, and a path that is no regular file
   of the game are refused before anything runs, in words that say to write the file first.
+- It finds Blender on a Mac in Applications, and on Windows in Program Files (`Blender Foundation/
+  Blender */`), beside the program `.blend` files open with, in its Microsoft Store package, Steam
+  or Scoop, or wherever the person chose `blender.exe` (the `program` setting, Choose Blender… on
+  its card). It pins Blender's Mac `.dmg` and Windows x64 and arm64 zips. On a Windows PC with no
+  OpenGL 4.3 driver Workbench crashes Blender, so the wrapper checks with a child Blender first and
+  renders with Cycles on the CPU instead.
 - Run Blender through the tool: in a worker's sandbox Blender started from a shell cannot reach the
   GPU (Metal) and crashes while it picks its GPU backend at startup, even with `-b`. The tool's jobs
   run in the native-job sandbox, which allows the GPU.
@@ -3160,6 +3260,20 @@ answers `{started: true}` as the download starts and the installation record say
 since a call's deadline must not cut the download short. An agent cannot choose a binary, download
 URL or installation action: either way the manifest's pinned one is installed.
 
+A candidate (`native-candidates.ts`) is an absolute POSIX path (skipped on Windows), a path under
+`home:`, `studio:`, `storage:` or, on Windows, `programfiles:`, `programfilesx86:` and
+`localappdata:`; a path beside the program Windows opens a file type with (`opens:.blend/…`, from
+the registry's open command); a path inside this user's Microsoft Store package whose name starts so
+(`package:<name>/…`, from its `PackageRootFolder`); or `setting:<key>`, the absolute path the person
+chose in one of the plugin's declared string settings. One segment may hold one `*` (`Blender *`),
+every match tried newest name first. A runtime pins one download (`install`, read as macOS Apple
+Silicon) or one per platform (`installs`, each with its `platform`: `darwin-arm64`, `win32-x64`,
+`win32-arm64`; at most four, one per platform) as a `dmg`, `tar.gz` or `zip`; Windows unpacks with
+its own `tar.exe`. `runtime.detect` answers the pin for this computer as `download` (none where the
+manifest pins none), and an install there is refused in words that say to install it yourself. A version
+probe may take 30 s, and the first one after an install 2 minutes: antivirus scans a program's first
+start (Blender's took 15.8 s on a Windows VM with Defender, then 0.2 s).
+
 `nativeJobs` declares fixed argument arrays with package/input/output/value bindings, validated
 value patterns, input/output names, deadline, byte limits and optional GPU access. `native.run`
 stages only declared project input files; the child receives no full-project read grant.
@@ -3191,6 +3305,13 @@ each opened without following links and checked by device and inode (`copyDeclar
 link, a hard-linked file or a file swapped during delivery is refused. A pinned `.dmg` runtime is
 copied with its relative links kept (`copyRuntimeTree`; a link out of the runtime is refused) and
 probed after the image is detached.
+On Windows a managed job runs in the process sandbox like every other agent process
+(`runSandboxedNativeProcess`: srt-win as the sandbox user, through Git Bash), with no network. Its
+staged inputs, outputs, scratch and the plugin's package files live in the profile's `native-work`
+folder, writable from the sandbox's start; pinned runtimes unpack into `native-runtimes`, readable
+from the start, so an install never waits for a regrant. A runtime found elsewhere in the person's
+profile is granted for reading when detected; one under Program Files or a Store package is readable
+as it is. Output goes to log files whose tails are kept, and `gpu` grants nothing more.
 A runtime's version is `x.y.z` or `x.y` (read as `x.y.0`). An enabled plugin's runtime also starts a
 bridge game whose `studio.json` play names it as its `engine` (docs/play-protocol.md): the studio
 detects it as above and runs it long-lived in the same profile with the GPU, its stdio open.
@@ -3253,10 +3374,35 @@ turn that only exported never continues as one for a new kind, and the session's
 game list its facts changed (`delegation.ts` `#announceKindTaken`). A game with no web game at its root plays and publishes its first web game in a
 folder (`webFolderOf`, `shared/project-workspace.ts`): Live's preview serves that folder's
 `index.html`, and Publish uploads the folder in the root's place; Multiplayer stays off for it, as
-the chat never edits a build. Godot writes the exported settings through its own temporary name
+the chat never edits a build, except for a Godot game, whose project takes it (below). Godot writes the exported settings through its own temporary name
 (`tmpproject.binary-*`) in macOS's per-user temporary folder, the one place outside the project an
 export may write (`writePrefixes` in the native profile: one name's prefix, never a folder). A web game a plugin's fact also
 claims is told to chats as a web build, never with the web template's rules.
+
+`multiplayer` (agent tool, `multiplayer.ts`; its `godot-multiplayer` file skill says how to write
+the online play) puts Genex multiplayer into the game's Godot project, web and native alike:
+- **The addon.** Genex's addon `addons/genex_multiplayer/` is a copy of the Genex SDK's
+  `sdks/godot` (`MULTIPLAYER_ADDON_SOURCE`). A changed file is kept as `.mine`. Its
+  `GenexMultiplayer` autoload goes into `project.godot`.
+- **The Genex project.** The game's slug (when given) and API go into `project.godot`'s `[genex]`
+  section. A native build joins that game; the web build reads its slug from the page.
+- **Matchmaking.** The `matchmaking` argument (checked: a preset, a win condition, numeric knobs)
+  goes into the game's `genex.json`, which `readGenexGameManifest` sends at publish with
+  `@genex-ai/multiplayer` at Studio's pin.
+- **The native GDExtension.** The official Colyseus GDExtension goes into `addons/colyseus/`:
+  - The release `godot-v0.18.5` is downloaded once into the plugin's storage, its archive checked
+    against its pinned sha256 before anything of it is unpacked. A mismatch is removed, never used.
+  - Only the release libraries for macOS, Windows x86_64 and Linux x86_64 are unpacked. Genex
+    writes its own `colyseus.gdextension` loading them in the editor too, plus its MIT license.
+  - A native part that couldn't be added is a note; the web part still stands.
+- **The web build.** Genex's Web preset gets the head include
+  `<script src="genex-multiplayer-bridge.js">` and leaves `addons/colyseus/*` out. Every export of
+  a game with the addon copies the pinned SDK's `bridge.global.js` beside the page, with `genex-multiplayer-bridge.LICENSES.md` (the licenses of what it bundles, made at build by `bridgeLicenses`), which the
+  addon's web backend drives through `window.GenexMultiplayerBridge`. The publish connect module
+  hands that bridge the page's one player (`setIdentity` with Studio's embed SDK) and puts the
+  game's slug into `window.__GENEX__`.
+- **Not yet.** Native play inside Studio's sandbox has no network, so online play is tested in an
+  exported build or on the published web page.
 
 These managed-job restrictions do not sandbox the plugin backend itself. It remains trusted
 executable code, as disclosed at installation. The isolated custom panel has no Node or IPC.

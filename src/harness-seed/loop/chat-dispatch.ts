@@ -89,10 +89,10 @@ const MESSAGE = {
   // stay awake, and that a paused run is not a lost one. "until satisfied" alone
   // answered none of those — the first real run ended on the plan's five-hour window at 105
   // of 180 minutes and nobody had been told that could happen.
-  buildPromised: (end: string) => `Building until about ${end} — keep the app open and the Mac awake. `,
+  buildPromised: (end: string) => `Building until about ${end} — keep the app open and the computer awake. `,
   // ∞ has no end to promise; its 24 h ceiling is a date, since as a bare clock it is "now".
   untilSatisfiedPromised: (ceiling: string) =>
-    `It finishes when the required outcomes are verified, with a safety stop by about ${ceiling} — keep the app open and the Mac awake. `,
+    `It finishes when the required outcomes are verified, with a safety stop by about ${ceiling} — keep the app open and the computer awake. `,
   planWindow:
     "Your Claude plan's window can pause it partway; it waits out the reset and resumes itself, or one tap on Resume.",
   connectionFirst:
@@ -491,18 +491,56 @@ async function keepBuildingNow(
   return true;
 }
 
-/** The next Loop Keep building starts: the last Loop's goal with what is left, on the message's Loop and models. */
+/**
+ * The next Loop Keep building starts, as the launch tool would commission it: an Autopilot run on the
+ * last Loop's goal (the one it was built on, so taps never pile up) with what is left, its reference,
+ * the message's hours (∞ with the launch tool's ceiling) and models.
+ */
 async function nextLoopSpec(host: Host, action: QueueAction, hours: number | null): Promise<AnyRecord> {
-  const last = latestRun(await host.call(HostMethod.EventsList, { threadId: action.threadId }).catch(() => []));
-  const before = typeof last?.goal === "string" ? last.goal.trim() : "";
+  const events: HarnessEvent[] = await host.call(HostMethod.EventsList, { threadId: action.threadId }).catch(() => []);
+  const last = latestRun(events);
+  const base = baseGoalOf(last);
   const text = String(action.text ?? "").trim();
   const roles = action.autopilot?.roles;
+  const reference = referenceOf(events, last?.runId);
   return {
-    goal: before ? `${before}\n\n${text}` : text,
-    ...(hours === null ? { untilSatisfied: true } : { hours }),
+    goal: base ? `${base}\n\n${text}` : text,
+    ...(base ? { keepBuildingFrom: base } : {}),
+    mode: RunMode.Autopilot,
+    ...(reference ? { reference } : {}),
+    hours: hours ?? MAX_RUN_HOURS,
+    ...(hours === null ? { untilSatisfied: true } : {}),
     ...(action.engine ? { engine: action.engine } : {}),
     ...(action.model ? { model: action.model } : {}),
     ...(roles ? { roles } : {}),
+  };
+}
+
+/** The goal a run was built on: a Keep building run's own base goal, else its goal. */
+function baseGoalOf(run: AnyRecord | null): string {
+  const base = typeof run?.keepBuildingFrom === "string" ? run.keepBuildingFrom : run?.goal;
+  return typeof base === "string" ? base.trim() : "";
+}
+
+/**
+ * A run's reference as a launch takes it again, from the newest of its start records (its close
+ * keeps only a name): its name, kind and notes, its stills staying with that run.
+ */
+function referenceOf(events: readonly HarnessEvent[], runId: unknown): AnyRecord | null {
+  const opened = events.filter((event) => {
+    const data = event?.data;
+    const opens = data?.event_type === RunEvent.RunStarted || data?.event_type === RunEvent.RunRegistered;
+    return data?.type === EventKind.Custom && opens && data.payload?.runId === runId;
+  });
+  const reference = opened
+    .map((event) => event.data.payload?.reference)
+    .findLast((ref) => typeof ref?.name === "string");
+  if (!reference?.name.trim()) return null;
+  return {
+    name: reference.name,
+    shots: [],
+    ...(typeof reference.kind === "string" ? { kind: reference.kind } : {}),
+    ...(typeof reference.notes === "string" ? { notes: reference.notes } : {}),
   };
 }
 
@@ -1054,6 +1092,7 @@ function intakeRun(
       : {}),
     ...(spec.reviewPlan ? { reviewPlan: true } : {}),
     ...(spec.mode ? { mode: spec.mode } : {}),
+    ...(typeof spec.keepBuildingFrom === "string" ? { keepBuildingFrom: spec.keepBuildingFrom } : {}),
     ...(spec.engine ? { engine: spec.engine } : {}),
     ...(spec.model ? { model: spec.model } : {}),
     ...(spec.roles ? { roles: spec.roles } : {}),

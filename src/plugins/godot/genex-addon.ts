@@ -62,7 +62,7 @@ export const isSetUp = (state: AddonState): boolean =>
 const textOf = (file: string) => readFile(file, "utf8").catch(() => null);
 
 /** Refuses a path that is a link; a missing one is fine. */
-async function assertNoLink(file: string): Promise<void> {
+export async function assertNoLink(file: string): Promise<void> {
   if ((await lstat(file).catch(() => null))?.isSymbolicLink()) throw new AddonError(MESSAGE.Link(path.basename(file)));
 }
 
@@ -74,18 +74,26 @@ async function shippedFiles(source: string): Promise<Map<string, string>> {
   );
 }
 
-/** The autoload line as Godot writes it: `*` makes it a singleton node. */
-const autoloadLine = () => `${AUTOLOAD_NAME}="*res://${ADDON_FOLDER}/${AUTOLOAD_SCRIPT}"`;
+/** An autoload line as Godot writes it: `*` makes it a singleton node. */
+const autoloadLine = (name: string, script: string) => `${name}="*res://${script}"`;
 
-/** `project.godot` with Genex's autoload in its `[autoload]` section (made when it has none); unchanged when it is there. */
-export function withAutoload(settings: string): string {
-  if (settings.split(/\r?\n/).some((line) => line.trim().startsWith(`${AUTOLOAD_NAME}=`))) return settings;
+/**
+ * `project.godot` with the autoload `name` (the script at `script`, from the project's root) in its
+ * `[autoload]` section (made when it has none); unchanged when an autoload of that name is there.
+ */
+export function withAutoloadOf(settings: string, name: string, script: string): string {
+  if (settings.split(/\r?\n/).some((line) => line.trim().startsWith(`${name}=`))) return settings;
   const lines = settings.split("\n");
   const section = lines.findIndex((line) => line.trim() === AUTOLOAD_SECTION);
-  if (section < 0) return `${settings.replace(/\s*$/, "")}\n\n${AUTOLOAD_SECTION}\n\n${autoloadLine()}\n`;
-  lines.splice(section + 1, 0, autoloadLine());
+  const line = autoloadLine(name, script);
+  if (section < 0) return `${settings.replace(/\s*$/, "")}\n\n${AUTOLOAD_SECTION}\n\n${line}\n`;
+  lines.splice(section + 1, 0, line);
   return lines.join("\n");
 }
+
+/** `project.godot` with Genex's autoload in its `[autoload]` section (made when it has none); unchanged when it is there. */
+export const withAutoload = (settings: string): string =>
+  withAutoloadOf(settings, AUTOLOAD_NAME, `${ADDON_FOLDER}/${AUTOLOAD_SCRIPT}`);
 
 /** The line of a section's `enabled=PackedStringArray(...)`, and the plugin paths it lists. */
 const ENABLED_LINE = /^enabled=PackedStringArray\((.*)\)\s*$/;
@@ -161,13 +169,18 @@ function addonOf(installed: ReadonlyArray<{ text: string; now: string | null }>)
   return installed.every((file) => file.now === file.text) ? "current" : "outdated";
 }
 
-/** Where a game stands for Genex's play, read without changing anything. */
-export async function addonState(gameDir: string, project: string, source: string): Promise<AddonState> {
+/** A shipped addon folder (`source`) as the project at `folder` holds it: as shipped, older, or missing. */
+export async function addonFolderState(project: string, source: string, folder: string): Promise<AddonState["addon"]> {
   const shipped = await shippedFiles(source);
   const installed = await Promise.all(
-    [...shipped].map(async ([name, text]) => ({ text, now: await textOf(path.join(project, ADDON_FOLDER, name)) })),
+    [...shipped].map(async ([name, text]) => ({ text, now: await textOf(path.join(project, folder, name)) })),
   );
-  const addon = addonOf(installed);
+  return addonOf(installed);
+}
+
+/** Where a game stands for Genex's play, read without changing anything. */
+export async function addonState(gameDir: string, project: string, source: string): Promise<AddonState> {
+  const addon = await addonFolderState(project, source, ADDON_FOLDER);
   const settings = (await textOf(path.join(project, PROJECT_FILE))) ?? "";
   const studio =
     (await readJsonForUpdate<Record<string, unknown>>(path.join(gameDir, STUDIO_JSON)).catch(() => null)) ?? {};
@@ -180,9 +193,12 @@ export async function addonState(gameDir: string, project: string, source: strin
   };
 }
 
-/** The addon's files into the project; a Genex file the person changed is kept beside it as `.mine`. Answers the names kept. */
-async function installAddon(project: string, source: string): Promise<string[]> {
-  const folder = path.join(project, ADDON_FOLDER);
+/**
+ * A shipped addon folder's files into the project's `addonFolder` (`addons/<name>`); a Genex file
+ * the person changed is kept beside it as `.mine`. Answers the names kept.
+ */
+export async function installAddonFolder(project: string, source: string, addonFolder: string): Promise<string[]> {
+  const folder = path.join(project, addonFolder);
   await assertNoLink(path.join(project, "addons"));
   await assertNoLink(folder);
   await mkdir(folder, { recursive: true });
@@ -268,7 +284,7 @@ export async function setUpGame(
   // A project outside the game is set up only when the game is linked to it (its engine link).
   const inside = isInside(gameDir, project) || path.resolve(gameDir) === path.resolve(project);
   if (!inside && !options.linked) throw new AddonError(MESSAGE.Outside);
-  const kept = await installAddon(project, source);
+  const kept = await installAddonFolder(project, source, ADDON_FOLDER);
   await addToSettings(project);
   await writeLauncher(gameDir, project, godot);
   await recordBridge(gameDir, project);

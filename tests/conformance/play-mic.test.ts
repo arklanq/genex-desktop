@@ -95,7 +95,7 @@ function rig(options: { access?: boolean; on?: string[]; device?: string | null 
       inviteCode: async () => undefined,
     },
     gameUrl: (slug) => `game:${slug}`,
-    window: { contentSize: () => ({ width: 1200, height: 800 }), buttons: () => {}, barFades: true },
+    window: { contentSize: () => ({ width: 1200, height: 800 }), buttons: () => {} },
     game: { open: () => {}, show: () => {}, hide: () => {}, focus: () => {}, close: () => {} },
     bar: { show: () => {}, hide: () => {}, focus: () => {}, focused: () => false, warm: () => {} },
     comments: {

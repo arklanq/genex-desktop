@@ -234,19 +234,6 @@ export function flipCover(choices: { shas: string[]; index: number }, step: 1 | 
   return shas[(from + step + shas.length) % shas.length] ?? null;
 }
 
-/** How long the banner says a cover is being made after Another cover, unless a new frame arrives first. */
-export const COVER_MAKING_MS = 15 * MINUTE_MS;
-
-/** An ask for another cover: the frame it was asked over, and when. */
-export interface CoverAskRecord {
-  from: string | null;
-  at: number;
-}
-
-/** Whether the banner still says a cover is being made: no new frame since the ask, and not for too long. */
-export const coverMaking = (ask: CoverAskRecord | null, shot: string | null, now: number): boolean =>
-  ask !== null && ask.from === shot && now - ask.at < COVER_MAKING_MS;
-
 /** The dialog's view of a publish record, at `now`. */
 export function publishView(state: GenexPublishState, now = Date.now()): PublishView {
   const job = state.job;
@@ -413,9 +400,10 @@ export function stripEntries(
   project: string | null,
   facts: readonly FactRef[],
   holds?: FolderHolds,
+  apps = false,
 ): PluginToolbarEntry[] {
   const entries = toolbarEntries(plugins, project, { facts, holds });
-  return publishable(facts, holds) ? entries : entries.filter((entry) => !isGenexPublish(entry));
+  return publishable(facts, holds) || apps ? entries : entries.filter((entry) => !isGenexPublish(entry));
 }
 
 /**
@@ -427,9 +415,15 @@ export function studioPublishButton(
   project: string | null,
   facts: readonly FactRef[],
   holds?: FolderHolds,
+  apps = false,
 ): boolean {
-  return Boolean(project) && publishable(facts, holds) && !toolbarEntries(plugins, project).some(isGenexPublish);
+  const offered = publishable(facts, holds) || apps;
+  return Boolean(project) && offered && !toolbarEntries(plugins, project).some(isGenexPublish);
 }
+
+/** Whether Publish puts the game online as a web game (else, at most, as its apps). */
+export const publishesWeb = (facts: readonly FactRef[], holds: FolderHolds | undefined): boolean =>
+  publishable(facts, holds);
 
 /**
  * Answers that leave nothing for a publish to do about a frame: Genex took it, already had it, or

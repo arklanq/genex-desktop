@@ -77,11 +77,31 @@ const PREVIEW_CONNECTION: GenexConnection = {
   dashboardOrigins: ["https://genex.games"],
 };
 
-function connectModule(heading: readonly string[], { slug, apiUrl, dashboardOrigins }: GenexConnection): string {
+/**
+ * What the published module adds after `initEmbed`: the game's project on the page (an engine's
+ * export reads it there), and the page's one player handed to Genex's multiplayer bridge when the
+ * page loads one (a Godot web export's), which would otherwise start a second embed SDK of its own.
+ */
+const PUBLISHED_TAIL = (slug: string) => [
+  "",
+  `window.__GENEX__ = { ...window.__GENEX__, slug: ${JSON.stringify(slug)} };`,
+  "window.GenexMultiplayerBridge?.setIdentity({",
+  "  ready: () => waitForPlayer(),",
+  "  auth: () => getColyseusAuth(),",
+  "  urls: () => getColyseusUrls(),",
+  "});",
+];
+
+function connectModule(
+  heading: readonly string[],
+  { slug, apiUrl, dashboardOrigins }: GenexConnection,
+  tail: readonly string[] = [],
+): string {
   const sdk = path.posix.relative(path.posix.dirname(GENEX_EMBED_VENDOR.Connect), GENEX_EMBED_VENDOR.Entry);
+  const imports = tail.length ? "getColyseusAuth, getColyseusUrls, initEmbed, waitForPlayer" : "initEmbed";
   return [
     ...heading,
-    `import { initEmbed } from "./${sdk}";`,
+    `import { ${imports} } from "./${sdk}";`,
     "",
     "const served = window.__GENEX__ ?? {};",
     "initEmbed({",
@@ -89,6 +109,7 @@ function connectModule(heading: readonly string[], { slug, apiUrl, dashboardOrig
     `  apiUrl: served.apiUrl ?? ${JSON.stringify(apiUrl)},`,
     `  dashboardOrigins: served.dashboardOrigins ?? ${JSON.stringify(dashboardOrigins)},`,
     "});",
+    ...tail,
     "",
   ].join("\n");
 }
@@ -99,7 +120,8 @@ function connectModule(heading: readonly string[], { slug, apiUrl, dashboardOrig
  * it does not.
  */
 export function connectScript(connection: GenexConnection): string {
-  return connectModule(PUBLISHED_HEADING, checkedConnection(connection));
+  const checked = checkedConnection(connection);
+  return connectModule(PUBLISHED_HEADING, checked, PUBLISHED_TAIL(checked.slug));
 }
 
 /** The connect module in the app's vendor folder, which Studio's preview serves to a template game that loads the SDK. */

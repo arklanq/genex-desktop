@@ -24,6 +24,8 @@ export const GenexAction = {
   PublishStatus: "publish-status",
   PublishDraft: "publish-draft",
   PublishGallery: "publish-gallery",
+  /** Publish a game that has only apps, no web build: send them and list the game (`genex native publish --gallery`). */
+  PublishApps: "publish-apps",
   PublishAllowUpload: "publish-allow-upload",
   PublishOpen: "publish-open",
   PublishBadge: "publish-badge",
@@ -48,6 +50,7 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
   GenexAction.PublishStatus,
   GenexAction.PublishDraft,
   GenexAction.PublishGallery,
+  GenexAction.PublishApps,
   GenexAction.PublishAllowUpload,
   GenexAction.PublishOpen,
   GenexAction.PublishBadge,
@@ -60,7 +63,7 @@ export const GENEX_ACCOUNT_ACTIONS: readonly GenexAction[] = [
  * a package; the version always comes from here. Multiplayer's card asks for `^0.16.0`.
  */
 export const GENEX_GAME_PACKAGES = {
-  "@genex-ai/multiplayer": "0.17.0",
+  "@genex-ai/multiplayer": "0.17.1",
   "@genex-ai/embed-sdk": "0.33.0",
 } as const;
 /** A Genex SDK package a game may add. */
@@ -540,6 +543,18 @@ export interface GenexCoverRecord {
   clip?: GenexCoverClip | null;
   /** How the last clip send went; null before any. */
   clipLast?: GenexCoverSent | null;
+  /** When the agent itself last kept a shot and a clip; absent from a plugin older than this. */
+  agentTook?: GenexCoverAgentTook;
+}
+
+/**
+ * When the agent itself last kept the game's cover shot and clip (`genex__cover` shoot and clip),
+ * ISO; a kind it never took is absent. Studio's own takes and a publish's shot leave it, so Publish
+ * knows a frame the person asked the agent for has come (`covers/<project>/agent.json`).
+ */
+export interface GenexCoverAgentTook {
+  shot?: string;
+  clip?: string;
 }
 
 /** The game's kept cover clip (`covers/<project>/clip.json`), beside its video: five seconds of real play. */
@@ -582,4 +597,54 @@ export interface GenexPublishState {
    * Absent from a Genex plugin older than covers.
    */
   cover?: GenexCoverRecord;
+  /**
+   * The game's Mac and Windows apps as its last publish sent them, answered beside the record like
+   * the cover. Absent from a Genex plugin older than native builds.
+   */
+  native?: GenexNativeRecord;
+}
+
+/** One app a publish sent: live for desktop players under `version`. */
+export interface GenexNativeSent {
+  platform: string;
+  arch: string;
+  version: string;
+  sizeBytes: number;
+  /** The archive's sha256 as Genex keeps it: the build a clip of a game with only apps names. */
+  sha256?: string;
+  publishedAt: string;
+}
+
+/** One app a publish could not send, and Genex's or the CLI's words for why. */
+export interface GenexNativeFailure {
+  platform: string;
+  arch: string;
+  error: string;
+}
+
+/** How Genex answered the listing of a game that has only apps. Wire values: never rename one. */
+export const GenexListingState = { Published: "published", Held: "held", Refused: "refused" } as const;
+export type GenexListingState = (typeof GenexListingState)[keyof typeof GenexListingState];
+
+/** Genex's answer to listing a game that has only apps: listed, held for review, or refused, and why. */
+export interface GenexNativeListing {
+  state: GenexListingState;
+  detail: string | null;
+}
+
+/**
+ * A publish's apps (`genex native publish`): they go after the web build is public, one at a time,
+ * and an app that fails never fails the publish. `supported` is false while Studio's pinned CLI is
+ * older than native builds: the dialog then says they are coming soon and nothing is sent.
+ */
+export interface GenexNativeRecord {
+  supported: boolean;
+  /** Apps are being sent now. */
+  sending: boolean;
+  /** The publish the record belongs to; absent before any. */
+  jobId?: string;
+  sent: GenexNativeSent[];
+  failed: GenexNativeFailure[];
+  /** A game with only apps is listed with its first app that goes: Genex's answer. */
+  listing?: GenexNativeListing;
 }

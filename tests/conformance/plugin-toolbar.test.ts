@@ -5,6 +5,7 @@ import {
   MultiplayerPress,
   multiplayerPress,
   showsMultiplayer,
+  takesEngineMultiplayer,
   shownToolbarStatus,
   toolbarGlyph,
   toolbarItems,
@@ -176,7 +177,14 @@ test("Multiplayer brings Genex in, updates an older Genex first, and otherwise a
   assert.equal(multiplayerPress(plugin("genex", [item()])), MultiplayerPress.Ask);
 });
 test("Multiplayer stands beside Publish only on a built single-player game with something in it, whose page is its own", () => {
-  const game = { publish: true, builtOnce: true, multiplayer: false, emptyGame: false, webExport: false };
+  const game = {
+    publish: true,
+    builtOnce: true,
+    multiplayer: false,
+    emptyGame: false,
+    webExport: false,
+    engineMultiplayer: false,
+  };
   assert.equal(showsMultiplayer(game), true);
   assert.equal(showsMultiplayer({ ...game, builtOnce: false }), false, "a game never built has nothing to share yet");
   assert.equal(showsMultiplayer({ ...game, multiplayer: true }), false, "a multiplayer game is multiplayer already");
@@ -187,6 +195,23 @@ test("Multiplayer stands beside Publish only on a built single-player game with 
     false,
     "an engine's web export is a build, never edited",
   );
+  assert.equal(
+    showsMultiplayer({ ...game, webExport: true, engineMultiplayer: true }),
+    true,
+    "a Godot game takes Genex's multiplayer in its project, and its build is made again from it",
+  );
+  assert.equal(
+    showsMultiplayer({ ...game, webExport: true, engineMultiplayer: true, multiplayer: true }),
+    false,
+    "a Godot game with Genex's addon is multiplayer already",
+  );
+});
+
+test("a Godot game's project takes Genex's multiplayer; another engine's export does not", () => {
+  const godot = { facts: [{ id: "godot-project", path: "godot", source: "core" as const }] };
+  const unity = { facts: [{ id: "unity-project", path: ".", source: "core" as const }] };
+  assert.equal(takesEngineMultiplayer(godot), true);
+  assert.equal(takesEngineMultiplayer(unity), false);
 });
 test("toolbarStatusFrom keeps attention as a boolean", () => {
   assert.deepEqual(toolbarStatusFrom({ attention: true }), { attention: true });

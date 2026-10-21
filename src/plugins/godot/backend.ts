@@ -21,6 +21,7 @@ import type { Activate, PluginActivation, PluginContext, PluginReview } from "..
 import { answerQuery, createReference } from "./class-reference.ts";
 import {
   addWebPreset,
+  copyBridge,
   hasWebTemplate,
   prepareWebFolder,
   templateVersion,
@@ -64,6 +65,20 @@ import { linkProject, outsideGame, projectOf, requireProject } from "./project-l
 import { findProjects, readProject } from "./find-projects.ts";
 import { createProject, GodotTemplate } from "./new-project.ts";
 import { addonState, isSetUp, setUpGame } from "./genex-addon.ts";
+import {
+  BRIDGE_LICENSES_FILE,
+  BRIDGE_PAGE_FILE,
+  type ColyseusRelease,
+  colyseusRelease,
+  installColyseus,
+  installMultiplayer,
+  matchmakingArg,
+  type MultiplayerState,
+  multiplayerState,
+  slugArg,
+  usesMultiplayer,
+  writeMatchmaking,
+} from "./multiplayer.ts";
 import { frameAt, type KeyPress, keysEnd, MAX_PLAY_SECONDS, PLAY_FPS, readKeys, recordingShots } from "./play-input.ts";
 import { MAX_STILLS, stillsAnswer, stillsForAgent, takeStills } from "./stills.ts";
 
@@ -110,6 +125,7 @@ export const GodotTool = {
   HeroShots: "hero-shots",
   SetUp: "set-up",
   ShowSteps: "show-steps",
+  Multiplayer: "multiplayer",
 } as const;
 type GodotTool = (typeof GodotTool)[keyof typeof GodotTool];
 const TOOL_NAMES: ReadonlySet<string> = new Set(Object.values(GodotTool));
@@ -119,6 +135,10 @@ const isGodotTool = (name: string): name is GodotTool => TOOL_NAMES.has(name);
 const SCRIPTS_FOLDER = "scripts";
 const TEMPLATES_FOLDER = "templates";
 const ADDON_SOURCE = ["addon", "genex"];
+/** Genex's multiplayer addon, and the folder of the SDK bridge, its licenses and the Colyseus license beside the backend. */
+const MULTIPLAYER_ADDON_SOURCE = ["addon", "genex_multiplayer"];
+const MULTIPLAYER_FOLDER = "multiplayer";
+const COLYSEUS_LICENSE_FILE = "COLYSEUS-LICENSE";
 /** What an observer's capture keeps free of the time Genex gives it: reading and handing back the pictures. */
 const OBSERVE_MARGIN_MS = 5 * SECOND_MS;
 /** The least an observer's capture is given, however little time is left: a shorter one could draw nothing. */
@@ -189,6 +209,24 @@ const MESSAGE = {
   SetUpQuestion: "Set this Godot game up for Genex's play?",
   SetUpDetail: (where: string) =>
     `Genex will add its addon to the project (${where}/addons/genex: a script that sleeps unless Genex starts the game, and an editor plugin that saves your open scenes before a save point and reloads them after a Rewind), list them in project.godot, write bin/play (starts the game for Genex) and mark the game in studio.json, so Genex's computer tool, playtesters and judges can play it. A Genex file you changed is kept beside the new one as .mine.`,
+  Multiplayer: {
+    Done: (state: MultiplayerState, notes: readonly string[]) =>
+      [
+        `Genex multiplayer is in this game's Godot project: addons/genex_multiplayer and its GenexMultiplayer autoload; the next web export loads Genex's SDK bridge (the Genex Web preset's head include), so the web build plays online on its Genex page.`,
+        state.native
+          ? "Native builds (macOS, Windows, Linux) play online too, with the Colyseus GDExtension in addons/colyseus."
+          : "",
+        state.slug
+          ? `Its Genex project is ${state.slug} (project.godot [genex] slug).`
+          : "It has no Genex project yet: after its first publish, call godot__multiplayer again with slug (genex__publish-status names it), so native builds know which game to join; the web build reads it from its Genex page.",
+        ...notes,
+        "Write the game's online play now, as the godot-multiplayer skill says (godot__skill): GenexMultiplayer.join with mode matchmake (or play), the slug, and native identity; then godot__check.",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    NoNative: (why: string) =>
+      `Native builds can't play online yet: Genex couldn't add the Colyseus GDExtension (${why}). The web build plays online; call godot__multiplayer again to retry.`,
+  },
   SetUpDone:
     "This game is set up for Genex's play: Genex's computer tool, playtesters and judges can now start it with bin/play, press keys, point, step its clock and read its state.",
   BadSeconds: `seconds is a whole number from 1 to ${MAX_RUN_SECONDS}.`,
@@ -234,6 +272,17 @@ export type GodotBackendDeps = {
   templates: string;
   /** The shipped Genex addon (`addon/genex`): the Play Protocol autoload a set-up game carries. */
   addon: string;
+  /**
+   * Genex multiplayer: the shipped addon (`addon/genex_multiplayer`), the SDK's bridge a web export
+   * loads, the Colyseus license a project's copy carries, and the Colyseus release when a test pins another.
+   */
+  multiplayer: {
+    addon: string;
+    bridge: string;
+    bridgeLicenses: string;
+    license: string;
+    release?: ColyseusRelease;
+  };
 };
 
 type Handler = (args: Record<string, unknown>, context: PluginContext) => Promise<unknown>;
@@ -377,7 +426,8 @@ async function webExport(deps: GodotBackendDeps, context: PluginContext): Promis
   const install = await requireGodot(deps);
   if (!(await hasWebTemplate(deps.env.home, install)))
     throw new Error(MESSAGE.Web.NoTemplates(versionName(install.version)));
-  await addWebPreset(project, MESSAGE.Web.Link);
+  const multiplayer = await usesMultiplayer(project);
+  await addWebPreset(project, MESSAGE.Web.Link, { multiplayer });
   const folder = await prepareWebFolder(game, MESSAGE.Web.Link);
   const templates = webTemplates(deps.env.home, install).folder;
   const userTemp = await deps.env.userTemp();
@@ -393,6 +443,7 @@ async function webExport(deps: GodotBackendDeps, context: PluginContext): Promis
   const written = pack !== null && pack.mtimeMs >= started - EXPORT_CLOCK_SLACK_MS;
   const errors = readProblems(result.output).filter(isError);
   if (!written) throw new Error(MESSAGE.Web.Failed(problemLines(errors.slice(0, NOTED_PROBLEMS))));
+  if (multiplayer) await copyBridge(folder, deps.multiplayer, MESSAGE.Web.Link);
   return (await readdir(folder)).filter((name) => !name.startsWith(".")).length;
 }
 
@@ -598,6 +649,46 @@ async function projectPlace(context: PluginContext, project: string): Promise<{ 
   return { path: path.relative(await realpath(game).catch(() => game), project) || ".", outside: false };
 }
 
+/** The Colyseus GDExtension into the project from the release kept in the plugin's storage; why it couldn't be, or null. */
+async function addNative(deps: GodotBackendDeps, context: PluginContext, project: string): Promise<string | null> {
+  try {
+    const fetching = deps.install ?? systemInstallDeps(deps.env);
+    const storage = await storageOf(context);
+    const release = await colyseusRelease(fetching, storage, context.signal, deps.multiplayer.release);
+    await installColyseus(project, release, deps.multiplayer.license);
+    return null;
+  } catch (error) {
+    return MESSAGE.Multiplayer.NoNative(errorMessage(error));
+  }
+}
+
+/**
+ * The agent's `multiplayer`: Genex multiplayer into the game's Godot project (the addon, its
+ * autoload, the game's Genex project), the native GDExtension, the game's matchmaking in its
+ * genex.json and Genex's Web preset loading the SDK bridge. Arguments are checked before anything
+ * is written; a native part that couldn't be added is a note, never a refusal.
+ */
+async function setUpMultiplayer(deps: GodotBackendDeps, args: Record<string, unknown>, context: PluginContext) {
+  const game = gameFolderOf(context);
+  if (!game) throw new Error(MESSAGE.NoGameOpen);
+  const project = await requireProject(context);
+  const slug = slugArg(args.slug);
+  const matchmaking = matchmakingArg(args.matchmaking);
+  const kept = await installMultiplayer(project, deps.multiplayer.addon, slug ? { slug } : {});
+  if (matchmaking) await writeMatchmaking(game, matchmaking);
+  await addWebPreset(project, MESSAGE.Web.Link, { multiplayer: true });
+  const notes = [await addNative(deps, context, project)];
+  if (kept.length) notes.push(`Kept your changed ${kept.join(", ")} beside the new ones as .mine.`);
+  const install = usableGodot(await findGodots(deps.env));
+  // The extension and the addon's classes register in Godot's import.
+  if (install) notes.push(await firstImport(deps, install, project, context.signal));
+  const state = await multiplayerState(project, deps.multiplayer.addon);
+  return MESSAGE.Multiplayer.Done(
+    state,
+    notes.filter((note): note is string => Boolean(note)),
+  );
+}
+
 /** The panel's status: the Godot Genex uses, every Godot found, the open game's project and the projects to choose from. */
 async function status(deps: GodotBackendDeps, context: PluginContext) {
   const installs = await findGodots(deps.env);
@@ -606,6 +697,8 @@ async function status(deps: GodotBackendDeps, context: PluginContext) {
   const place = project ? await projectPlace(context, project) : null;
   return {
     ...godotReadiness(installs),
+    /** Whether this computer is a Mac, the only one Genex builds Godot games on for now. */
+    mac: deps.env.platform === "darwin",
     godot: install
       ? { version: versionName(install.version), binary: install.binary, mono: install.version.mono }
       : null,
@@ -817,7 +910,7 @@ export function createGodotBackend(deps: GodotBackendDeps): PluginActivation {
     [GodotAction.Create]: (args, context) => create(deps, args, context),
     [GodotAction.OpenEditor]: (_args, context) => openInEditor(deps, context),
     [GodotAction.GetGodot]: async () => {
-      await deps.editor.open(getGodotLaunch());
+      await deps.editor.open(getGodotLaunch(deps.env.platform));
       return { opened: true };
     },
     [GodotAction.ToolbarStatus]: (_args, context) => toolbarStatus(deps, context),
@@ -847,6 +940,7 @@ export function createGodotBackend(deps: GodotBackendDeps): PluginActivation {
       return MESSAGE.SetUpDone;
     },
     [GodotTool.ShowSteps]: async (_args, context) => showSteps(deps, await installerOf(context), context),
+    [GodotTool.Multiplayer]: (args, context) => setUpMultiplayer(deps, args, context),
   };
   return {
     async action(name, args, context) {
@@ -872,5 +966,11 @@ export const activate: Activate = () => {
     scripts: path.join(here, SCRIPTS_FOLDER),
     templates: path.join(here, TEMPLATES_FOLDER),
     addon: path.join(here, ...ADDON_SOURCE),
+    multiplayer: {
+      addon: path.join(here, ...MULTIPLAYER_ADDON_SOURCE),
+      bridge: path.join(here, MULTIPLAYER_FOLDER, BRIDGE_PAGE_FILE),
+      bridgeLicenses: path.join(here, MULTIPLAYER_FOLDER, BRIDGE_LICENSES_FILE),
+      license: path.join(here, MULTIPLAYER_FOLDER, COLYSEUS_LICENSE_FILE),
+    },
   });
 };

@@ -33,7 +33,7 @@ import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { promisify } from "node:util";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
-import { SECOND_MS } from "../shared/duration.ts";
+import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { StudioPlatform, WindowsSetupNeed } from "../shared/boot.ts";
 import { ROBLOX_WINDOWS_SIGN_IN_STORES } from "./credential-homes.ts";
 import { errorMessage } from "../shared/errors.ts";
@@ -49,6 +49,7 @@ import {
   type FolderAceOutcome,
   FolderAceOp,
   folderAceCommand,
+  OwnWalk,
   type FolderOwnEdit,
   type FolderOwnEditor,
   type FolderOwnEditorSync,
@@ -96,6 +97,11 @@ const GRANT_ATTEMPTS = 3;
 const GRANT_RETRY_MS = 1 * SECOND_MS;
 /** An own edit Windows took this long over is logged with its path: a first walk of a large folder. */
 const SLOW_OWN_EDIT_MS = 2 * SECOND_MS;
+/**
+ * How long after a start the walks it deferred begin ({@link OwnAclEntries.walkDeferred}): past the
+ * harness's first boot, which they would otherwise slow on a two-core PC that Defender keeps busy.
+ */
+const DEFERRED_WALK_DELAY_MS = 2 * MINUTE_MS;
 /** Asks of `srt-win user status` for the sandbox user's SID, once it is set up, before giving up. */
 const SID_ATTEMPTS = 3;
 const SID_RETRY_MS = 1 * SECOND_MS;
@@ -151,6 +157,7 @@ const MESSAGE = {
   BadEnvName: (name: string) => `refusing to write the environment variable ${JSON.stringify(name)}`,
   AncestorGrant: (dir: string, error: unknown) =>
     `could not let the sandbox user see the folder ${dir}: ${errorMessage(error)}`,
+  WalkFailed: (error: unknown) => `own entries passed down later: ${errorMessage(error)}`,
   OwnEntry: (dir: string, error: unknown) =>
     `could not set the sandbox user's entries on ${dir}: ${errorMessage(error)}`,
   SlowOwnEdit: (dir: string, ms: number) =>
@@ -921,10 +928,12 @@ export function routeWindowsGrants(grants: WindowsGrants, deps: DenyRouteDeps = 
   return { srt, own: mergeEntries(own) };
 }
 
-/** What one holder's deny record keeps: whose entries, and which. */
+/** What one holder's deny record keeps: whose entries, which, and the walks under them still to run. */
 interface OwnRecord {
   sid: string;
   entries: OwnAclEntry[];
+  /** Paths whose entries were set on the path alone and are still to be passed down ({@link OwnWalk}). */
+  walks?: string[];
 }
 
 function isOwnEntry(value: unknown): value is OwnAclEntry {
@@ -936,11 +945,18 @@ function isOwnEntry(value: unknown): value is OwnAclEntry {
   return typeof entry.path === "string" && deny && grant && typeof entry.guard === "boolean";
 }
 
+/** A record, with its walks only when some are left. */
+function ownRecord(sid: string, entries: OwnAclEntry[], walks: readonly string[]): OwnRecord {
+  return walks.length > 0 ? { sid, entries, walks: [...walks] } : { sid, entries };
+}
+
 function readOwnRecord(file: string): OwnRecord | null {
   try {
     const parsed = JSON.parse(readFileSync(file, "utf8")) as Partial<OwnRecord>;
     if (typeof parsed.sid !== "string" || !Array.isArray(parsed.entries)) return null;
-    return { sid: parsed.sid, entries: (parsed.entries as unknown[]).filter(isOwnEntry) };
+    const walks = Array.isArray(parsed.walks) ? (parsed.walks as unknown[]).filter((p) => typeof p === "string") : [];
+    const entries = (parsed.entries as unknown[]).filter(isOwnEntry);
+    return { sid: parsed.sid, entries, ...(walks.length > 0 ? { walks } : {}) };
   } catch {
     return null;
   }
@@ -1018,32 +1034,45 @@ function slowEdits(edits: readonly FolderOwnEdit[], outcomes: readonly FolderAce
  * Apply `edits`, and again those that set something and were refused, up to
  * {@link GRANT_ATTEMPTS} in all: another process changing the same entries can refuse one once.
  * A batch that ran out of time is not tried again: what it set stays recorded, and the next sync
- * goes on from there. A take-back that fails is let go (its path may be gone). False when
- * PowerShell could not apply a batch here.
+ * goes on from there. A take-back that fails is let go (its path may be gone). Answers the paths
+ * whose walk was left for later, or null when PowerShell could not apply a batch here.
  */
 async function ownEach(
   edit: FolderOwnEditor,
   edits: readonly FolderOwnEdit[],
   retryMs: number,
   log?: (line: string) => void,
-) {
+): Promise<string[] | null> {
   let pending = [...edits];
+  const deferred: string[] = [];
   for (let attempt = 1; pending.length > 0; attempt++) {
     const outcomes = await edit(pending);
-    if (!outcomes) return false;
+    if (!outcomes) return null;
     for (const line of slowEdits(pending, outcomes)) log?.(line);
+    deferred.push(...pending.filter((_, i) => outcomes[i]?.ok && outcomes[i]?.deferred).map((one) => one.dir));
     const refused = pending.flatMap((one, i) => {
       const outcome = outcomes[i];
       if (outcome?.ok || !setsEntry(one)) return [];
       return [{ edit: one, error: outcome ? outcome.error : MESSAGE.NoAnswer, final: outcome?.timedOut === true }];
     });
     const first = refused[0];
-    if (!first) return true;
+    if (!first) return deferred;
     if (first.final || attempt >= GRANT_ATTEMPTS) throw new Error(MESSAGE.OwnEntry(first.edit.dir, first.error));
     await sleep(retryMs);
     pending = refused.map((r) => r.edit);
   }
-  return true;
+  return deferred;
+}
+
+/** The walks still to run: those `records` left and those just `deferred`, on the paths `entries` still name. */
+function pendingWalks(
+  records: readonly (OwnRecord | null)[],
+  deferred: readonly string[],
+  entries: readonly OwnAclEntry[],
+): string[] {
+  const named = new Set(entries.map((entry) => pathKey(entry.path)));
+  const walks = [...records.flatMap((record) => record?.walks ?? []), ...deferred];
+  return [...new Map(walks.filter((p) => named.has(pathKey(p))).map((p) => [pathKey(p), p])).values()];
 }
 
 /** How Genex's own grants and denies reach Windows: whom they name, and the editor that sets them. */
@@ -1073,6 +1102,12 @@ export interface OwnAclEntries {
    * out of time; what it set is kept, and the next sync goes on from there.
    */
   sync(entries: readonly OwnAclEntry[]): Promise<boolean>;
+  /**
+   * Pass down the entries a sync set on their path alone ({@link OwnWalk.Later}), and those an
+   * ended Genex left so: off the start's path, since nothing under those paths was open to the
+   * sandbox user through them. A walk that fails stays recorded for the next call.
+   */
+  walkDeferred(): Promise<void>;
   /** Take back every entry this holder recorded, except what another running Genex needs (uninstall, tests). */
   revokeAll(): Promise<void>;
   /** The same synchronously. */
@@ -1099,6 +1134,12 @@ export function ownAclEntries(holders: string, deps: OwnAclDeps): OwnAclEntries 
     await mkdir(holders, { recursive: true });
     await writeFile(recordFile, JSON.stringify(record));
   };
+  /** Record, then set: a crash between the two leaves a record of what this holder set before too. */
+  const apply = async (sid: string, previous: OwnRecord | null, wanted: OwnAclEntry[], edits: FolderOwnEdit[]) => {
+    const before = previous?.sid === sid ? previous.entries : [];
+    await save(ownRecord(sid, mergeEntries([...before, ...wanted]), previous?.walks ?? []));
+    return ownEach(edit, edits, retryMs, deps.log);
+  };
   const takeBackAll = () => {
     const record = readOwnRecord(recordFile);
     rmSync(recordFile, { force: true });
@@ -1114,16 +1155,37 @@ export function ownAclEntries(holders: string, deps: OwnAclDeps): OwnAclEntries 
       const previous = readOwnRecord(recordFile);
       const others = otherHolders(holders, self, alive, readOwnRecord);
       const stale = others.stale.flatMap((holder) => (holder.record ? [holder.record] : []));
-      const edits = ownEdits({ sid, entries: wanted }, [previous, ...stale], others.live);
-      if (edits.length > 0) {
-        // Recorded first, with what this holder set before: a crash between the two leaves a record.
-        const before = previous?.sid === sid ? previous.entries : [];
-        await save({ sid, entries: mergeEntries([...before, ...wanted]) });
-        if (!(await ownEach(edit, edits, retryMs, deps.log))) return false;
-        await save({ sid, entries: wanted });
-      }
+      // The walk under a path may wait where nothing it passes down reaches the sandbox user.
+      const edits = ownEdits({ sid, entries: wanted }, [previous, ...stale], others.live).map((one) => ({
+        ...one,
+        walk: OwnWalk.Later,
+      }));
+      const deferred = edits.length > 0 ? await apply(sid, previous, wanted, edits) : [];
+      if (!deferred) return false;
+      const walks = pendingWalks([previous, ...stale], deferred, wanted);
+      if (edits.length > 0 || walks.length > 0) await save(ownRecord(sid, wanted, walks));
       for (const holder of others.stale) rmSync(holder.file, { force: true });
       return true;
+    },
+    async walkDeferred() {
+      const record = readOwnRecord(recordFile);
+      if (!record?.walks?.length) return;
+      const keys = new Set(record.walks.map(pathKey));
+      const walked = { sid: record.sid, entries: record.entries.filter((entry) => keys.has(pathKey(entry.path))) };
+      const live = otherHolders(holders, self, alive, readOwnRecord).live;
+      const edits = ownEdits(walked, [], live).map((one) => ({ ...one, walk: OwnWalk.Again }));
+      const outcomes = (await edit(edits)) ?? [];
+      for (const line of slowEdits(edits, outcomes)) deps.log?.(line);
+      const done = new Set(edits.filter((_, i) => outcomes[i]?.ok).map((one) => pathKey(one.dir)));
+      // A sync may have run meanwhile: keep what it recorded, less the walks that ran.
+      const now = readOwnRecord(recordFile) ?? record;
+      await save(
+        ownRecord(
+          now.sid,
+          now.entries,
+          (now.walks ?? []).filter((p) => !done.has(pathKey(p))),
+        ),
+      );
     },
     async revokeAll() {
       const edits = takeBackAll();
@@ -1192,6 +1254,8 @@ export interface WindowsSessionDeps {
   realpath?: (p: string) => string;
   /** Whether a deny path exists (default: `existsSync`); srt-win makes the placeholder of one that does not. */
   exists?: (p: string) => boolean;
+  /** How long after an apply the walks it deferred begin (default {@link DEFERRED_WALK_DELAY_MS}). */
+  walkDelayMs?: number;
 }
 
 /** How many grants and denies a config hands srt-win. */
@@ -1232,6 +1296,9 @@ export class WindowsSandboxSession {
   #started = false;
   /** The last apply left the grants and denies on paths that exist to Genex ({@link ownAclEntries}), not srt-win. */
   #ownRouted = false;
+  /** The timer that starts the deferred walks, and the walks while they run; an apply waits for them. */
+  #walkTimer: NodeJS.Timeout | null = null;
+  #walking: Promise<void> | null = null;
 
   constructor(deps: WindowsSessionDeps) {
     this.#deps = deps;
@@ -1354,6 +1421,7 @@ export class WindowsSandboxSession {
   /** Release srt's grants and the folders above them; Genex's own grants and denies stay for the next start. */
   async dispose(): Promise<void> {
     await this.#applying?.catch(() => {});
+    this.#cancelWalks();
     this.#queued = false;
     if (this.#applied) await this.#deps.runtime.reset();
     this.#applied = null;
@@ -1415,6 +1483,8 @@ export class WindowsSandboxSession {
   #apply(): Promise<void> {
     this.#queued = false;
     const applying = (async () => {
+      // A walk rewrites the entries it passes down: an apply that sets them meanwhile could be undone.
+      await this.#walking;
       if (this.#members.size === 0) return this.#release();
       const grants = grantUnion([...this.#members.values()].map((member) => member.grants));
       const wasApplied = this.#applied;
@@ -1429,6 +1499,7 @@ export class WindowsSandboxSession {
       this.#ownEntries = plan.own;
       if (this.#networkChanged) this.#deps.runtime.updateConfig(this.#config(grants));
       this.#networkChanged = false;
+      if (this.#ownRouted) this.#walkLater();
     })();
     this.#applying = applying;
     const settle = () => {
@@ -1439,8 +1510,35 @@ export class WindowsSandboxSession {
     return applying;
   }
 
+  /** Start the walks the apply deferred once the start is past, off every command's path. */
+  #walkLater(): void {
+    const own = this.#deps.own;
+    if (!own || this.#walkTimer) return;
+    this.#walkTimer = setTimeout(() => {
+      this.#walkTimer = null;
+      // An apply already running is setting the entries a walk would rewrite: let it finish first.
+      const applying = this.#applying;
+      this.#walking = (async () => {
+        await applying?.catch(() => {});
+        await this.#timed("own entries passed down", () => own.walkDeferred());
+      })()
+        .catch((error: unknown) => this.#deps.log?.(MESSAGE.WalkFailed(error)))
+        .finally(() => {
+          this.#walking = null;
+        });
+    }, this.#deps.walkDelayMs ?? DEFERRED_WALK_DELAY_MS);
+    this.#walkTimer.unref?.();
+  }
+
+  /** No walk starts after this; one already running finishes (it stays recorded until it does). */
+  #cancelWalks(): void {
+    if (this.#walkTimer) clearTimeout(this.#walkTimer);
+    this.#walkTimer = null;
+  }
+
   /** No member is left: take back srt's grants and the folders above them; a later join starts again. */
   async #release(): Promise<void> {
+    this.#cancelWalks();
     const wasApplied = this.#applied;
     this.#applied = null;
     this.#appliedDenies = new Set();

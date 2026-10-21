@@ -6,7 +6,7 @@
 import { type RefObject, useEffect, useRef } from "react";
 import { COMPOSE_IN_CHAT_EVENT, type ComposeInChat } from "../compose-in-chat.ts";
 import type { PromptBarHandle } from "../ui/PromptBar.tsx";
-import type { Send } from "./use-submit.ts";
+import type { SendAnswered } from "./use-submit.ts";
 import type { ThreadDrafts } from "./use-thread-drafts.ts";
 
 /** The chat words may land in: its thread, its game and its open draft. */
@@ -28,7 +28,7 @@ export function useComposeInChat(
   project: string | null,
   drafts: OpenChat["drafts"],
   composer: RefObject<PromptBarHandle | null>,
-  submit: Send,
+  submit: SendAnswered,
 ): void {
   const open = useRef<OpenChat>({ threadId, project, drafts });
   open.current = { threadId, project, drafts };
@@ -46,10 +46,15 @@ export function useComposeInChat(
         // A draft the person was typing stays theirs: the send leaves it as it is.
         const typing = chat.drafts.draft.trim() !== "";
         composer.current?.compose(request.text);
-        send.current(request.text, undefined, typing).catch(() => {
-          // The send failed: the words wait in the composer, as typed words would.
-          if (!open.current.drafts.draft.includes(request.text)) open.current.drafts.putBack(thread, request.text);
-        });
+        send.current(request.text, undefined, typing).then(
+          (went) => {
+            if (went) request.sent?.();
+          },
+          () => {
+            // The send failed: the words wait in the composer, as typed words would.
+            if (!open.current.drafts.draft.includes(request.text)) open.current.drafts.putBack(thread, request.text);
+          },
+        );
         return;
       }
       // Asked again before sending, the words are already there: they go in once.

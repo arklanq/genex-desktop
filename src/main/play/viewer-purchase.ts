@@ -74,7 +74,7 @@ interface PurchaseHolder {
   signedOut: boolean;
 }
 
-/** What the sheet needs of the viewer: genex.games, the sign-in, the browser, the clock, the views and the bar's reveal. */
+/** What the sheet needs of the viewer: genex.games, the sign-in, the browser, the clock, the views and the bar's layer. */
 export interface PurchaseContext {
   deps: {
     coin: ViewerCoin;
@@ -91,7 +91,7 @@ export interface PurchaseContext {
   session(): PurchaseHolder | null;
   current(epoch: number): PurchaseHolder | null;
   draw(): void;
-  reveal: { sheet(open: boolean): void; covering(): boolean };
+  layer: { sheet(open: boolean): void; covering(): boolean };
 }
 
 /** What a sheet shows, apart from its purchase: its step and how it got there. */
@@ -365,7 +365,7 @@ async function poll(m: Machine, h: Held): Promise<void> {
 /** Open `h`'s sheet over the game at `face`. */
 function open(m: Machine, h: Held, face: Face): void {
   m.held = h;
-  m.ctx.reveal.sheet(true);
+  m.ctx.layer.sheet(true);
   show(m, h, face);
 }
 
@@ -375,12 +375,12 @@ function close(m: Machine, h: Held, how: Closing): void {
   if (how.cancel) cancelUnpaid(m, h);
   m.held = null;
   if (how.cooldown) coolDown(m);
-  m.ctx.reveal.sheet(false);
+  m.ctx.layer.sheet(false);
   const s = m.ctx.current(h.epoch);
   if (!s) return;
   s.state = { ...s.state, purchase: null };
   m.ctx.draw();
-  if (s.phase === PlayViewerPhase.Playing && !m.ctx.reveal.covering()) m.ctx.deps.game.focus();
+  if (s.phase === PlayViewerPhase.Playing && !m.ctx.layer.covering()) m.ctx.deps.game.focus();
 }
 
 /** Cancel a purchase still open to pay, best effort; one genex.games answers was paid after all shows Paid. */
@@ -393,7 +393,7 @@ function cancelUnpaid(m: Machine, h: Held): void {
     if (!nothingOpen) return;
     const again: Held = { ...h, intent, timers: noTimers() };
     m.held = again;
-    m.ctx.reveal.sheet(true);
+    m.ctx.layer.sheet(true);
     paid(m, again);
   });
 }

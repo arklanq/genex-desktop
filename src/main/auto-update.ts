@@ -36,6 +36,13 @@ export const AUTO_UPDATE_ENABLED = true;
 export const UPDATE_REPO = "genex-games/genex-desktop";
 /** How often an installed copy asks for a newer release (the `ms` syntax the library parses). */
 const UPDATE_CHECK_INTERVAL = "1 hour";
+/**
+ * How long a fresh install's first launch waits before its first check: Squirrel.Windows holds
+ * its lock on the install for a moment after `--squirrel-firstrun`, and a check then fails.
+ */
+export const FIRST_RUN_CHECK_DELAY_MS = 10 * SECOND_MS;
+/** The argument Squirrel.Windows starts a fresh install's first launch with. */
+const SQUIRREL_FIRST_RUN = "--squirrel-firstrun";
 /** The platforms update.electronjs.org serves. */
 const UPDATE_PLATFORMS: ReadonlySet<NodeJS.Platform> = new Set(["darwin", "win32"]);
 /** The platforms told about a release they download themselves. */
@@ -135,6 +142,11 @@ export function autoUpdateDecision(launch: UpdateLaunch): UpdateDecision {
   if (launch.productName !== "Genex") return { start: false, reason: UpdateSkip.Identity };
   if (UPDATE_PLATFORMS.has(launch.platform)) return { start: true, mode: UpdateMode.Install };
   return { start: true, mode: launch.systemPackages ? UpdateMode.System : UpdateMode.Notify };
+}
+
+/** How long this launch waits before its first update check (`FIRST_RUN_CHECK_DELAY_MS`). */
+export function firstCheckDelay(argv: readonly string[]): number {
+  return argv.includes(SQUIRREL_FIRST_RUN) ? FIRST_RUN_CHECK_DELAY_MS : 0;
 }
 
 /**

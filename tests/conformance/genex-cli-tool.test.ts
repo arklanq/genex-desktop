@@ -397,6 +397,17 @@ describe("genex__package: a pinned Genex SDK install into the bound game", () =>
       },
       /no package\.json/,
     ],
+    [
+      "a Godot game, which takes Genex's multiplayer in its project instead",
+      async (lib) => {
+        const game = lib.games["space-race"] ?? "";
+        await exec("git", ["rm", "-q", "package.json"], { cwd: game, env: GIT_ENV });
+        await mkdir(path.join(game, "godot"), { recursive: true });
+        await writeFile(path.join(game, "godot", "project.godot"), "config_version=5\n");
+        return { args: { package: "@genex-ai/multiplayer" }, directory: game };
+      },
+      /Godot game.*godot__multiplayer/,
+    ],
   ];
   for (const [name, arrange, message] of hostile) {
     it(`installs nothing for ${name}`, async () => {

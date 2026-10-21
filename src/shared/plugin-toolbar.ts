@@ -1,5 +1,5 @@
 import type { PluginInfo, PluginToolbarItem, PluginToolbarStatus } from "./plugins.ts";
-import { type GameKind, scopeReaches } from "./project-facts.ts";
+import { CoreFact, type GameKind, scopeReaches } from "./project-facts.ts";
 import { UiEvent } from "./ui-events.ts";
 
 /**
@@ -106,8 +106,9 @@ const updateDue = (plugin: PluginInfo): string | null =>
 /**
  * Multiplayer stands beside Publish, only on a game built at least once (`awaitingFirstBuild`) that
  * is not multiplayer already and has something in it (an empty one has nothing to play together),
- * whose page is its own: an engine's web export (`webFolderOf`) is a build, made again from its
- * project, that the chat never edits to add Genex's multiplayer to.
+ * whose page is its own or whose engine takes Genex's multiplayer in its project: an engine's web
+ * export (`webFolderOf`) is a build, made again from its project, that the chat never edits, so
+ * only an engine whose project carries Genex's multiplayer (`engineMultiplayer`, Godot's addon) gets it.
  */
 export const showsMultiplayer = (game: {
   publish: boolean;
@@ -115,7 +116,15 @@ export const showsMultiplayer = (game: {
   multiplayer: boolean;
   emptyGame: boolean;
   webExport: boolean;
-}): boolean => [game.publish, game.builtOnce, !game.multiplayer, !game.emptyGame, !game.webExport].every(Boolean);
+  engineMultiplayer: boolean;
+}): boolean =>
+  [game.publish, game.builtOnce, !game.multiplayer, !game.emptyGame, !game.webExport || game.engineMultiplayer].every(
+    Boolean,
+  );
+
+/** Whether the game's engine project takes Genex's multiplayer itself: a Godot game, through its plugin's addon. */
+export const takesEngineMultiplayer = (game: GameKind): boolean =>
+  game.facts.some((fact) => fact.id === CoreFact.GodotProject);
 
 /** What Multiplayer's press does, by where Genex stands. */
 export const MultiplayerPress = { SetUp: "set-up", Update: "update", Ask: "ask" } as const;

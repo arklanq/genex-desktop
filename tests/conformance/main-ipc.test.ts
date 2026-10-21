@@ -16,6 +16,7 @@ import { registerUpdateIpc } from "../../src/main/ipc/update.ts";
 import { registerStorageIpc } from "../../src/main/ipc/storage.ts";
 import { registerJobsIpc } from "../../src/main/ipc/jobs.ts";
 import { type PlayIpcDeps, registerPlayIpc } from "../../src/main/ipc/play.ts";
+import { gameLinks } from "../../src/main/play/game-links.ts";
 import { createLoginControllers, settleSignIn, type SubscriptionEngine } from "../../src/main/login-controllers.ts";
 import { AccountId, SubscriptionAccounts } from "../../src/substrate/engines/subscription-accounts.ts";
 import { EngineStatusCode } from "../../src/shared/engine-descriptor.ts";
@@ -1145,15 +1146,19 @@ describe("the in-window update prompt", () => {
 });
 
 describe("Play's share menu", () => {
-  /** Play's channels with only Share… live: every menu it pops is kept. */
-  function shareRig(web: string) {
+  /** Play's channels with only Share… and game links live: every menu it pops is kept. */
+  function shareRig(web: string, links = gameLinks()) {
     const { handle, invoke } = registrar();
     const shared: Array<[string, unknown]> = [];
     const unused = {} as unknown;
     registerPlayIpc(handle, {
       gallery: unused as PlayIpcDeps["gallery"],
+      gameLinks: links,
       remix: async () => "",
       viewer: () => null,
+      installs: () => null,
+      sessions: () => null,
+      reveal: () => {},
       people: unused as PlayIpcDeps["people"],
       creators: unused as PlayIpcDeps["creators"],
       credits: unused as PlayIpcDeps["credits"],
@@ -1163,6 +1168,15 @@ describe("Play's share menu", () => {
     });
     return { invoke, shared };
   }
+
+  it("hands the page the game a genex:// link asked for, once", async () => {
+    const links = gameLinks();
+    const { invoke } = shareRig("https://genex.games", links);
+    assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: null });
+    links.arrive("genex://game/iron-tide");
+    assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: "iron-tide" });
+    assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: null });
+  });
 
   it("pops for a page of the website Play links to, by the button that asked", async () => {
     const { invoke, shared } = shareRig("https://genex.games");

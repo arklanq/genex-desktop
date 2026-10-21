@@ -14,6 +14,8 @@ export interface ComposeInChat {
   text: string;
   /** Send them too, as if typed and sent; otherwise they wait in the composer. */
   send?: boolean;
+  /** Called once the chat really sent them; never when they wait in the composer instead. */
+  sent?: () => void;
 }
 
 /** The window event {@link composeInChat} dispatches and the open chat listens for. */

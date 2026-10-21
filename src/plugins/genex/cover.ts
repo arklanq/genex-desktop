@@ -20,6 +20,7 @@ import {
   GENEX_COVER_CANDIDATES_DIR,
   GENEX_COVER_MAX_BYTES,
   GENEX_COVER_SHOT_FILE,
+  type GenexCoverAgentTook,
   GenexCoverOrigin,
   type GenexCoverFrameStats,
   GenexCoverOperation,
@@ -75,6 +76,8 @@ export const COVER_CANDIDATES_MAX = 4;
 /** A candidate's name: the sha256 of its image bytes, nothing a path could hide in. */
 const CANDIDATE_SHA = /^[0-9a-f]{64}$/;
 const SENT_RECORD = "sent.json";
+/** When the agent itself last kept a shot and a clip (`GenexCoverAgentTook`). */
+const AGENT_RECORD = "agent.json";
 /** A send's own copy of the shot it uploads, beside the shot: removed when the send ends. */
 const SEND_COPY_PREFIX = ".send-";
 const PRIVATE_FILE = 0o600;
@@ -546,6 +549,25 @@ export async function readSent(dir: string): Promise<GenexCoverSent | null> {
   const sent = await readJsonFile(path.join(dir, SENT_RECORD));
   const valid = isJsonObject(sent) && OUTCOME_KINDS.has(String(sent.kind)) && typeof sent.at === "string";
   return valid ? (sent as unknown as GenexCoverSent) : null;
+}
+
+/** A time the agent record keeps, when it is one. */
+const isTime = (value: unknown): value is string => typeof value === "string" && Number.isFinite(Date.parse(value));
+
+/** When the agent itself last kept a shot and a clip; anything unsound in the record is left out. */
+export async function readAgentTook(dir: string): Promise<GenexCoverAgentTook> {
+  const kept = await readJsonFile(path.join(dir, AGENT_RECORD));
+  if (!isJsonObject(kept)) return {};
+  return {
+    ...(isTime(kept.shot) ? { shot: kept.shot } : {}),
+    ...(isTime(kept.clip) ? { clip: kept.clip } : {}),
+  };
+}
+
+/** Note that the agent itself kept a shot or a clip at these times; the other kind's time stays. */
+export async function noteAgentTook(dir: string, took: GenexCoverAgentTook): Promise<void> {
+  const next = { ...(await readAgentTook(dir)), ...took };
+  await atomicWriteText(path.join(dir, AGENT_RECORD), `${JSON.stringify(next, null, 2)}\n`, { mode: PRIVATE_FILE });
 }
 
 /** Write bytes beside their final name, private, then put them in place in one rename. */

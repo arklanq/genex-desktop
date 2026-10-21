@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { cp, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { build } from "esbuild";
+import { bridgeLicenses } from "./vendor-genex-multiplayer.ts";
 import { inlinePanelFonts, inlinePanelSdk } from "../src/plugin-sdk/inline-panel-sdk.mjs";
 const require = createRequire(import.meta.url);
 
@@ -344,8 +345,15 @@ async function buildGodot(root, resources, sdk) {
   await writeFile(path.join(godot, "panel.html"), await inlinePanelFonts(panel, path.join(root, "src/renderer/fonts")));
   // Genex's own GDScript (the check and the plays), the new-game templates and the addon a set-up
   // game carries (the Play Protocol autoload), read beside the backend.
-  for (const folder of ["scripts", "templates", "addon"])
+  for (const folder of ["scripts", "templates", "addon", "skills", "multiplayer"])
     await cp(path.join(source, folder), path.join(godot, folder), { recursive: true });
+  // Genex's multiplayer SDK bridge (the SDK and its embed SDK in one script), which a multiplayer
+  // game's web export loads beside its page: the pinned version Studio installs.
+  await cp(
+    path.join(root, "node_modules/@genex-ai/multiplayer/dist/bridge.global.js"),
+    path.join(godot, "multiplayer/genex-multiplayer-bridge.js"),
+  );
+  await writeFile(path.join(godot, "multiplayer/genex-multiplayer-bridge.LICENSES.md"), await bridgeLicenses(root));
   await build({
     ...NODE_BACKEND,
     entryPoints: [path.join(source, "backend.ts")],

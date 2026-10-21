@@ -18,6 +18,8 @@ import { describe, it } from "node:test";
 import { setImmediate as turn, setTimeout as delay } from "node:timers/promises";
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import { SandboxProblemCode, WindowsSetupNeed } from "../../src/shared/boot.ts";
+import { launchGameBridge } from "../../src/main/core/game-bridge-target.ts";
+import { openCodeEvents } from "../../src/substrate/engines/opencode.ts";
 import { HarnessHost } from "../../src/substrate/harness-host.ts";
 import {
   SandboxLaunchCode,
@@ -85,6 +87,7 @@ import {
   folderOwnEditor,
   FOLDER_ACE_SCRIPT,
   icaclsArgs,
+  OwnWalk,
 } from "../../src/substrate/windows-folder-ace.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -93,7 +96,10 @@ const ENV_FILE_POLLS = 200;
 const POLL_MS = 10;
 /** Run input larger than any OS pipe buffer, so no write of it can finish before the reader closes. */
 const PIPE_OVERFLOW_BYTES = 1024 * 1024;
+const FAKE_PLAY_GAME = path.resolve(import.meta.dirname, "../fixtures/fake-play-game.mjs");
 const PROFILE = "C:\\Users\\Ann";
+/** The longest command line, and environment variable, Windows passes to a process. */
+const WINDOWS_COMMAND_LINE_CHARS = 32_767;
 const at = (...parts: string[]) => [PROFILE, ...parts].join("\\");
 
 describe("grant union", () => {
@@ -411,11 +417,20 @@ describe("an entry on one folder alone", () => {
   it("runs Windows PowerShell by its full path and hands it the batch out of reach of any code page", () => {
     const command = folderAceCommand(edits, { SystemRoot: "D:\\Win" });
     assert.equal(command.file, "D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
-    const script = command.args.at(-1) ?? "";
-    assert.equal(Buffer.from(script, "base64").toString("utf16le"), FOLDER_ACE_SCRIPT);
+    const script = command.env.GENEX_FOLDER_ACE_SCRIPT ?? "";
+    assert.equal(Buffer.from(script, "base64").toString("utf8"), FOLDER_ACE_SCRIPT);
     const payload = command.env.GENEX_FOLDER_ACES ?? "";
     assert.match(payload, /^[A-Za-z0-9+/=]+$/, "only base64 crosses the process boundary");
     assert.deepEqual(JSON.parse(Buffer.from(payload, "base64").toString("utf8")), edits);
+  });
+
+  it("keeps its command line inside Windows' 32,767 characters, however long the script grows", () => {
+    // The script outgrew it once: CreateProcess refused PowerShell ("The filename or extension is
+    // too long"), every batch answered nothing, and every grant fell back to icacls.
+    const command = folderAceCommand(edits, { SystemRoot: "C:\\Windows" });
+    assert.ok([command.file, ...command.args].join(" ").length < WINDOWS_COMMAND_LINE_CHARS / 4);
+    const variables = Object.values(command.env).map((value) => `${value}`.length);
+    assert.ok(Math.max(...variables) < WINDOWS_COMMAND_LINE_CHARS, "and each variable inside the same limit");
   });
 
   it("reads one outcome per edit, and nothing else as an answer", () => {
@@ -481,6 +496,11 @@ describe("an entry on one folder alone", () => {
     const locked = folderOwnEditor({ powershell: async () => Promise.reject(new Error("Cannot invoke method")) });
     assert.equal(await locked([edit]), null);
     assert.deepEqual(folderAceOutcomes('[{"ok":true,"ms":41000}]', 1), [{ ok: true, ms: 41_000 }]);
+    assert.deepEqual(
+      folderAceOutcomes('[{"ok":true,"ms":12,"deferred":true}]', 1),
+      [{ ok: true, ms: 12, deferred: true }],
+      "an edit that left its walk for later says so",
+    );
   });
 
   it("uses PowerShell's answer when it gives one, and runs nothing for no edits", async () => {
@@ -508,7 +528,11 @@ describe("an entry on one folder alone, on Windows", {
     return readFileSync(file, "utf16le");
   };
   const GUESTS = "S-1-5-32-546";
+  const USERS = "S-1-5-32-545";
   const guestsRead = /\(A;;0x100080;;;BG\)/;
+  /** The sandbox user is in BUILTIN\Users: an allow for them on `dir` reaches it in everything below. */
+  const openToUsers = (dir: string) =>
+    execFileSync("icacls", [dir, "/grant", `*${USERS}:(OI)(CI)(RX)`], { stdio: "ignore" });
 
   it("edits each folder of a batch, any name, and says which one it could not", async () => {
     const root = realpathSync.native(await tmpDir("folder-ace-"));
@@ -536,7 +560,6 @@ describe("an entry on one folder alone, on Windows", {
   });
 
   it("grants and takes back on the folder alone, never rewriting the folders under it", async () => {
-    const USERS = "S-1-5-32-545";
     const root = realpathSync.native(await tmpDir("folder-only-grant-"));
     const above = path.join(root, "above");
     const moved = path.join(above, "deep", "moved");
@@ -573,6 +596,7 @@ describe("an entry on one folder alone, on Windows", {
     const elsewhere = path.join(root, "elsewhere");
     await mkdir(path.dirname(key), { recursive: true });
     await writeFile(key, "key");
+    openToUsers(secret);
     await mkdir(path.dirname(moved), { recursive: true });
     await mkdir(elsewhere);
     // As above: the moved folder keeps what it inherited elsewhere until something walks `above`,
@@ -596,6 +620,123 @@ describe("an entry on one folder alone, on Windows", {
     await denies.revokeAll();
     for (const dir of [secret, key, above]) assert.doesNotMatch(sddl(dir, root), /\(D;[^)]*;;;BG\)/, dir);
     assert.match(sddl(moved, root), inheritedElsewhere, "nor by the take-back");
+  });
+
+  /** The running user's SID, as `whoami` says it. */
+  const runningUser = () => {
+    const sid = /"(S-1-[^"]+)"/.exec(
+      execFileSync(
+        path.win32.join(process.env.SystemRoot ?? "C:\\Windows", "System32", "whoami.exe"),
+        ["/user", "/fo", "csv", "/nh"],
+        { encoding: "utf8" },
+      ),
+    )?.[1];
+    assert.ok(sid, "the running user's SID");
+    return sid;
+  };
+  /** A folder like a browser profile: only its owner, SYSTEM and the Administrators, passed down. */
+  const ownerOnly = (dir: string) => {
+    const closed = [`*${runningUser()}:(OI)(CI)(F)`, "*S-1-5-18:(OI)(CI)(F)", "*S-1-5-32-544:(OI)(CI)(F)"];
+    execFileSync("icacls", [dir, "/inheritance:r", "/grant:r", ...closed], { stdio: "ignore" });
+  };
+  const denyLater = (dir: string): FolderOwnEdit => ({
+    dir,
+    sid: GUESTS,
+    op: FolderAceOp.Own,
+    deny: DenyAccess.Read,
+    guard: false,
+    grant: null,
+    allows: false,
+    walk: OwnWalk.Later,
+  });
+
+  it("denies a folder only its owner may open on that folder alone at first, and passes it down later", async () => {
+    // A lived-in Windows 11 profile: passing the deny down Chrome's profile took 17 s of the first
+    // start, although only its owner, SYSTEM and the Administrators could open anything in it.
+    const root = realpathSync.native(await tmpDir("folder-deny-closed-"));
+    const secret = path.join(root, "above", "User Data");
+    const before = path.join(secret, "Default", "Cookies");
+    await mkdir(path.dirname(before), { recursive: true });
+    await writeFile(before, "before");
+    ownerOnly(secret);
+    const denies = ownAclEntries(path.join(root, "holders"), { sid: async () => GUESTS, pid: 1, alive: () => false });
+    assert.equal(await denies.sync(routeWindowsDenies({ read: [secret], write: [] }).own), true);
+    assert.match(sddl(secret, root), /\(D;OICI;FA;;;BG\)/, "the folder is denied, to pass down");
+    assert.doesNotMatch(sddl(before, root), /;;;BG\)/, "nothing under it was walked during the start");
+    const later = path.join(secret, "Login Data");
+    await writeFile(later, "later");
+    assert.match(sddl(later, root), /\(D;ID;FA;;;BG\)/, "a file made in it meanwhile inherits the deny");
+    // One made deeper inherits its folder's entries, still the owner's only, until the walk.
+    const deeper = path.join(secret, "Default", "Login Data");
+    await writeFile(deeper, "later");
+    assert.doesNotMatch(sddl(deeper, root), /\(A;[^)]*;;;(?:BG|BU|WD|AU)\)/, "nothing opens it to the sandbox user");
+    await denies.walkDeferred();
+    assert.match(sddl(before, root), /\(D;ID;FA;;;BG\)/, "the walk later passes the deny down");
+    await denies.revokeAll();
+    for (const p of [secret, later, before]) assert.doesNotMatch(sddl(p, root), /\(D;[^)]*;;;BG\)/, p);
+  });
+
+  // The walk may wait only where the sandbox user can open nothing under the path with or without
+  // it. Each of these opens something to it (BUILTIN\Users, which it is in), so the walk runs now.
+  const hostile: Array<[string, (secret: string, root: string) => Promise<void>]> = [
+    [
+      "a folder moved in with an allow it inherited elsewhere",
+      async (secret, root) => {
+        const elsewhere = path.join(root, "elsewhere");
+        await mkdir(path.join(elsewhere, "moved"), { recursive: true });
+        execFileSync("icacls", [elsewhere, "/grant", `*${USERS}:(OI)(CI)(RX)`], { stdio: "ignore" });
+        await rename(path.join(elsewhere, "moved"), path.join(secret, "Default", "moved"));
+      },
+    ],
+    [
+      "a file of its own allowing Users",
+      async (secret) => {
+        const file = path.join(secret, "Default", "shared.txt");
+        await writeFile(file, "shared");
+        execFileSync("icacls", [file, "/grant", `*${USERS}:(R)`], { stdio: "ignore" });
+      },
+    ],
+    [
+      "a protected folder allowing Users",
+      async (secret) => {
+        const folder = path.join(secret, "Default", "protected");
+        await mkdir(folder);
+        execFileSync("icacls", [folder, "/inheritance:d", "/grant", `*${USERS}:(OI)(CI)(RX)`], { stdio: "ignore" });
+      },
+    ],
+    [
+      "a file Everyone may read, deep down",
+      async (secret) => {
+        const file = path.join(secret, "Default", "a", "b", "c.txt");
+        await mkdir(path.dirname(file), { recursive: true });
+        await writeFile(file, "deep");
+        execFileSync("icacls", [file, "/grant", "*S-1-1-0:(R)"], { stdio: "ignore" });
+      },
+    ],
+  ];
+  for (const [shape, plant] of hostile) {
+    it(`passes a deny down at once over ${shape}`, async () => {
+      const root = realpathSync.native(await tmpDir("folder-deny-open-"));
+      const secret = path.join(root, "User Data");
+      await mkdir(path.join(secret, "Default"), { recursive: true });
+      ownerOnly(secret);
+      await plant(secret, root);
+      const outcomes = await folderOwnEditor()([denyLater(secret)]);
+      assert.equal(outcomes?.[0]?.ok, true, JSON.stringify(outcomes));
+      assert.equal(outcomes?.[0]?.ok && outcomes[0].deferred, undefined, "the walk did not wait");
+      assert.match(sddl(path.join(secret, "Default"), root), /\(D;OICIID;FA;;;BG\)/, "it was passed down");
+      await folderOwnEditor()([{ ...denyLater(secret), deny: null, walk: undefined }]);
+    });
+  }
+
+  it("passes a deny down at once where the folder itself passes Users an allow", async () => {
+    const root = realpathSync.native(await tmpDir("folder-deny-open-"));
+    const secret = path.join(root, "User Data");
+    await mkdir(path.join(secret, "Default"), { recursive: true });
+    openToUsers(secret);
+    const outcomes = await folderOwnEditor()([denyLater(secret)]);
+    assert.equal(outcomes?.[0]?.ok && outcomes[0].deferred, undefined);
+    assert.match(sddl(path.join(secret, "Default"), root), /\(D;OICIID;FA;;;BG\)/);
   });
 
   it("grants a folder and what is in it, and the folder entry above the grants comes and goes beside it", async () => {
@@ -634,7 +775,6 @@ describe("an entry on one folder alone, on Windows", {
     const own = routeWindowsGrants({ write: [game], read: [] }).own;
     assert.equal(await first.sync(own), true);
     // A folder moved in keeps what it inherited where it was made until a walk works it out again.
-    const USERS = "S-1-5-32-545";
     execFileSync("icacls", [elsewhere, "/grant", `*${USERS}:(OI)(CI)(RA)`], { stdio: "ignore" });
     await mkdir(path.join(elsewhere, "moved"));
     await rename(path.join(elsewhere, "moved"), moved);
@@ -701,6 +841,7 @@ describe("an entry on one folder alone, on Windows", {
         await mkdir(path.dirname(key), { recursive: true });
         await mkdir(sibling);
         await writeFile(key, "fixture");
+        openToUsers(secret);
         if (protectedAcl) execFileSync("icacls", [secret, "/inheritance:d"], { stdio: "ignore" });
         const protectedDacl = /D:P/;
         assert.equal(protectedDacl.test(sddl(secret, root)), protectedAcl, "fixture inheritance");
@@ -1133,14 +1274,19 @@ function fakeAncestors() {
  * Genex's own entries over a fake: each sync's entries, logged in `calls` as "own entries";
  * `available: false` answers as a PC where Genex cannot set them (no sandbox users' group).
  */
-function fakeOwnEntries(calls: string[], options: { available?: boolean } = {}) {
+function fakeOwnEntries(calls: string[], options: { available?: boolean; walk?: () => Promise<void> } = {}) {
   const synced: OwnAclEntry[][] = [];
   let revoked = 0;
+  let walked = 0;
   const entries: OwnAclEntries = {
     sync: async (entries) => {
       calls.push("own entries");
       synced.push([...entries]);
       return options.available ?? true;
+    },
+    walkDeferred: async () => {
+      walked++;
+      await options.walk?.();
     },
     revokeAll: async () => {
       revoked++;
@@ -1149,7 +1295,7 @@ function fakeOwnEntries(calls: string[], options: { available?: boolean } = {}) 
       revoked++;
     },
   };
-  return { entries, synced, revoked: () => revoked };
+  return { entries, synced, revoked: () => revoked, walked: () => walked };
 }
 
 /**
@@ -1162,11 +1308,16 @@ function session(
     profile?: string;
     ownDenies?: boolean | "unavailable";
     exists?: (p: string) => boolean;
+    walk?: () => Promise<void>;
+    walkDelayMs?: number;
   } = {},
 ) {
   const runtime = fakeSessionRuntime();
   const ancestors = fakeAncestors();
-  const own = fakeOwnEntries(runtime.calls, { available: options.ownDenies !== "unavailable" });
+  const own = fakeOwnEntries(runtime.calls, {
+    available: options.ownDenies !== "unavailable",
+    ...(options.walk ? { walk: options.walk } : {}),
+  });
   const logged: string[] = [];
   const value = new WindowsSandboxSession({
     runtime: runtime.runtime,
@@ -1175,6 +1326,7 @@ function session(
     ...(options.ownDenies ? { own: own.entries } : {}),
     ...(options.realDenies ? {} : { keepDenies: (paths: readonly string[]) => [...paths], exists: () => true }),
     ...(options.exists ? { exists: options.exists } : {}),
+    ...(options.walkDelayMs === undefined ? {} : { walkDelayMs: options.walkDelayMs }),
     log: (line) => logged.push(line),
   });
   return { session: value, runtime, ancestors, own, logged };
@@ -1573,6 +1725,51 @@ describe("deny paths Genex sets itself", () => {
     assert.equal(s.own.revoked(), 0);
   });
 
+  it("passes the deferred denies down after the start, off its path, and a regrant waits for that walk", async () => {
+    let finish = () => {};
+    const walking = new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    const s = session({ ownDenies: true, walk: () => walking, walkDelayMs: 0 });
+    const owner = {};
+    await s.session.join(owner, denying([at(".ssh")]));
+    assert.equal(s.own.walked(), 0, "the start does not wait for the walk");
+    await delay(0);
+    await turn();
+    assert.equal(s.own.walked(), 1, "the walk starts once the start is done");
+    s.session.update(owner, { write: [PONG, LATE], read: [] });
+    await turn();
+    assert.deepEqual(s.runtime.calls, ["own entries", "initialize"], "no regrant while the walk runs");
+    finish();
+    await s.session.settled();
+    assert.deepEqual(s.runtime.calls, ["own entries", "initialize", "reset", "own entries", "initialize"]);
+    await s.session.dispose();
+  });
+
+  it("starts a deferred walk only once a regrant already running has finished", async () => {
+    const s = session({ ownDenies: true, walkDelayMs: 10 });
+    const owner = {};
+    await s.session.join(owner, denying([at(".ssh")]));
+    const release = s.runtime.hold();
+    s.session.update(owner, { write: [PONG, LATE], read: [] });
+    await turn();
+    await delay(30);
+    assert.equal(s.own.walked(), 0, "the walk waits for the regrant that is setting the entries");
+    release();
+    await s.session.settled();
+    await turn();
+    assert.equal(s.own.walked(), 1);
+    await s.session.dispose();
+  });
+
+  it("starts no deferred walk once disposed", async () => {
+    const s = session({ ownDenies: true, walkDelayMs: 0 });
+    await s.session.join({}, denying([at(".ssh")]));
+    await s.session.dispose();
+    await delay(0);
+    assert.equal(s.own.walked(), 0);
+  });
+
   it("hands srt-win no grant on a folder that exists, so no start walks a granted folder again", async () => {
     // srt-win's grant passed its entry down through everything under each folder at every start
     // (a toolchain, a games folder full of node_modules) and ran past its 60-second deadline.
@@ -1790,6 +1987,75 @@ describe("Genex's own deny entries", () => {
     assert.deepEqual(await readdir(holders), ["2.json"]);
   });
 
+  it("leaves the walk under a path for later where the editor may, and passes it down later, once", async () => {
+    // A lived-in Windows 11 profile: passing the deny down Chrome's profile took 17 s of a first
+    // start, although nothing in it was open to the sandbox user.
+    const holders = await tmpDir("windows-denies-");
+    const asked: FolderOwnEdit[][] = [];
+    const denies = holder(holders, 1, [], {
+      edit: async (edits) => {
+        asked.push([...edits]);
+        return edits.map((edit) =>
+          edit.dir === ssh.path && edit.walk === OwnWalk.Later
+            ? ({ ok: true, deferred: true } as const)
+            : ({ ok: true } as const),
+        );
+      },
+    });
+    assert.equal(await denies.sync([guard, ssh]), true);
+    assert.deepEqual(
+      asked[0]?.map((edit) => edit.walk),
+      [OwnWalk.Later, OwnWalk.Later],
+      "every edit of a start may leave its walk for later",
+    );
+    await denies.walkDeferred();
+    assert.deepEqual(
+      asked[1]?.map((edit) => [edit.dir, edit.deny, edit.walk]),
+      [[ssh.path, DenyAccess.Read, OwnWalk.Again]],
+      "only the deferred path is walked, with the entries it needs",
+    );
+    await denies.walkDeferred();
+    assert.equal(asked.length, 2, "a walk that ran is not run again");
+  });
+
+  it("keeps a walk a Genex that ended never ran, and runs it in the next one", async () => {
+    const holders = await tmpDir("windows-denies-");
+    const ended = { sid: SID, entries: [ssh], walks: [ssh.path] };
+    await writeFile(path.join(holders, `${DEAD_PID}.json`), JSON.stringify(ended));
+    const asked: FolderOwnEdit[][] = [];
+    const next = holder(holders, 1, [], {
+      edit: async (edits) => {
+        asked.push([...edits]);
+        return done(edits);
+      },
+    });
+    assert.equal(await next.sync([ssh]), true);
+    await next.walkDeferred();
+    assert.deepEqual(
+      asked.at(-1)?.map((edit) => [edit.dir, edit.walk]),
+      [[ssh.path, OwnWalk.Again]],
+    );
+    assert.deepEqual(await readdir(holders), ["1.json"], "the ended Genex's record is gone, its walk carried over");
+  });
+
+  it("drops a deferred walk on a path no longer needed", async () => {
+    const holders = await tmpDir("windows-denies-");
+    const asked: FolderOwnEdit[][] = [];
+    const denies = holder(holders, 1, [], {
+      edit: async (edits) => {
+        asked.push([...edits]);
+        return edits.map((edit) =>
+          edit.dir === ssh.path ? ({ ok: true, deferred: true } as const) : ({ ok: true } as const),
+        );
+      },
+    });
+    await denies.sync([ssh]);
+    await denies.sync([guard]);
+    const batches = asked.length;
+    await denies.walkDeferred();
+    assert.equal(asked.length, batches, "nothing left to walk");
+  });
+
   it("tries again only the entries refused once, and lets a take-back on a path that is gone go", async () => {
     const holders = await tmpDir("windows-denies-");
     const batches: string[][] = [];
@@ -1978,7 +2244,8 @@ async function windowsSandbox(
     ) => {
       wraps.push({ command, binShell, config, cwd });
       if (options.wrapError) throw options.wrapError;
-      return { argv: [bash, "-c", command], env: process.env };
+      // As srt-win does, the command's stdin is never the pipe the host writes to.
+      return { argv: [bash, "-c", `exec 0</dev/null; ${command}`], env: process.env };
     }) as SandboxRuntime["wrapWithSandboxArgv"],
     annotateStderrWithSandboxFailures: (_command: string, stderr: string) => stderr,
   } as unknown as SandboxRuntime;
@@ -2040,6 +2307,59 @@ describe("ProcessSandbox on Windows", () => {
       stdin: "x".repeat(PIPE_OVERFLOW_BYTES),
     });
     assert.equal(result.stdout.trim(), String(PIPE_OVERFLOW_BYTES), result.stderr);
+  });
+
+  it("delivers OpenCode's brief through the stdin file, so the CLI has a message to run", async () => {
+    // Issue #303: the brief written down the pipe never reached `opencode run`, which failed
+    // every build turn with "You must provide a message".
+    const w = await windowsSandbox();
+    const brief = "Write hello to out.txt\nit's $(echo ran)";
+    // A stand-in CLI: Node, printing the whole of its stdin as one event.
+    const cli = path.join(w.root, "cli.cjs");
+    await writeFile(
+      cli,
+      'process.stdout.write(JSON.stringify({ brief: require("node:fs").readFileSync(0, "utf8") }) + "\\n");\n',
+    );
+    const seen: Array<Record<string, unknown>> = [];
+    const invocation = {
+      argv: [cli.replaceAll("\\", "/")],
+      cwd: w.workspace,
+      prompt: brief,
+      env: {},
+      signal: new AbortController().signal,
+      domains: [],
+    };
+    const node = process.execPath.replaceAll("\\", "/");
+    for await (const event of openCodeEvents(w.sandbox, node, invocation)) seen.push(event);
+    assert.deepEqual(seen, [{ brief }]);
+    const leftovers = (await readdir(w.sandbox.scratchDir)).filter((name) => name.startsWith(".stdin-"));
+    assert.deepEqual(leftovers, [], "the stdin file is gone once the CLI has opened it");
+    assert.equal(w.session.session.active, 0, "the CLI gave the session back");
+  });
+
+  it("drives a Play Protocol game it started, its requests reaching the game through the input relay", async () => {
+    // srt-win drops stdin, so a game's requests went nowhere and its hello never answered.
+    const w = await windowsSandbox();
+    const node = process.execPath.replaceAll("\\", "/");
+    const launched = await launchGameBridge({
+      sandbox: w.sandbox,
+      command: `'${node}' '${FAKE_PLAY_GAME.replaceAll("\\", "/")}'`,
+      cwd: w.workspace,
+      stopGraceMs: 2_000,
+    });
+    try {
+      assert.equal(launched.target.hello?.protocol, 3);
+      assert.match(
+        w.wraps[0]?.command ?? "",
+        /ELECTRON_RUN_AS_NODE=1; exec .*\.input-relay-/,
+        "the relay runs in the game's place",
+      );
+    } finally {
+      await launched.stop();
+    }
+    const leftovers = (await readdir(w.sandbox.scratchDir)).filter((name) => name.startsWith(".input-relay-"));
+    assert.deepEqual(leftovers, [], "the relay's file is gone");
+    assert.equal(w.session.session.active, 0, "the game gave the session back");
   });
 
   it("with the sandbox off (tests only), runs Git Bash with the Windows basics, never /bin/sh", async () => {

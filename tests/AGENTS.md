@@ -16,7 +16,9 @@ preload `helpers/leftover-children.ts` into every test file's process: a file th
 child process running after its own `after` hooks fails by name, instead of never exiting and
 holding a runner slot. Stop what a test starts:
 a core's `stop()` (or core-lite's `close()`), a `ProcessSandbox`'s `dispose()`. On Linux,
-sandbox-runtime's socat bridges run until the last sandbox is disposed.
+sandbox-runtime's socat bridges run until the last sandbox is disposed. Node runs a file's root
+`after` hooks once the tests registered so far have ended, so the check also waits for tests a
+file registers after a top-level await (it follows `node:test`'s `node.test` trace).
 
 Each batch also runs with `TMPDIR`, `TMP` and `TEMP` set to a folder of its own (`/tmp/gt-…` off
 Windows, or in the inherited temp folder where `/tmp` is not writable), removed when the batch
@@ -50,6 +52,8 @@ through the JS API imports `@typescript/typescript6`.
 - `fake-ollama.ts`, `scripted-claude.ts`, `scripted-codex.ts`: scripted engines, no network.
   `fake-anthropic.ts`: enough of Anthropic's Messages API for the real Claude Code CLI to run one
   scripted worker command (`ANTHROPIC_BASE_URL`, a dummy OAuth token, nothing billed).
+  `fake-openai-responses.ts`: the same for the real Codex CLI over OpenAI's Responses API (a custom
+  model provider, no sign-in).
 - `snapshot-fixtures.ts`: dirty, untracked and nested user repositories.
 - `unreal-lead-host.ts`: a fake host for the Unreal runner's lead (its scripted turns calling the
   run tools, the editor's answers, the clock), whose moments run on `unreal-moment-bus.ts`, a fake
@@ -160,7 +164,9 @@ run them only with explicit permission. Evidence goes to `.studio-dev/evidence/`
 `tests/windows-suite.json` is the Windows CI's required suite
 ([verification](../docs/agent/verification.md#test-layers)). When a test file is meaningful on
 Windows and passes there, add it, sorted; `windows-suite.test.ts` refuses missing, duplicate,
-unsorted and rig entries. A POSIX-only case skips on `win32` with its reason; don't drop the
+unsorted and rig entries. A file that changes the whole machine (a reservation of the sandbox's
+proxy ports) is listed in `RUN_ALONE` in `scripts/test-windows.mjs`, which runs it after the rest,
+one at a time. A POSIX-only case skips on `win32` with its reason; don't drop the
 file from the list for it. The informational fast-group report (a Windows dispatch with
 `backlog`) lists the files still to fix and the clean ones ready to add.
 
@@ -168,8 +174,11 @@ file from the list for it. The informational fast-group report (a Windows dispat
 
 Tests that read local projects or open the network are skipped unless opted in:
 `STUDIO_LOCAL_FIXTURES=1` for local projects, `STUDIO_NETWORK_TESTS=1` for real network and
-local Ollama probes, `STUDIO_GODOT_LIVE=1` for the Godot plugin against this Mac's own Godot
+local Ollama probes (on Windows also Local Blender's real download and a sandboxed job,
+`blender-windows-live.test.ts`), `STUDIO_GODOT_LIVE=1` for the Godot plugin against this Mac's own Godot
 (`godot-live.test.ts`), `STUDIO_CLAUDE_CLI_TESTS=1` for the real Claude Code CLI against
-`fake-anthropic.ts` (`claude-studio-shell-cli.test.ts`, `claude-tool-loading.test.ts`). Never make a default test depend on this machine. `STUDIO_RIG_UNSANDBOXED=1`
+`fake-anthropic.ts` (`claude-studio-shell-cli.test.ts`, `claude-tool-loading.test.ts`),
+`STUDIO_CODEX_CLI_TESTS=1` for the real Codex CLI against `fake-openai-responses.ts`
+(`codex-sandbox-cli.test.ts`). Never make a default test depend on this machine. `STUDIO_RIG_UNSANDBOXED=1`
 runs rigs without the process sandbox, for a container where it cannot start (no user
 namespaces); containment cases prove nothing there, and CI keeps the sandbox.

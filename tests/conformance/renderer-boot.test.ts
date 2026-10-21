@@ -27,6 +27,7 @@ import {
   windowControlColors,
 } from "../../src/renderer/window-controls.ts";
 import { PlayViewerPhase } from "../../src/shared/play.ts";
+import { type ReadyUpdate, UpdateAction } from "../../src/shared/app-update.ts";
 import { fakeStudioApi } from "../helpers/fake-studio-api.ts";
 
 const PROBLEM: SandboxProblem = {
@@ -351,6 +352,7 @@ const FAILED: BootState = {
 describe("a window that opens while the studio starts", () => {
   it("says which step the core is on, and follows it", async () => {
     const { controller, waits } = startingBoot([
+      starting(StartStep.Agents),
       starting(StartStep.Games),
       starting(StartStep.Workspace),
       starting(StartStep.Studio),
@@ -361,8 +363,8 @@ describe("a window that opens while the studio starts", () => {
       if (bootView(state) === BootView.Starting) steps.push(state.step);
     });
     await controller.start();
-    assert.deepEqual(steps, [StartStep.Games, StartStep.Workspace, StartStep.Studio]);
-    assert.equal(waits.length, 3, "one wait before each new question");
+    assert.deepEqual(steps, [StartStep.Agents, StartStep.Games, StartStep.Workspace, StartStep.Studio]);
+    assert.equal(waits.length, 4, "one wait before each new question");
   });
 
   it("goes on to the setup screen a start ends on, and runs Set up there by itself", async () => {
@@ -424,6 +426,56 @@ describe("a studio that would not start", () => {
     await controller.start();
     await controller.quit();
     assert.equal(fake.callsOf("quitFromBoot").length, 1);
+  });
+});
+
+describe("an update that arrives before the studio opens", () => {
+  const NEXT: ReadyUpdate = { version: "0.1.14", action: UpdateAction.Restart };
+
+  /** A boot whose main has nothing downloaded for the first `empty` questions, then `NEXT`. */
+  function updatingBoot(first: BootState, empty: number) {
+    const booted = startingBoot([first]);
+    let asked = 0;
+    booted.fake.stub("readyUpdate", async () => (asked++ < empty ? null : NEXT));
+    return booted;
+  }
+
+  it("a start that failed shows the update downloaded meanwhile, and Relaunch installs it", async () => {
+    const { controller, fake, waits } = updatingBoot(FAILED, 2);
+    await controller.start();
+    assert.equal(controller.store.getState().update, null);
+    await controller.watchUpdate();
+    assert.deepEqual(controller.store.getState().update, NEXT);
+    assert.equal(fake.callsOf("readyUpdate").length, 3, "asks again until one is downloaded");
+    assert.equal(waits.length, 2, "one wait between questions");
+    await controller.restartToUpdate();
+    assert.equal(fake.callsOf("restartToUpdate").length, 1);
+  });
+
+  it("the setup screen shows it too", async () => {
+    const { controller } = updatingBoot(WINDOWS_SETUP, 0);
+    await controller.load();
+    await controller.watchUpdate();
+    assert.deepEqual(controller.store.getState().update, NEXT);
+  });
+
+  it("stops asking once the studio is up: its sidebar offers the relaunch", async () => {
+    const { controller, fake } = updatingBoot(WINDOWS_READY, 5);
+    await controller.load();
+    await controller.watchUpdate();
+    assert.equal(fake.callsOf("readyUpdate").length, 0);
+  });
+
+  it("a main that cannot say keeps the screen as it is and asks again", async () => {
+    const { controller, fake } = startingBoot([FAILED]);
+    let asked = 0;
+    fake.stub("readyUpdate", async () => {
+      if (asked++ === 0) throw new Error("no handler");
+      return NEXT;
+    });
+    await controller.start();
+    await controller.watchUpdate();
+    assert.deepEqual(controller.store.getState().update, NEXT);
   });
 });
 

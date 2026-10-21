@@ -946,13 +946,15 @@
   -webkit-app-region: no-drag;
 }
 
-/* The viewer under the game's view: its cover while it loads, and what went wrong when it cannot. */
+/* The viewer under the game's view: its cover while it loads, and what went wrong when it cannot, in
+   the game's own place below the bar's 48px strip (`PLAY_BAR_HEIGHT`), which its layer draws above. */
 .play-viewer {
   position: fixed;
   inset: 0;
   z-index: 250;
   display: flex;
   flex-direction: column;
+  padding-top: 48px;
   overflow: hidden;
   background: #000;
   color: #f5f5f5;
@@ -975,10 +977,10 @@
   background: transparent;
 }
 
-/* The bar: the app's own 48px strip of glass over the game's top edge, the popover's colour let
-   through over a soft hairline. Back and the game's name with its facts, then a note, the guest's
-   offer and the actions as rounded pills; Remix wears Play's blue secondary. Its empty space drags
-   the window. When main says it is down it fades up and out, and gives the pointer back. */
+/* The bar: the app's own 48px strip across the window's top, the game below it, never under it; the
+   popover's colour over the app's background, over a soft hairline. Back and the game's name with
+   its facts, then a note, the guest's offer and the actions as rounded pills; Remix wears Play's blue
+   secondary. Its empty space drags the window. */
 .play-viewer-bar {
   position: fixed;
   inset: 0 0 auto;
@@ -987,20 +989,11 @@
   gap: 8px;
   height: 48px;
   padding: 0 12px 0 16px;
-  background: color-mix(in srgb, var(--popover) 86%, transparent);
+  background: color-mix(in srgb, var(--popover) 86%, var(--background));
   box-shadow: inset 0 -1px 0 var(--line-soft);
   color: var(--ink);
   font-family: var(--font-family-sans);
   -webkit-app-region: drag;
-  transition:
-    opacity 240ms var(--ease-smooth-out),
-    translate 240ms var(--ease-smooth-out);
-}
-.play-viewer-bar[data-down] {
-  opacity: 0;
-  translate: 0 -8px;
-  pointer-events: none;
-  -webkit-app-region: no-drag;
 }
 /* Comments or a purchase sheet covers the window: the bar under its dimmed backdrop drags nothing. */
 .play-bar-layer:is([data-comments], [data-sheet]) .play-viewer-bar {
@@ -2086,9 +2079,6 @@
 
 /* Reduce Motion: things change in place; Play's shimmer and slides hold still. */
 @media (prefers-reduced-motion: reduce) {
-  .play-viewer-bar[data-down] {
-    translate: none;
-  }
   .play-switch-pill,
   .sidebar-fold,
   .sidebar-lists > .sidebar-scroll,

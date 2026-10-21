@@ -17,6 +17,7 @@ import type { CliInstallJob } from "./cli-install.ts";
 import type { ModelInstallJob } from "./model-install.ts";
 import type { ToolPermissionState } from "./permissions.ts";
 import type { PlayViewerEvent, RemixProgress } from "./play.ts";
+import type { NativeInstalls, NativeSession } from "./play-native.ts";
 import type { PluginChange, PluginConsentEvent } from "./plugins.ts";
 import type { BootNotice, HarnessState } from "./protocol.ts";
 import type { RunSummary } from "./run-summary.ts";
@@ -164,6 +165,12 @@ export interface UiEventMap {
   "play.viewer": PlayViewerEvent;
   /** A remix moved to its next step or downloaded more of its models (`main/play/remix.ts`). */
   "play.remix": RemixProgress;
+  /** Play's installed games or an install changed: every one, as `studio:play.installs` answers (`main/play/native-installs.ts`). */
+  "play.installs": NativeInstalls;
+  /** A native game started, came on screen, ended or failed to start: every session (`main/play/native-launch.ts`). */
+  "play.sessions": NativeSession[];
+  /** A `genex://game/<slug>` link waits for the page to take it (`studio:play.take-game-link`, `main/play/game-links.ts`). */
+  "play.game-link": Record<string, never>;
 
   // — plugins and connectors —
   "plugins.changed": PluginChange;
@@ -291,6 +298,9 @@ export const UiEvent = {
   PreviewSoundToggle: "preview.sound.toggle",
   PlayViewer: "play.viewer",
   PlayRemix: "play.remix",
+  PlayInstalls: "play.installs",
+  PlaySessions: "play.sessions",
+  PlayGameLink: "play.game-link",
   PluginsChanged: "plugins.changed",
   PluginEvent: "plugin.event",
   PluginConsent: "plugin.consent",

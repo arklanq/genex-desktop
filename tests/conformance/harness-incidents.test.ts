@@ -127,6 +127,14 @@ import { cancelThread } from "../../src/harness-seed/loop/main.ts";
 import type { Studio } from "../../src/harness-seed/loop/studio-state.ts";
 import type { Host } from "../../src/harness-seed/types/harness.d.ts";
 import { wakeTools } from "../../src/harness-seed/loop/director/wake-prompts.ts";
+import { folderLabelOf } from "../../src/harness-seed/loop/workers/identity.ts";
+
+it("WIN-FOLDER-LABEL: a Windows game folder is named by its last two parts, never the whole C:\\Users path", () => {
+  assert.equal(folderLabelOf("C:\\Users\\ana\\AI Games\\rift", "rift"), "AI Games/rift");
+  assert.equal(folderLabelOf("C:/Users/ana/AI Games/rift/", "rift"), "AI Games/rift");
+  assert.equal(folderLabelOf("/Users/ana/AI Games/rift", "rift"), "AI Games/rift");
+  assert.equal(folderLabelOf(null, "rift"), "rift");
+});
 
 it("AUDIT-WAKE-TOOL: shortened worker guidance still tells a waking lead to end its turn", () => {
   const tool = wakeTools(DIRECTOR_TOOLS, { lead: true }).find((tool) => tool.name === "worker_start");
@@ -6046,7 +6054,7 @@ describe("the Loop's time limit", () => {
     assert.doesNotMatch(unbounded, /Building until about/, "∞ has no end time to promise");
     assert.match(unbounded, /required outcomes are verified/);
     assert.ok(unbounded.includes(ceilingDay), `the ceiling is dated (${ceilingDay}): ${unbounded}`);
-    assert.match(unbounded, /keep the app open and the Mac awake/i);
+    assert.match(unbounded, /keep the app open and the computer awake/i);
     assert.match(unbounded, /resumes itself|tap on Resume/);
 
     const capped = launchPromise({ wallClockMs: 3_600_000 }, null, now);

@@ -28,7 +28,11 @@ import {
   type GenexGameManifest,
   studioSdkImports,
 } from "../../src/shared/genex.ts";
-import { genexGameManifest, readGenexGameManifest } from "../../src/substrate/genex-game-manifest.ts";
+import {
+  genexGameManifest,
+  readGenexGameManifest,
+  usesGenexMultiplayer,
+} from "../../src/substrate/genex-game-manifest.ts";
 import { startGenexFixtureApi } from "../helpers/genex-fixture-api.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -328,7 +332,7 @@ describe("a published game connects to Genex as it boots", () => {
       assert.ok(connectAt > importMapEnd, "connected after the import map, which must come before any module");
       assert.ok(connectAt < page.indexOf('src="./src/main.js"'), "and before the game's own code runs");
       const script = fx.hosted.get(connect) ?? "";
-      assert.match(script, /import \{ initEmbed \} from "\.\/embed-sdk\/index\.js"/);
+      assert.match(script, /import \{ [^}]*\binitEmbed\b[^}]* \} from "\.\/embed-sdk\/index\.js"/);
       assert.match(script, new RegExp(`slug: "${SLUG}"`), "the project the first publish created");
       const sdk = moduleGraph(fx.hosted, `vendor/${GENEX_EMBED_VENDOR.Entry}`);
       for (const file of sdk) assert.ok(fx.hosted.has(file), `${file} is uploaded`);
@@ -482,6 +486,30 @@ describe("what a game's package.json tells Genex", () => {
       { dependencies: multiplayer },
       "settings linked in from outside the game are not read",
     );
+  });
+
+  it("tells Genex the multiplayer a Godot game's project carries, at Studio's pin, with its genex.json settings", async () => {
+    const root = await tmpDir("studio-genex-godot-manifest-");
+    const game = path.join(root, "godot-game");
+    const addon = path.join(game, "godot/addons/genex_multiplayer");
+    await mkdir(path.join(game, "godot"), { recursive: true });
+    await writeFile(path.join(game, "godot/project.godot"), "config_version=5\n");
+    assert.equal(await readGenexGameManifest(game), undefined, "a single-player Godot game");
+    await mkdir(addon, { recursive: true });
+    await writeFile(path.join(addon, "plugin.cfg"), '[plugin]\nname="Genex Multiplayer"\n');
+    const multiplayer = { "@genex-ai/multiplayer": GENEX_GAME_PACKAGES["@genex-ai/multiplayer"] };
+    assert.deepEqual(await readGenexGameManifest(game), { dependencies: multiplayer });
+    await writeFile(path.join(game, "genex.json"), JSON.stringify({ matchmaking: { preset: "open" } }));
+    assert.deepEqual(await readGenexGameManifest(game), {
+      dependencies: multiplayer,
+      genex: { matchmaking: { preset: "open" } },
+    });
+    assert.equal(await usesGenexMultiplayer(game), true);
+    // An addon linked in from outside the game is not the game's to vouch for.
+    const linked = path.join(root, "linked-game");
+    await mkdir(path.join(linked, "godot/addons"), { recursive: true });
+    await symlink(addon, path.join(linked, "godot/addons/genex_multiplayer"));
+    assert.equal(await readGenexGameManifest(linked), undefined, "a linked addon");
   });
 
   it("connects a template game that maps Studio's multiplayer, and leaves a game with its own SDK alone", () => {

@@ -10,6 +10,7 @@ import { CommentRoute, playComments, toComment, toCommentsPage } from "../../src
 import { classifyChannel } from "../../src/main/dev/native-policy.ts";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { type PlayIpcDeps, registerPlayIpc } from "../../src/main/ipc/play.ts";
+import { gameLinks } from "../../src/main/play/game-links.ts";
 import type { PlayViewer } from "../../src/main/play/viewer.ts";
 import { type GalleryAnswer, type GalleryRequest, SignInNeeded } from "../../src/main/play/gallery.ts";
 import {
@@ -225,6 +226,7 @@ describe("Who may answer a purchase sheet", () => {
     const unused = {} as unknown;
     registerPlayIpc(handle, {
       gallery: unused as PlayIpcDeps["gallery"],
+      gameLinks: gameLinks(),
       remix: async () => "",
       viewer: () => viewer,
       people: unused as PlayIpcDeps["people"],
@@ -233,6 +235,9 @@ describe("Who may answer a purchase sheet", () => {
       manage: unused as PlayIpcDeps["manage"],
       web: PLAY_ORIGIN.web,
       share: () => {},
+      installs: () => null,
+      sessions: () => null,
+      reveal: () => {},
     });
     const call = (event: IpcSender, payload: unknown) => listeners.get("studio:play.purchase")?.(event, payload);
     return { call, answered, studio, bar };
@@ -291,17 +296,13 @@ describe("Play comments in the bar's layer", () => {
     assert.equal(barNews(next, { slug: "b", openId: 2, phase: PlayViewerPhase.Closed }), null);
   });
 
-  it("tells main what holds the bar only when it changes, asking for the bar again after mounting or a new game", () => {
-    const first = holdToTell(NOTHING_TOLD, { held: false, comments: false });
-    assert.deepEqual(first?.payload, { held: false, comments: false, ready: true });
-    assert.equal(holdToTell(first?.key ?? "", { held: false, comments: false }), null, "nothing new");
-    const hovered = holdToTell(first?.key ?? "", { held: true, comments: false, ready: true });
-    assert.deepEqual(hovered?.payload, { held: true, comments: false }, "only the first word asks for the bar");
-    assert.deepEqual(holdToTell(NOTHING_TOLD, { held: true, comments: false })?.payload, {
-      held: true,
-      comments: false,
-      ready: true,
-    });
+  it("tells main whether Comments is open only when it changes, asking for the bar again after mounting or a new game", () => {
+    const first = holdToTell(NOTHING_TOLD, { comments: false });
+    assert.deepEqual(first?.payload, { comments: false, ready: true });
+    assert.equal(holdToTell(first?.key ?? "", { comments: false }), null, "nothing new");
+    const opened = holdToTell(first?.key ?? "", { comments: true, ready: true });
+    assert.deepEqual(opened?.payload, { comments: true }, "only the first word asks for the bar");
+    assert.deepEqual(holdToTell(NOTHING_TOLD, { comments: true })?.payload, { comments: true, ready: true });
   });
 
   it("acts on a fresh Esc only: back to a playing game, out of one still loading or failed, never over Comments", () => {

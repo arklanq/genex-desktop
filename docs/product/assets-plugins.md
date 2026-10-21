@@ -31,9 +31,9 @@ host tools run the pinned CLI outside the game: `genex__cli` free; `genex__cli-p
 `genex__package` (multiplayer, player identity; template games map Studio's copies) after consent. Publish (a host-drawn dialog)
 connects SDK-less games, tests the draft, goes public and sends the `genex-cover` frame and
 `genex-clip` clip ([rules](../plugins.md#first-party-privileges)); Studio takes the cover after
-turns. Consented `genex__cover-set` sends it now; chat shows it with Publish. Multiplayer (built, single-player) asks chat (Genex
+turns (Unity/Godot/Unreal builders render theirs in-engine); consented `genex__cover-set` sends it now; chat shows it. Multiplayer (built, single-player) asks chat (Genex
 off: enable it); Publish needs only the account; both offer Update while older. Agents read
-Genex’s guide and cards via `genex__skill`, not game files. Plugin MCPs connect on first use.
+Genex’s guide via `genex__skill`, not game files. Plugin MCPs connect on first use.
 
 The curated catalog (`plugins.genex.games`; reviewed releases in `genex-games/genex-plugins`) lists
 Genex and Local Blender as official; its installs require native-code trust

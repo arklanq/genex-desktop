@@ -13,6 +13,7 @@ import { MINUTE_MS } from "../../shared/duration.ts";
 import { writeFileNoFollow } from "../../substrate/fsx.ts";
 import { type GodotInstall, type GodotVersion, versionName } from "./find-godot.ts";
 import { type GodotCall, GodotJob } from "./godot-run.ts";
+import { BRIDGE_LICENSES_FILE, BRIDGE_PAGE_FILE, COLYSEUS_FOLDER, godotString } from "./multiplayer.ts";
 
 /** The game's folder the export goes into, at the game's root. */
 export const WEB_EXPORT_FOLDER = "web";
@@ -88,18 +89,76 @@ export function withWebPreset(presets: string): string {
   return `${before}${presetText(next)}`;
 }
 
+/** What a multiplayer game's Web preset loads before the engine: Genex's SDK bridge, beside the page. */
+export const BRIDGE_HEAD_INCLUDE = `<script src="${BRIDGE_PAGE_FILE}"></script>`;
+/** What a multiplayer game's Web preset leaves out: the native GDExtension, which a web build never loads. */
+export const WEB_EXCLUDE = `${COLYSEUS_FOLDER}/*`;
+
+/** One `key=value` line of a section's lines, set: replaced where it is, else added after the heading. */
+function setLine(lines: string[], heading: number, end: number, key: string, value: string): void {
+  const line = `${key}=${value}`;
+  const own = lines.findIndex((text, index) => index > heading && index < end && text.trim().startsWith(`${key}=`));
+  if (own >= 0) lines[own] = line;
+  else lines.splice(heading + 1, 0, line);
+}
+
+/**
+ * The presets with Genex's Web preset loading the multiplayer bridge (its HTML head include) and
+ * leaving the native GDExtension out of the pack; unchanged without Genex's preset or when it does.
+ */
+export function withMultiplayerWebPreset(presets: string): string {
+  const lines = presets.split("\n");
+  const named = lines.findIndex((line) => line.trim() === `name="${WEB_PRESET}"`);
+  const heading =
+    named < 0 ? -1 : lines.slice(0, named).findLastIndex((line) => /^\[preset\.\d+\]\s*$/.test(line.trim()));
+  if (heading < 0) return presets;
+  const index = /^\[preset\.(\d+)\]/.exec(lines[heading]?.trim() ?? "")?.[1] ?? "";
+  const endOf = (from: number) => {
+    const next = lines.findIndex((line, at) => at > from && line.trim().startsWith("["));
+    return next < 0 ? lines.length : next;
+  };
+  setLine(lines, heading, endOf(heading), "exclude_filter", godotString(WEB_EXCLUDE));
+  const options = lines.findIndex((line) => line.trim() === `[preset.${index}.options]`);
+  if (options < 0) return lines.join("\n");
+  setLine(lines, options, endOf(options), "html/head_include", godotString(BRIDGE_HEAD_INCLUDE));
+  return lines.join("\n");
+}
+
 /** Refuses a path that is a link; a missing one is fine. */
 async function assertNoLink(file: string, message: string): Promise<void> {
   if ((await lstat(file).catch(() => null))?.isSymbolicLink()) throw new Error(message);
 }
 
-/** Genex's preset into the project's `export_presets.cfg`, never through a link. */
-export async function addWebPreset(project: string, linkMessage: string): Promise<void> {
+/**
+ * Genex's preset into the project's `export_presets.cfg`, never through a link; for a multiplayer
+ * game, loading Genex's SDK bridge (`withMultiplayerWebPreset`).
+ */
+export async function addWebPreset(project: string, linkMessage: string, options: { multiplayer?: boolean } = {}) {
   const file = path.join(project, PRESETS_FILE);
   await assertNoLink(file, linkMessage);
   const presets = await readFile(file, "utf8").catch(() => "");
-  const next = withWebPreset(presets);
+  const added = withWebPreset(presets);
+  const next = options.multiplayer ? withMultiplayerWebPreset(added) : added;
   if (next !== presets) await writeFileNoFollow(file, next);
+}
+
+/**
+ * Genex's SDK bridge beside the exported page, with the licenses of what it bundles, from the
+ * copies the plugin ships; never through a link.
+ */
+export async function copyBridge(
+  folder: string,
+  shipped: { bridge: string; bridgeLicenses: string },
+  linkMessage: string,
+): Promise<void> {
+  for (const [name, from] of [
+    [BRIDGE_PAGE_FILE, shipped.bridge],
+    [BRIDGE_LICENSES_FILE, shipped.bridgeLicenses],
+  ] as const) {
+    const target = path.join(folder, name);
+    await assertNoLink(target, linkMessage);
+    await writeFileNoFollow(target, await readFile(from));
+  }
 }
 
 /** The export's folder, made when missing and marked for Godot to leave out of the project; never a link. */

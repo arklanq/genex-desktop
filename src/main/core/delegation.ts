@@ -118,6 +118,8 @@ import { noteAsking, noteEvent, type ToolsInFlight, toolsInFlight } from "./stee
 import { type ToolOffered, toolAllowRule } from "../../substrate/plugins/tool-allow.ts";
 import { type RunCreditCap, runCreditCap } from "./run-credits.ts";
 import { checkpointWords } from "./plugin-hooks.ts";
+import { appEngineOf } from "./cover-reel.ts";
+import { appCoverGuidance } from "./cover-reel-prompts.ts";
 import { CHECKPOINT_TOOL } from "../../substrate/engines/studio-tool-prompts.ts";
 import { HookEvent } from "../../shared/plugin-hooks.ts";
 
@@ -2718,6 +2720,7 @@ export class DelegationService {
       toldWhereLeadToolsWork ? leadToolsNote() : "",
       this.#core.mcp.guidance(tools.mcp),
       tools.cover.length ? COVER_TOOL_GUIDANCE : "",
+      appCoverNote(p, session),
     ]
       .filter(Boolean)
       .join("\n\n");
@@ -3062,6 +3065,16 @@ async function withAccounts(
       return account === undefined ? plugin : { ...plugin, account };
     }),
   );
+}
+
+/**
+ * The cover guidance for the session that owns the build of a game made as an app: the chat's own
+ * session or a Loop's lead, with host tools. Nothing for a web game, a worker or a reader.
+ */
+function appCoverNote(p: DelegateParams, session: DelegationSession): string {
+  const owner = session.hostTools && (isChatsOwnSession(p) || session.leads !== null);
+  const engine = owner ? appEngineOf({ facts: session.facts }) : null;
+  return engine ? appCoverGuidance(engine) : "";
 }
 
 /** A session's tools before they are prepared: the plugins of the snapshot it began with, and nothing else yet. */

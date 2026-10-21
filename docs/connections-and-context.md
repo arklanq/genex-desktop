@@ -612,7 +612,8 @@ send or a status check, a shot kept or not; a refused, rate-limited, failed or s
 warning in `genex__publish-status`. Nothing is read from or written to the game folder for it.
 Once the turns on the open game settle, and as the Publish dialog opens with no shot, Studio asks
 the plugin for the cover itself (`cover-auto`): the `genex-cover` demo, or for a game with none a
-plain frame of it as it loads, and the `genex-clip` demo's five-second clip; never over the
+plain frame of it as it loads, and the `genex-clip` demo's clip (5.5 s: Genex keeps five seconds after
+trimming up to 300 ms of the start, so an exact five is refused as too short); never over the
 person's pick or the owner's cover. The dialog's banner flips between the last four frames
 (`cover-pick` pins one, and a publish then sends it as it is) and its Another cover sends a request
 to the game's chat ([plugins](plugins.md#first-party-privileges)). The thread's latest kept shot shows in the chat as

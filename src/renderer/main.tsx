@@ -44,6 +44,8 @@ const unsubscribe = boot.store.subscribe(({ platform }) => {
   syncWindowControls(window.studio, platform);
 });
 void boot.start();
+// Until the studio is up, a new version downloaded meanwhile shows on the setup or start screen.
+void boot.watchUpdate();
 
 const container = document.getElementById("root");
 if (!container) throw new Error("missing #root");

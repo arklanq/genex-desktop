@@ -18,6 +18,11 @@ import { containedReal } from "./paths.ts";
 const MAX_MANIFEST_BYTES = 256 * 1024;
 /** Where a template game keeps its Genex settings: the `genex` field of a package.json it has not got. */
 export const TEMPLATE_GENEX_SETTINGS = "genex.json";
+/**
+ * The file a Godot game's project carries once Genex's multiplayer addon is in it (the Godot
+ * plugin's `godot__multiplayer`, in the game's `godot/` project): its multiplayer is Studio's copy.
+ */
+const GODOT_MULTIPLAYER_ADDON = "godot/addons/genex_multiplayer/plugin.cfg";
 /** A `genex.matchmaking` block larger than this, as JSON, is left out. */
 const MAX_MATCHMAKING_CHARS = 4096;
 /** A version range as npm writes one for a registry package; links, paths and URLs are left out. */
@@ -80,6 +85,18 @@ export function templateGenexManifest(html: string, settings: unknown): GenexGam
   return genex ? { dependencies, genex } : { dependencies };
 }
 
+/**
+ * A Godot game's Genex manifest once its project carries Genex's multiplayer addon: multiplayer at
+ * the version Studio ships the web build's bridge with, and its `genex.json` settings.
+ */
+function godotGenexManifest(settings: unknown): GenexGameManifest {
+  const dependencies: GenexGameManifest["dependencies"] = {
+    [MULTIPLAYER_PACKAGE]: GENEX_GAME_PACKAGES[MULTIPLAYER_PACKAGE],
+  };
+  const genex = genexSettings({ genex: settings });
+  return genex ? { dependencies, genex } : { dependencies };
+}
+
 /** A small regular file that really lives inside `dir` (a link out of it is not followed); null otherwise. */
 async function readOwnFile(dir: string, name: string): Promise<string | null> {
   try {
@@ -103,13 +120,16 @@ function parsedJson(text: string | null): unknown {
 }
 
 /**
- * The game's Genex manifest: from `dir/package.json` when the game has one, else, for a game made
- * from the template, from its `index.html` import map and `genex.json`. Undefined when there is
- * none to read.
+ * The game's Genex manifest: from `dir/package.json` when the game has one, else, for a Godot game
+ * whose project carries Genex's multiplayer addon, from that and its `genex.json`, else, for a game
+ * made from the template, from its `index.html` import map and `genex.json`. Undefined when there
+ * is none to read.
  */
 export async function readGenexGameManifest(dir: string): Promise<GenexGameManifest | undefined> {
   const pkg = await readOwnFile(dir, "package.json");
   if (pkg !== null) return genexGameManifest(parsedJson(pkg));
+  if ((await readOwnFile(dir, GODOT_MULTIPLAYER_ADDON)) !== null)
+    return godotGenexManifest(parsedJson(await readOwnFile(dir, TEMPLATE_GENEX_SETTINGS)));
   const html = await readOwnFile(dir, "index.html");
   if (html === null) return undefined;
   return templateGenexManifest(html, parsedJson(await readOwnFile(dir, TEMPLATE_GENEX_SETTINGS)));
