@@ -301,7 +301,9 @@ export function mergeMeta(state: GenexPublishState, meta: HostedMeta | null | un
   if (typeof meta?.id === "string") state.projectId = meta.id;
   if (meta?.status === GenexHostedStatus.Published || meta?.status === GenexHostedStatus.Draft)
     state.status = meta.status;
-  if (isGenexLink(meta?.playUrl)) state.playUrl = meta.playUrl;
+  // Until the game is public its live address serves nothing; a tester needs the draft page.
+  if (state.status !== GenexHostedStatus.Published) delete state.playUrl;
+  else if (isGenexLink(meta?.playUrl)) state.playUrl = meta.playUrl;
   Object.assign(state, publishUrls(meta));
 }
 

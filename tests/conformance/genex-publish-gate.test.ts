@@ -512,6 +512,27 @@ describe("what a game's package.json tells Genex", () => {
     assert.equal(await readGenexGameManifest(linked), undefined, "a linked addon");
   });
 
+  it("tells Genex the multiplayer a Unity game's project embeds, at its root or in unity/, with its genex.json", async () => {
+    const root = await tmpDir("studio-genex-unity-manifest-");
+    const multiplayer = { "@genex-ai/multiplayer": GENEX_GAME_PACKAGES["@genex-ai/multiplayer"] };
+    for (const place of [".", "unity"]) {
+      const game = path.join(root, `game-${place === "." ? "root" : place}`);
+      const project = path.join(game, place);
+      await mkdir(path.join(project, "ProjectSettings"), { recursive: true });
+      assert.equal(await readGenexGameManifest(game), undefined, `${place}: a single-player Unity game`);
+      const pkg = path.join(project, "Packages/com.genex.multiplayer");
+      await mkdir(pkg, { recursive: true });
+      await writeFile(path.join(pkg, "package.json"), JSON.stringify({ name: "com.genex.multiplayer" }));
+      assert.deepEqual(await readGenexGameManifest(game), { dependencies: multiplayer }, place);
+      await writeFile(path.join(game, "genex.json"), JSON.stringify({ matchmaking: { preset: "duel" } }));
+      assert.deepEqual(
+        await readGenexGameManifest(game),
+        { dependencies: multiplayer, genex: { matchmaking: { preset: "duel" } } },
+        place,
+      );
+    }
+  });
+
   it("connects a template game that maps Studio's multiplayer, and leaves a game with its own SDK alone", () => {
     assert.equal(bringsOwnSdk({ dependencies: { "@genex-ai/multiplayer": "0.17.0" } }), false);
     assert.equal(bringsOwnSdk({ dependencies: { "@genex-ai/embed-sdk": "0.30.0" } }), true);

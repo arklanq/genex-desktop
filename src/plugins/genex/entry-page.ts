@@ -79,12 +79,14 @@ const PREVIEW_CONNECTION: GenexConnection = {
 
 /**
  * What the published module adds after `initEmbed`: the game's project on the page (an engine's
- * export reads it there), and the page's one player handed to Genex's multiplayer bridge when the
- * page loads one (a Godot web export's), which would otherwise start a second embed SDK of its own.
+ * export reads it there), the page's one player for a Unity WebGL build's Genex package
+ * (`window.genexEmbed`, a page's own kept), and that player handed to Genex's multiplayer bridge
+ * when the page loads one (a Godot web export's), which would otherwise start a second embed SDK.
  */
 const PUBLISHED_TAIL = (slug: string) => [
   "",
   `window.__GENEX__ = { ...window.__GENEX__, slug: ${JSON.stringify(slug)} };`,
+  "window.genexEmbed ??= { waitForPlayer, getColyseusAuth, getColyseusUrls };",
   "window.GenexMultiplayerBridge?.setIdentity({",
   "  ready: () => waitForPlayer(),",
   "  auth: () => getColyseusAuth(),",

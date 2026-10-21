@@ -62,7 +62,7 @@ import { useLiveLoad, useLiveProbe, useLoadOnceStarted } from "./stage/live-load
 import { useStageControls } from "./stage/live-run.ts";
 import { useNativeViewBounds } from "./stage/native-bounds.ts";
 import { PluginCardStage } from "./stage/PluginCardStage.tsx";
-import { stageFlags } from "./stage/stage-flags.ts";
+import { resolveStageView, stageFlags } from "./stage/stage-flags.ts";
 import { EmptyGame, LiveLoading, NoGame, PlanningBuild, StoppedGame } from "./stage/StageBody.tsx";
 import { StageStrip } from "./stage/StageStrip.tsx";
 import { type StageTabKey, tabChoice, webBuildView } from "./stage/stage-tabs.ts";
@@ -595,6 +595,37 @@ function OwnLiveView({
   return null;
 }
 
+/**
+ * The stage's run and what it shows. The tab answers the click at once (`pressedView`); the stage
+ * under it (a large build graph mounts for hundreds of milliseconds) follows in a render React may
+ * interrupt.
+ */
+function useStageSurface({
+  view,
+  visible,
+  stage,
+  beside,
+  liveView,
+  pending,
+  live,
+}: {
+  view: StageView;
+  visible: boolean;
+  stage: Omit<Parameters<typeof useStageRun>[0], "buildsVisible">;
+  beside: BesideTarget | null;
+  liveView: ObserverLive;
+  pending: boolean;
+  live: ReturnType<typeof useLiveLoad>;
+}) {
+  const shownView = useDeferredValue(view);
+  const run = useStageRun({ ...stage, buildsVisible: visible && shownView === StageView.Builds });
+  const { graph, planning } = run;
+  const { project } = stage;
+  const flags = stageFlags({ view: shownView, beside, graph, planning, project, liveView, pending, live });
+  const has = { beside: Boolean(beside), builds: graph !== null || planning, project: Boolean(project) };
+  return { run, flags, pressedView: resolveStageView(view, has) };
+}
+
 export function PreviewPanel({
   games,
   project,
@@ -617,16 +648,16 @@ export function PreviewPanel({
   const slot = useRef<HTMLDivElement>(null);
   const live = useLiveLoad(project);
   const pending = useLoadOnceStarted({ project, pending: kindPendingGame(loaded), noPage: !preview }, live.loadLive);
-  const run = useStageRun({
-    project,
-    threadId,
-    runsRoot,
-    status,
-    onView,
-    buildsVisible: visible && view === StageView.Builds,
+  const { run, flags, pressedView } = useStageSurface({
+    view,
+    visible,
+    stage: { project, threadId, runsRoot, status, onView },
+    beside,
+    liveView: liveView.live,
+    pending,
+    live,
   });
   const { selectedRun, history, graph, runGraph, planning } = run;
-  const flags = stageFlags({ view, beside, graph, planning, project, liveView: liveView.live, pending, live });
   const { stageView, showEmpty, liveLoading, gameStopped, previewOnStage } = flags;
   const [focusedAsset, setFocusedAsset] = useState<string | null>(null);
   /** A plugin's toolbar button has its panel up over the stage. */
@@ -666,7 +697,7 @@ export function PreviewPanel({
         hasBuilds={Boolean(graph || planning)}
         buildsLive={Boolean(graph?.active || planning)}
         beside={beside}
-        stageView={stageView}
+        stageView={pressedView}
         live={{ views, shown: liveView }}
         onTab={chooseTab}
         behind={behind}

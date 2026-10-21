@@ -88,6 +88,7 @@ import {
   FOLDER_ACE_SCRIPT,
   icaclsArgs,
   OwnWalk,
+  windowsPowerShell,
 } from "../../src/substrate/windows-folder-ace.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -158,6 +159,28 @@ describe("read-attributes grants above each root", () => {
       ],
     ];
     for (const [label, roots, expected] of table) assert.deepEqual(ancestorDirs(PROFILE, roots), expected, label);
+  });
+
+  it("a data folder moved off the profile counts from the data folder itself down to each root inside it", () => {
+    const data = "D:\\Genex";
+    const table: Array<[string, string[], string[]]> = [
+      ["a root directly in it", ["D:\\Genex\\scratch"], ["D:\\Genex"]],
+      [
+        "a root deeper in it",
+        ["D:\\Genex\\reviewers\\call-1", "D:\\Genex\\scratch"],
+        ["D:\\Genex", "D:\\Genex\\reviewers"],
+      ],
+      ["a root on the same drive outside it", ["D:\\Games\\Pong"], []],
+      ["a folder that only shares its name's start", ["D:\\GenexOther\\x"], []],
+      ["the data folder itself as a root", [data], []],
+      ["case differs: spelled as the root is", ["d:\\genex\\runs"], ["d:\\genex"]],
+    ];
+    for (const [label, roots, expected] of table) assert.deepEqual(ancestorDirs(PROFILE, roots, data), expected, label);
+  });
+
+  it("a data folder still in the profile changes nothing", () => {
+    const roots = [at("AppData", "Roaming", "Genex", "scratch")];
+    assert.deepEqual(ancestorDirs(PROFILE, roots, at("AppData", "Roaming", "Genex")), ancestorDirs(PROFILE, roots));
   });
 
   const DEAD_PID = 3;
@@ -424,6 +447,15 @@ describe("an entry on one folder alone", () => {
     assert.deepEqual(JSON.parse(Buffer.from(payload, "base64").toString("utf8")), edits);
   });
 
+  it("hands PowerShell no module path of its own: one from PowerShell 7 loses ConvertFrom-Json", () => {
+    const command = folderAceCommand(edits, {
+      SystemRoot: "C:\\Windows",
+      PSModulePath: "C:\\Program Files\\PowerShell\\7\\Modules",
+    });
+    assert.equal(command.env.PSModulePath, undefined);
+    assert.equal(command.env.SystemRoot, "C:\\Windows");
+  });
+
   it("keeps its command line inside Windows' 32,767 characters, however long the script grows", () => {
     // The script outgrew it once: CreateProcess refused PowerShell ("The filename or extension is
     // too long"), every batch answered nothing, and every grant fell back to icacls.
@@ -500,6 +532,11 @@ describe("an entry on one folder alone", () => {
       folderAceOutcomes('[{"ok":true,"ms":12,"deferred":true}]', 1),
       [{ ok: true, ms: 12, deferred: true }],
       "an edit that left its walk for later says so",
+    );
+    assert.deepEqual(
+      folderAceOutcomes('[{"ok":true,"ms":9,"refused":"Access is denied."}]', 1),
+      [{ ok: true, ms: 9, refused: "Access is denied." }],
+      "a deny Windows refused where none was needed carries Windows' words",
     );
   });
 
@@ -654,6 +691,9 @@ describe("an entry on one folder alone, on Windows", {
     // A lived-in Windows 11 profile: passing the deny down Chrome's profile took 17 s of the first
     // start, although only its owner, SYSTEM and the Administrators could open anything in it.
     const root = realpathSync.native(await tmpDir("folder-deny-closed-"));
+    // The test's own root starts closed too: another program's sandbox (the real Codex CLI's) can
+    // leave allows on the runner's temp folder that everything made under it would inherit.
+    ownerOnly(root);
     const secret = path.join(root, "above", "User Data");
     const before = path.join(secret, "Default", "Cookies");
     await mkdir(path.dirname(before), { recursive: true });
@@ -662,7 +702,11 @@ describe("an entry on one folder alone, on Windows", {
     const denies = ownAclEntries(path.join(root, "holders"), { sid: async () => GUESTS, pid: 1, alive: () => false });
     assert.equal(await denies.sync(routeWindowsDenies({ read: [secret], write: [] }).own), true);
     assert.match(sddl(secret, root), /\(D;OICI;FA;;;BG\)/, "the folder is denied, to pass down");
-    assert.doesNotMatch(sddl(before, root), /;;;BG\)/, "nothing under it was walked during the start");
+    assert.doesNotMatch(
+      sddl(before, root),
+      /;;;BG\)/,
+      `nothing under it was walked during the start; the folder: ${sddl(secret, root)}`,
+    );
     const later = path.join(secret, "Login Data");
     await writeFile(later, "later");
     assert.match(sddl(later, root), /\(D;ID;FA;;;BG\)/, "a file made in it meanwhile inherits the deny");
@@ -728,6 +772,283 @@ describe("an entry on one folder alone, on Windows", {
       await folderOwnEditor()([{ ...denyLater(secret), deny: null, walk: undefined }]);
     });
   }
+
+  /**
+   * What Chrome gives its own sandboxed processes on its profile's network folder: app container
+   * and capability SIDs, which no process gets by its user, groups or logon.
+   */
+  const chromeSandboxes = async (secret: string) => {
+    const network = path.join(secret, "Default", "Network");
+    await mkdir(network, { recursive: true });
+    await writeFile(path.join(network, "Cookies"), "cookies");
+    const containers = ["S-1-15-2-1", "S-1-15-2-2", "S-1-15-3-1"].map((sid) => `*${sid}:(OI)(CI)(RX)`);
+    execFileSync("icacls", [network, "/grant", ...containers], { stdio: "ignore" });
+  };
+
+  it("leaves the walk for later where only app containers may open something under the path besides", async () => {
+    const root = realpathSync.native(await tmpDir("folder-deny-containers-"));
+    const secret = path.join(root, "User Data");
+    await mkdir(secret);
+    await chromeSandboxes(secret);
+    ownerOnly(secret);
+    const outcomes = await folderOwnEditor()([denyLater(secret)]);
+    assert.equal(outcomes?.[0]?.ok && outcomes[0].deferred, true, JSON.stringify(outcomes));
+    await folderOwnEditor()([{ ...denyLater(secret), deny: null, walk: undefined }]);
+  });
+
+  /**
+   * Token privileges and owners for the refusing fixtures, in C#: `Adjust` enables (2) or removes
+   * (4) one privilege of the PowerShell process and answers Windows' error (0 when done), `Own`
+   * sets a path's owner alone.
+   */
+  const TOKEN_HELPER = `Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Security.Principal;
+public static class GenexTestToken {
+  [StructLayout(LayoutKind.Sequential, Pack = 4)]
+  struct Privilege { public int Count; public long Luid; public int Attributes; }
+  [DllImport("kernel32.dll")] static extern IntPtr GetCurrentProcess();
+  [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, int access, out IntPtr token);
+  [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)] static extern bool LookupPrivilegeValue(string system, string name, out long luid);
+  [DllImport("advapi32.dll", SetLastError = true)] static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref Privilege state, int length, IntPtr previous, IntPtr returned);
+  [DllImport("advapi32.dll", CharSet = CharSet.Unicode)] static extern uint SetNamedSecurityInfo(string name, int type, int info, byte[] owner, IntPtr group, IntPtr dacl, IntPtr sacl);
+  public static int Adjust(string name, int attributes) {
+    IntPtr token;
+    if (!OpenProcessToken(GetCurrentProcess(), 0x28, out token)) return Marshal.GetLastWin32Error();
+    var state = new Privilege { Count = 1, Attributes = attributes };
+    if (!LookupPrivilegeValue(null, name, out state.Luid)) return Marshal.GetLastWin32Error();
+    if (!AdjustTokenPrivileges(token, false, ref state, 0, IntPtr.Zero, IntPtr.Zero)) return Marshal.GetLastWin32Error();
+    return Marshal.GetLastWin32Error();
+  }
+  public static void Own(string path, string sid) {
+    var owner = new SecurityIdentifier(sid);
+    var bytes = new byte[owner.BinaryLength];
+    owner.GetBinaryForm(bytes, 0);
+    uint code = SetNamedSecurityInfo(path, 1, 1, bytes, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+    if (code != 0) throw new Win32Exception((int)code, path);
+  }
+}
+'@`;
+  /** The privileges that let an elevated account past a DACL: what the hosted runner holds and a person's PowerShell does not. */
+  const PAST_A_DACL = ["SeRestorePrivilege", "SeBackupPrivilege", "SeTakeOwnershipPrivilege", "SeSecurityPrivilege"];
+  /** Runs a PowerShell script, handed over as UTF-16 base64 so no quoting touches it. */
+  const powershellScript = (script: string, env: NodeJS.ProcessEnv) =>
+    execFileSync(
+      windowsPowerShell(),
+      [
+        "-NoLogo",
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        Buffer.from(script, "utf16le").toString("base64"),
+      ],
+      { env: { ...process.env, ...env }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+    );
+  /**
+   * Make `sid` the owner of `dir` and of everything under it. Only SeRestorePrivilege may name
+   * someone else, and SeTakeOwnershipPrivilege opens a folder the runner may only read: the hosted
+   * runner is elevated and holds both, disabled until asked for (icacls /setowner left them so).
+   */
+  const setOwner = (dir: string, sid: string) => {
+    powershellScript(
+      `$ErrorActionPreference = 'Stop'
+${TOKEN_HELPER}
+foreach ($name in 'SeRestorePrivilege', 'SeTakeOwnershipPrivilege') {
+  $code = [GenexTestToken]::Adjust($name, 2)
+  if ($code -ne 0) { throw "could not enable $name ($code)" }
+}
+$paths = @($env:GENEX_OWNER_PATH) + @(Get-ChildItem -LiteralPath $env:GENEX_OWNER_PATH -Recurse -Force | ForEach-Object { $_.FullName })
+foreach ($p in $paths) { [GenexTestToken]::Own($p, $env:GENEX_OWNER_SID) }
+`,
+      { GENEX_OWNER_PATH: dir, GENEX_OWNER_SID: sid },
+    );
+  };
+  /**
+   * Runs the folder script as a person's PowerShell would: without {@link PAST_A_DACL}. With them,
+   * the runner's walk-now write (SetNamedSecurityInfoW) went through a folder that refused
+   * SetFileSecurityW, so a refusal there is tested only this way.
+   */
+  const withoutPrivileges = async (_file: string, args: string[], env: NodeJS.ProcessEnv) => {
+    const loader = Buffer.from(args.at(-1) ?? "", "base64").toString("utf16le");
+    const drop = PAST_A_DACL.map((name) => `[void][GenexTestToken]::Adjust('${name}', 4)`).join("\n");
+    return powershellScript(`${TOKEN_HELPER}\n${drop}\n${loader}`, env);
+  };
+  /**
+   * A folder the person may read but whose entries they may not change: SYSTEM owns it and the
+   * person's own entry reads only, as security software or another owner can leave a browser
+   * profile. `also` adds entries.
+   */
+  const refusesChanges = (dir: string, ...also: string[]) => {
+    setOwner(dir, "S-1-5-18");
+    const readOnly = [`*${runningUser()}:(OI)(CI)(RX)`, "*S-1-5-18:(OI)(CI)(F)", ...also];
+    // While the person may still change the folder's entries: the second call takes that away.
+    icacls(dir, "/remove:g", "*S-1-5-32-544");
+    icacls(dir, "/inheritance:r", "/grant:r", ...readOnly);
+    const descriptor = ownerAndDacl(dir);
+    assert.match(descriptor, /^O:SY/, `SYSTEM owns the fixture: ${descriptor}`);
+    assert.doesNotMatch(descriptor, /;;;BA\)/, `the Administrators have no entry: ${descriptor}`);
+  };
+  /** Runs icacls; a failure carries what icacls printed, which Node's message leaves out. */
+  const icacls = (...args: string[]) => {
+    try {
+      execFileSync("icacls", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    } catch (error) {
+      const said = typeof error === "object" && error !== null && "stdout" in error ? String(error.stdout) : "";
+      throw new Error(`icacls ${args.join(" ")}: ${said.trim()}`, { cause: error });
+    }
+  };
+  /** A path's owner and DACL as SDDL, through PowerShell's Get-Acl (icacls /save leaves the owner out). */
+  const ownerAndDacl = (target: string) =>
+    powershellScript("(Get-Acl -LiteralPath $env:GENEX_ACL_PATH).Sddl", { GENEX_ACL_PATH: target }).trim();
+  /** Give a {@link refusesChanges} folder back to the running user, as it inherits, so it can be removed. */
+  const giveBack = (dir: string) => {
+    setOwner(dir, runningUser());
+    execFileSync("icacls", [dir, "/reset", "/T", "/C"], { stdio: "ignore" });
+  };
+  /** A start's own entries for denying `secret`, logging into `lines`. */
+  const startDenying = (root: string, secret: string, lines: string[], options: Partial<OwnAclDeps> = {}) => {
+    const denies = ownAclEntries(path.join(root, "holders"), {
+      sid: async () => GUESTS,
+      pid: 1,
+      alive: () => false,
+      log: (line) => lines.push(line),
+      ...options,
+    });
+    return { denies, sync: () => denies.sync(routeWindowsDenies({ read: [secret], write: [] }).own) };
+  };
+
+  for (const [shape, plant] of [
+    ["a folder only its owner, SYSTEM and the Administrators may open", async () => {}],
+    ["a profile whose network folder Chrome opened to its own sandboxes", chromeSandboxes],
+  ] as const) {
+    it(`starts where Windows refuses a deny on ${shape}`, async () => {
+      // A field PC refused the deny on Chrome's "User Data" at every start ("Access is denied"),
+      // so the agents never started, though the sandbox user could open nothing in it anyway.
+      const root = realpathSync.native(await tmpDir("folder-deny-refused-"));
+      const above = path.join(root, "above");
+      const secret = path.join(above, "User Data");
+      const login = path.join(secret, "Default", "Login Data");
+      await mkdir(path.dirname(login), { recursive: true });
+      await writeFile(login, "login");
+      await plant(secret);
+      refusesChanges(secret);
+      const lines: string[] = [];
+      const start = startDenying(root, secret, lines);
+      try {
+        assert.equal(await start.sync(), true, "the start goes on");
+        assert.doesNotMatch(sddl(secret, root), /;;;BG\)/, "the folder is left as it was");
+        assert.match(sddl(above, root), /\(D;;(?:0x40|DT);;;BG\)/, "its parent is guarded as before");
+        assert.ok(
+          lines.some((line) => line.includes(secret)),
+          `the log names the folder left as it was: ${lines.join(" | ")}`,
+        );
+        const next = startDenying(root, secret, lines, { pid: 2 });
+        assert.equal(await next.sync(), true, "the next start tries again, and goes on again");
+        await next.denies.revokeAll();
+      } finally {
+        giveBack(secret);
+        await start.denies.revokeAll();
+      }
+    });
+  }
+
+  it("lets a walk Windows refuses go where the sandbox user can open nothing, without the runner's privileges", async () => {
+    // A walk that runs now (here a deferred one run again) checks everything under the path itself.
+    const root = realpathSync.native(await tmpDir("folder-deny-refused-walk-"));
+    const secret = path.join(root, "User Data");
+    await mkdir(path.join(secret, "Default", "Network"), { recursive: true });
+    await writeFile(path.join(secret, "Default", "Network", "Cookies"), "cookies");
+    refusesChanges(secret);
+    const before = ownerAndDacl(secret);
+    try {
+      const outcomes = await folderOwnEditor({ powershell: withoutPrivileges })([
+        { ...denyLater(secret), walk: OwnWalk.Again },
+      ]);
+      const [outcome] = outcomes ?? [];
+      assert.equal(outcome?.ok && typeof outcome.refused, "string", JSON.stringify(outcomes));
+      assert.equal(ownerAndDacl(secret), before, "the folder is left as it was");
+    } finally {
+      giveBack(secret);
+    }
+  });
+
+  // Each of these opens something to the sandbox user, so a deny Windows refuses there still stops
+  // the start. An entry on the folder alone lets the walk wait, so the deny is written on the folder
+  // alone (SetFileSecurityW), which Windows refuses; one passed down or deeper walks now, refused
+  // only without the runner's privileges.
+  /** An allow for `sid` to list `dir` alone, set through .NET: icacls refuses a SID no account has. */
+  const allowListing = (dir: string, sid: string) =>
+    powershellScript(
+      `$ErrorActionPreference = 'Stop'
+$acl = Get-Acl -LiteralPath $env:GENEX_ACL_PATH
+$sid = New-Object Security.Principal.SecurityIdentifier $env:GENEX_ACL_SID
+$acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, 'ReadAndExecute', 'None', 'None', 'Allow')))
+Set-Acl -LiteralPath $env:GENEX_ACL_PATH -AclObject $acl`,
+      { GENEX_ACL_PATH: dir, GENEX_ACL_SID: sid },
+    );
+  /** One shape: its name, the icacls entries it adds, how it plants one icacls cannot, and the start's editor. */
+  type RefusedOpen = [string, string[], (secret: string) => void, Partial<OwnAclDeps>];
+  const nothing = () => {};
+  const refusedOpen: RefusedOpen[] = [
+    ["Everyone may list it", ["*S-1-1-0:(RX)"], nothing, {}],
+    ["Authenticated Users may list it", ["*S-1-5-11:(RX)"], nothing, {}],
+    ["Users may list it", [`*${USERS}:(RX)`], nothing, {}],
+    ["the sandbox users' group itself may list it", [`*${GUESTS}:(RX)`], nothing, {}],
+    [
+      "a SID that only looks like an app container's may list it",
+      [],
+      (secret) => allowListing(secret, "S-1-15-21-1-2-3-4"),
+      {},
+    ],
+    [
+      "Users may open everything in it",
+      [`*${USERS}:(OI)(CI)(RX)`],
+      nothing,
+      { edit: folderOwnEditor({ powershell: withoutPrivileges }) },
+    ],
+  ];
+  for (const [shape, also, plant, options] of refusedOpen) {
+    it(`still stops where Windows refuses a deny on a folder ${shape}`, async () => {
+      const root = realpathSync.native(await tmpDir("folder-deny-refused-open-"));
+      const secret = path.join(root, "above", "User Data");
+      await mkdir(path.join(secret, "Default"), { recursive: true });
+      plant(secret);
+      refusesChanges(secret, ...also);
+      const before = ownerAndDacl(secret);
+      const start = startDenying(root, secret, [], options);
+      try {
+        await assert.rejects(start.sync(), /could not set the sandbox user's entries on .*User Data/);
+        assert.equal(ownerAndDacl(secret), before, "the folder is left as it was");
+      } finally {
+        giveBack(secret);
+        await start.denies.revokeAll();
+      }
+    });
+  }
+
+  it("still refuses a grant or a guard Windows refuses, even where the sandbox user can open nothing", async () => {
+    const root = realpathSync.native(await tmpDir("folder-grant-refused-"));
+    const secret = path.join(root, "User Data");
+    await mkdir(path.join(secret, "Default"), { recursive: true });
+    refusesChanges(secret);
+    const before = ownerAndDacl(secret);
+    const own = { dir: secret, sid: GUESTS, op: FolderAceOp.Own, deny: null, walk: OwnWalk.Later } as const;
+    try {
+      const [aboveGrant] = await folderAceEditor()([{ dir: secret, sid: GUESTS, op: FolderAceOp.Grant }]);
+      assert.equal(aboveGrant?.ok, false, "a grant above the grants");
+      const [guard] = (await folderOwnEditor()([{ ...own, guard: true, grant: null, allows: false }])) ?? [];
+      assert.equal(guard?.ok, false, "a guard");
+      const granted = await folderOwnEditor({ powershell: withoutPrivileges })([
+        { ...own, guard: false, grant: GrantAccess.Read, allows: true },
+      ]);
+      assert.equal(granted?.[0]?.ok, false, `a folder's grant: ${JSON.stringify(granted)}`);
+      assert.equal(ownerAndDacl(secret), before, "the folder is left as it was");
+    } finally {
+      giveBack(secret);
+    }
+  });
 
   it("passes a deny down at once where the folder itself passes Users an allow", async () => {
     const root = realpathSync.native(await tmpDir("folder-deny-open-"));
@@ -2106,6 +2427,54 @@ describe("Genex's own deny entries", () => {
       ssh,
     ]);
     assert.deepEqual(logged, [`own entries: ${at(".ssh")} took 41 s (once; they stay)`]);
+  });
+
+  it("goes on past a deny Windows refused where none was needed, says so, and tries it again next start", async () => {
+    // The script answers so only where the sandbox user can open nothing at or under the path.
+    const holders = await tmpDir("windows-denies-");
+    const logged: string[] = [];
+    const asked: FolderOwnEdit[][] = [];
+    const refused: FolderOwnEditor = async (edits) => {
+      asked.push([...edits]);
+      return edits.map((edit) =>
+        edit.deny ? ({ ok: true, refused: "Access is denied." } as const) : ({ ok: true } as const),
+      );
+    };
+    const denies = holder(holders, 1, [], { edit: refused, log: (line) => logged.push(line) });
+    assert.equal(await denies.sync([guard, ssh]), true);
+    assert.deepEqual(logged, [
+      `own entries: left ${at(".ssh")} as it is: Windows refused the deny (Access is denied.), and the sandbox user can open nothing in it`,
+    ]);
+    await denies.walkDeferred();
+    assert.equal(asked.length, 1, "no walk is left for later");
+    assert.equal(await denies.sync([guard, ssh]), true);
+    assert.ok(
+      asked[1]?.some((edit) => edit.dir === ssh.path && edit.deny === DenyAccess.Read),
+      "the next start asks for the deny again",
+    );
+  });
+
+  it("lets a later walk Windows refused where none was needed go, and says so", async () => {
+    const holders = await tmpDir("windows-denies-");
+    const logged: string[] = [];
+    const asked: FolderOwnEdit[][] = [];
+    const denies = holder(holders, 1, [], {
+      log: (line) => logged.push(line),
+      edit: async (edits) => {
+        asked.push([...edits]);
+        return edits.map((edit) => {
+          if (edit.dir !== ssh.path) return { ok: true } as const;
+          return edit.walk === OwnWalk.Later
+            ? ({ ok: true, deferred: true } as const)
+            : ({ ok: true, refused: "Access is denied." } as const);
+        });
+      },
+    });
+    assert.equal(await denies.sync([guard, ssh]), true);
+    await denies.walkDeferred();
+    assert.match(logged.join("\n"), /left .*\.ssh as it is: Windows refused the deny/);
+    await denies.walkDeferred();
+    assert.equal(asked.length, 2, "the walk is not tried again by this Genex");
   });
 
   it("touches the group's passed-down allows only on a folder Genex grants or once granted", async () => {

@@ -209,6 +209,8 @@ const glyphs = {
   expand: (
     <path d="M4 9V6.5A2.5 2.5 0 0 1 6.5 4H9M15 4h2.5A2.5 2.5 0 0 1 20 6.5V9M20 15v2.5a2.5 2.5 0 0 1-2.5 2.5H15M9 20H6.5A2.5 2.5 0 0 1 4 17.5V15" />
   ),
+  // A played game's full screen, as genex.games' game page draws it: two arrows out to opposite corners.
+  maximize: <path d="M14.5 4H20v5.5M20 4l-6.5 6.5M9.5 20H4v-5.5M4 20l6.5-6.5" />,
   // The Apple and Windows marks a native game's card and page name its systems by, filled like Unity's.
   apple: (
     <path

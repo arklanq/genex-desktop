@@ -173,6 +173,7 @@ export function rig(overrides: RigOverrides = {}) {
       show: (bounds) => log.push(`game.show ${bounds.x},${bounds.y} ${bounds.width}x${bounds.height}`),
       hide: () => log.push("game.hide"),
       focus: () => log.push("game.focus"),
+      fullScreen: () => log.push("game.fullScreen"),
       close: () => log.push("game.close"),
     },
     bar: {

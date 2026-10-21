@@ -74,7 +74,8 @@ mismatch aborts installation (manifests are compared canonically). Local package
 releases use the same validation and isolated startup probe. Updates wait for active sessions; a
 failed probe leaves the prior installation selected. Expanded capabilities require explicit
 installation confirmation. Updates are never automatic. Each install or reload copies the package
-to `packages/<id>/<version>-<uuid>`; once the new copy is active (and its MCP servers moved to it)
+to `packages/<id>/<version>-<uuid>` (a clone where the disk can make one, as APFS does, so a
+profile's copies of the bundled plugins take no space until edited); once the new copy is active (and its MCP servers moved to it)
 the copy it replaced is deleted, as is a pending update superseded before it activated. At start-up
 Studio deletes copies of an installed id that no record points to and any `staging/` leftovers;
 folders of ids with no record are unlisted code and stay. Stored settings reach a new version only
@@ -1838,7 +1839,14 @@ folder that already has the same one is dropped. The engine link reads as its en
 game's project in that engine: another project of that engine the folder holds is not a second one. A scaffold recorded in `studio.json` adds its rules (source
 `scaffold`, see [Scaffolds](#scaffolds)). Never counted: the web template beside an older engine link,
 what a port replaced (`portedFrom` in `studio.json`, kept as the reference), and a starter an older
-New game wrote that nothing has been built in yet (its `scaffoldStamp` still matching). New game
+New game wrote that nothing has been built in yet (its `scaffoldStamp` still matching). A Unity or
+Godot game's web version in `web/` (`ENGINE_WEB_FOLDER`, `Web/` too) is listed as its web game even
+though a page at the root is above it; that root page is then left out when it is still the web
+starter's page nobody built on (its `index.html` and `src/main.js` are the template's), whether or
+not the port was recorded, and any other root page keeps its place (`withEngineWebVersion`). Live
+loads such a web build by itself once it is finished (whole for its engine, no file written in the
+last 2 s) and new since Live loaded the game (`PreviewService.offerLive`), and the game's file
+server unpacks a Unity build's Brotli or gzip parts (`packedBuildFile`). New game
 now makes an empty folder. Either way the game lists no facts and has no kind until its first
 message picks one (`start_web_game`, or `game.start` from the harness, writes the web starter).
 A Loop on any project that isn't a web game (`loopProfileOf`) is led in place by the chat's own
@@ -1848,10 +1856,11 @@ run at its moments, their observers feed its finish check and their worker types
 `web` is `web-game` at the root. A game New game made lists `awaitingFirstBuild` until an answer
 in any of its chats, or a run on it, ends with the folder holding a kind (`core/build-ends.ts`);
 it stays built after. `multiplayer` is set while the game's package.json names
-`@genex-ai/multiplayer`, its page maps Studio's copy, or its Godot project carries Genex's
-multiplayer addon (`godot/addons/genex_multiplayer/plugin.cfg`) (`usesGenexMultiplayer`); a build's end tells the game list when it changed. The stage strip's
+`@genex-ai/multiplayer`, its page maps Studio's copy, its Godot project carries Genex's
+multiplayer addon (`godot/addons/genex_multiplayer/plugin.cfg`) or its Unity project embeds Genex's
+package (`[unity/]Packages/com.genex.multiplayer/package.json`) (`usesGenexMultiplayer`); a build's end tells the game list when it changed. The stage strip's
 Multiplayer shows only on a built game that is not multiplayer (`showsMultiplayer`), and on an
-engine's web export only for a Godot game (`takesEngineMultiplayer`), whose project takes it.
+engine's web export only for a Godot or Unity game (`takesEngineMultiplayer`), whose project takes it.
 
 ### Workspace rules
 
@@ -2544,7 +2553,10 @@ through Unity's Pipeline package (`com.unity.pipeline`), the HTTP server an edit
 Unity project is the one in the game's own folder, found with the walk and the rule the host finds
 the `unity-project` fact by (the game's own folder first, then `unity/`, then the first by path;
 `project-folder.ts`), so the game's checkpoints and Rewind cover it. A project outside the game's
-folder is not reached; a Unity project opened as a project of its own is its game's folder. Genex
+folder is not reached; a Unity project opened as a project of its own is its game's folder. Its
+`detect` names a WebGL build's folder `unity-web-build` (a folder with `Build/*.loader.js`), so its
+web version in `web/` is a plugin's web build (the seed's `web-build.ts`): briefs never hand it the
+web template's rules, and a turn that only built it is no new kind. Genex
 runs the harness tool `find-project` at `turn.start` and `run.prepare` of a game holding the fact:
 it keeps the real paths of the project and of the game's folder in the plugin's storage as
 `projects/<game>.json`, which the connector reads for every call (it knows only its game's id, from
@@ -2636,6 +2648,27 @@ editors are found where Unity Hub puts them (`editors.ts`): its own folder
 (`/Applications/Unity/Hub/Editor/<version>/Unity.app`) and the folder Hub records in
 `secondaryInstallPath.json`; an editor that is a link to one is not listed.
 
+#### Multiplayer
+
+`multiplayer` (agent tool, `multiplayer.ts`; its `unity-multiplayer` file skill says how to write
+the online play) puts Genex multiplayer into the game's Unity project, WebGL and native alike:
+- **The package.** Genex's package is embedded as `Packages/com.genex.multiplayer/`, a copy of the
+  Genex SDK's `sdks/unity` (`MULTIPLAYER_PACKAGE_SOURCE`). A changed file is kept beside it as
+  `<name>.mine~`, a name Unity never imports.
+- **Colyseus.** The Colyseus Unity SDK it runs on is asked for in `Packages/manifest.json` at the
+  tested `upm` commit (`COLYSEUS_PACKAGE_URL`). Unity fetches it from Colyseus's repository, which
+  needs git on the Mac. Studio ships none of it: its bundled serializer carries Asset Store terms.
+  A version the person chose stays.
+- **IL2CPP.** `Assets/Genex/link.xml` keeps the Genex and Colyseus assemblies from stripping, since
+  the relay's schema is reached by reflection.
+- **The game's settings.** `Assets/Resources/GenexSettings.json` holds the slug (when given) and
+  API, which the game reads with `Resources.Load`. Matchmaking goes into the game's `genex.json`,
+  as for Godot (`substrate/genex-game-settings.ts`).
+- **Identity.** A WebGL build's player comes from the published page's `window.genexEmbed` (the
+  connect module's). A native build's comes from `GenexNativeIdentity`: Play's gateway and ticket
+  (`GENEX_API_URL`, `GENEX_EMBED_TICKET`), or a guest.
+- **Not yet verified:** the package in a real Unity editor, an IL2CPP build or a WebGL build.
+
 #### The panel and the toolbar button
 
 The toolbar button (`unity:editor`, labelled Unity with the `unity` icon, only on a game with a
@@ -2659,8 +2692,9 @@ command, so the toolbar may ask as often as it does.
 | `opening` | An editor has it open and does not answer yet | Starting | Restart Unity |
 | `ready` | Its main thread answers (the panel says when it plays or compiles) | Ready | Restart Unity |
 | `stalled` | Its server is there and its main thread runs nothing | Stalled, `warn`, `attention` | Restart Unity |
+| `terms` | It does not answer and this Mac's Unity never had its Software Terms accepted (no `Terms-…` key in its preferences): the first start's terms window waits | Waiting for you, `warn`, `attention` | Words only |
 
-Every badge but Stalled is a `dot` (grey, amber while Starting, green once Ready). The first three
+Every badge but Stalled and Waiting for you is a `dot` (grey, amber while Starting, green once Ready). The first three
 steps never reach the button, which a game without a Unity project doesn't show; the plugin page's
 Editor connection reads the same word, so it never says Ready without Unity.
 
@@ -2716,7 +2750,8 @@ operation timed out". Three things keep an unattended agent out of it and get it
 
 | Handler at its moment | What it does (`editor-moments.ts`) |
 | --- | --- |
-| `open-for-run` at `run.prepare` | Opens the editor and waits; a project with no Pipeline package, or an editor that does not answer, closes the run with the reason. |
+| `open-for-run` at `run.prepare` | Opens the editor and waits, recording when Genex itself opened it (`launched/<game>.json`); a project with no Pipeline package, or an editor that does not answer, closes the run with the reason. |
+| `after-run` at `run.end` | An editor Genex opened for the run starts its idle time (below); with the **close-idle-editor** setting off, its record is dropped. |
 | `save-all` at `checkpoint.before` | Saves as above. Unity not open: nothing. In the agent's own play, or in a run in the person's play while agents may use Unity as they play: stops it, then saves. In the person's play otherwise: a block (scenes can't be saved in play). Work it can't save: a block in a run, a note in a chat. |
 | `scene-shots` at `checkpoint.after`, and as the `viewport` observer (`live: "stills"`) | The main camera's still (1280×720) as an image, in a run and for the reviewer; a chat's checkpoint takes none. A still of one flat colour (a scene that builds itself only when Play starts) is no image but a note saying so; the skill asks agents to build the level into the scene with an Editor script, saving the meshes, textures and materials it makes as assets. |
 | `save-all`, then `end-editor`, at `restore.before` | Stops a play, saves, ends the editor and records that it did (`restore/<game>.json`); work it can't save, or an editor that won't end, blocks the restore. |
@@ -2757,7 +2792,25 @@ dialog of Unity's own), reloading (nothing listens) or restarted (401: the descr
 once), then says which. A command is never sent twice: one that was sent and got no answer is
 recorded as outcome unknown. A captured picture (`capture_game_view`, `capture_scene_view`, in a
 batch too) is handed over as an MCP image, at most four an answer, with a note in place of its
-base64 text.
+base64 text. A `capture_game_view` that names no `width` or `height` is sent with the size of
+Genex's own looks at the game (`ENGINE_PLAY_VIEW`, 1280×720, in whichever of the two the editor's
+catalogue lists): unsized, Unity captures the Game view at its full Retina size, and every picture
+stays in the agent's transcript. Each command the connector sends is noted in its folder
+(`agent-used.json`), for the idle editor below.
+
+#### An idle editor Genex opened
+
+Unity holds gigabytes of memory while it runs, so an editor Genex itself opened at a run's start is
+closed once nobody uses it (`editor-idle.ts`). After the first `after-run`, the backend looks every
+30 s (`IDLE_LOOK_MS`) at each such editor and closes it with a clean exit, its assets saved first,
+once 15 minutes (`IDLE_CLOSE_MS`) passed since both the run's end and the connector's last command.
+It is never closed while another run uses it, while it plays, compiles or reloads, or while its
+main thread does not answer. The person taking it over drops its record for good, so it is never
+closed: Unity seen as the app in front (`InternalEditorUtility.isApplicationActive`), its undo
+group moving between two looks with no connector command between them, or an open scene with
+unsaved work. An editor already open at the run's start, or opened from the panel or by an agent's
+`open-editor`, is the person's and has no record. The plugin's **close-idle-editor** setting (on
+unless turned off) is read at each run's end.
 
 Before a command is sent the gate (`pipeline-gate.ts`) checks it against the catalogue just read.
 It refuses a name the editor does not list; the commands agents never run (`eval`, `eval_file`,
@@ -3077,7 +3130,9 @@ Genex:
   (`native.supported`, `gateByPlugin`): a profile still on a plugin from before apps is told to
   update it in Plugins. The plugin's `publishing-apps` skill tells the game's agent how to build an
   app or a web version (in `web/`) for Publish, how to make an app open in a window, and never to
-  send the person to another store.
+  send the person to another store. A Unity web version is built from a full-window template the
+  agent writes in `Assets/WebGLTemplates/Genex/`: Unity's own templates draw a fixed 960x600 box.
+  A `WebGLTemplates/` folder is never taken for the game's web version (`NOT_A_WEB_GAME`).
   A game with no web build but a ready app (an Unreal or Unity game built for the Mac) gets Publish
   on the strip too (`stripEntries`' `apps`, read through the same channel); its press says "Publish
   Mac app" and runs `studio:plugins.genex-publish-apps` (`publishAppsFromDialog`, no web copy, no
@@ -3187,7 +3242,8 @@ Genex:
   (`/vendor/genex/embed-sdk/index.js`, which the build copies from the pinned devDependency) and
   loads `/vendor/genex/connect.js` after the map (`withGenexSdkImport`); its page must be a
   regular file, never a link. Multiplayer is refused there. A Godot game (`godot/project.godot`)
-  is refused with a pointer to `godot__multiplayer`: its multiplayer goes into its project. The paid tool and the package tool need consent; fixture profiles refuse
+  or a Unity game (`[unity/]ProjectSettings/ProjectVersion.txt`) is refused with a pointer to
+  `godot__multiplayer` or `unity__multiplayer`: its multiplayer goes into its project. The paid tool and the package tool need consent; fixture profiles refuse
   both host steps (`studio:plugins.host-cli`, `studio:plugins.host-package`).
 - `genex__asset` accepts only each lane's own options (`LANE_OPTIONS`, `plugins/genex/request.ts`),
   and a refusal names them (`Unsupported Genex option for <op>`). Each lane's provider is fixed and
@@ -3399,8 +3455,9 @@ the online play) puts Genex multiplayer into the game's Godot project, web and n
   `<script src="genex-multiplayer-bridge.js">` and leaves `addons/colyseus/*` out. Every export of
   a game with the addon copies the pinned SDK's `bridge.global.js` beside the page, with `genex-multiplayer-bridge.LICENSES.md` (the licenses of what it bundles, made at build by `bridgeLicenses`), which the
   addon's web backend drives through `window.GenexMultiplayerBridge`. The publish connect module
-  hands that bridge the page's one player (`setIdentity` with Studio's embed SDK) and puts the
-  game's slug into `window.__GENEX__`.
+  hands that bridge the page's one player (`setIdentity` with Studio's embed SDK), exposes it as
+  `window.genexEmbed` for a Unity WebGL build (a page's own kept), and puts the game's slug into
+  `window.__GENEX__`.
 - **Not yet.** Native play inside Studio's sandbox has no network, so online play is tested in an
   exported build or on the published web page.
 

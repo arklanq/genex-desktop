@@ -162,6 +162,9 @@ const MESSAGE = {
     `could not set the sandbox user's entries on ${dir}: ${errorMessage(error)}`,
   SlowOwnEdit: (dir: string, ms: number) =>
     `own entries: ${dir} took ${Math.round(ms / SECOND_MS)} s (once; they stay)`,
+  /** A deny Windows refused where the sandbox user can open nothing anyway ({@link FolderAceOutcome}). */
+  UnneededDeny: (dir: string, refused: string) =>
+    `own entries: left ${dir} as it is: Windows refused the deny (${refused}), and the sandbox user can open nothing in it`,
   /** srt-win's grant and stamp walk each folder again, so a later grant or stamp timeout reads as this. */
   OwnEntriesOff: (count: number) =>
     `own entries off: srt-win sets all ${count} grants and denies (no sandbox users' group, or PowerShell could not set them)`,
@@ -229,20 +232,38 @@ export function grantsCover(applied: WindowsGrants, needed: WindowsGrants): bool
 
 /**
  * Every folder strictly between `profile` and a root, outermost first, for the read-attributes
- * grant. A folder that is itself a root, or inside one, is left out: the root's own inheritable
- * grant covers it, and taking the grant back later must never touch a root's entry.
+ * grant. Genex's data moved off the profile (Settings → Storage) sits in a folder as closed as the
+ * profile, which reads nothing but what is granted: for a root inside it, every folder from
+ * `dataRoot` itself down to the root counts too. A folder that is itself a root, or inside one, is
+ * left out: the root's own inheritable grant covers it, and taking the grant back later must never
+ * touch a root's entry.
  */
-export function ancestorDirs(profile: string, roots: readonly string[]): string[] {
+export function ancestorDirs(profile: string, roots: readonly string[], dataRoot?: string): string[] {
   const found = new Map<string, string>();
+  const add = (dir: string) => found.set(pathKey(dir), dir);
+  const data = dataRoot && !insideWindowsPath(profile, dataRoot) ? win.resolve(dataRoot) : null;
   for (const root of roots) {
-    if (!insideWindowsPath(profile, root)) continue;
-    for (let dir = win.dirname(win.resolve(root)); pathKey(dir) !== pathKey(profile); dir = win.dirname(dir)) {
-      if (!insideWindowsPath(profile, dir)) break;
-      found.set(pathKey(dir), dir);
-    }
+    if (insideWindowsPath(profile, root)) foldersBelow(profile, root, add);
+    else if (data && insideWindowsPath(data, root)) foldersFrom(data, root, add);
   }
   const covered = (dir: string) => roots.some((root) => insideWindowsPath(root, dir));
   return [...found.values()].filter((dir) => !covered(dir)).sort((a, b) => a.length - b.length);
+}
+
+/** Each folder strictly between `top` and `root`. */
+function foldersBelow(top: string, root: string, add: (dir: string) => void): void {
+  for (let dir = win.dirname(win.resolve(root)); pathKey(dir) !== pathKey(top); dir = win.dirname(dir)) {
+    if (!insideWindowsPath(top, dir)) break;
+    add(dir);
+  }
+}
+
+/** Each folder from `top` itself down to strictly above `root`. */
+function foldersFrom(top: string, root: string, add: (dir: string) => void): void {
+  for (let dir = win.dirname(win.resolve(root)); insideWindowsPath(top, dir); dir = win.dirname(dir)) {
+    add(dir);
+    if (pathKey(dir) === pathKey(top)) break;
+  }
 }
 
 /** One folder's `icacls` listing, or why there is none. */
@@ -1021,11 +1042,16 @@ function setsEntry(edit: FolderOwnEdit): boolean {
   return edit.deny !== null || edit.guard || edit.grant !== null;
 }
 
-/** The edits of one batch Windows took long over (a first walk of a large folder), for the log. */
-function slowEdits(edits: readonly FolderOwnEdit[], outcomes: readonly FolderAceOutcome[]): string[] {
+/**
+ * What the log says about one batch: each deny Windows refused where none was needed, and each
+ * other edit Windows took long over (a first walk of a large folder).
+ */
+function editNotes(edits: readonly FolderOwnEdit[], outcomes: readonly FolderAceOutcome[]): string[] {
   return edits.flatMap((one, i) => {
     const outcome = outcomes[i];
-    const slow = outcome?.ok && (outcome.ms ?? 0) >= SLOW_OWN_EDIT_MS;
+    if (!outcome?.ok) return [];
+    if (outcome.refused !== undefined) return [MESSAGE.UnneededDeny(one.dir, outcome.refused)];
+    const slow = (outcome.ms ?? 0) >= SLOW_OWN_EDIT_MS;
     return slow ? [MESSAGE.SlowOwnEdit(one.dir, outcome.ms ?? 0)] : [];
   });
 }
@@ -1048,7 +1074,7 @@ async function ownEach(
   for (let attempt = 1; pending.length > 0; attempt++) {
     const outcomes = await edit(pending);
     if (!outcomes) return null;
-    for (const line of slowEdits(pending, outcomes)) log?.(line);
+    for (const line of editNotes(pending, outcomes)) log?.(line);
     deferred.push(...pending.filter((_, i) => outcomes[i]?.ok && outcomes[i]?.deferred).map((one) => one.dir));
     const refused = pending.flatMap((one, i) => {
       const outcome = outcomes[i];
@@ -1099,7 +1125,9 @@ export interface OwnAclEntries {
    * Set `entries`, and take back what this holder or a gone one set before and no running one
    * still needs. False where Genex cannot set them here (no sandbox users' group, PowerShell
    * locked down or refusing): srt-win sets them instead. Throws when Windows refused one or ran
-   * out of time; what it set is kept, and the next sync goes on from there.
+   * out of time; what it set is kept, and the next sync goes on from there. A deny Windows refused
+   * on a path the sandbox user can open nothing at or under anyway is not needed: the log says so,
+   * and the next sync asks for it again.
    */
   sync(entries: readonly OwnAclEntry[]): Promise<boolean>;
   /**
@@ -1175,7 +1203,7 @@ export function ownAclEntries(holders: string, deps: OwnAclDeps): OwnAclEntries 
       const live = otherHolders(holders, self, alive, readOwnRecord).live;
       const edits = ownEdits(walked, [], live).map((one) => ({ ...one, walk: OwnWalk.Again }));
       const outcomes = (await edit(edits)) ?? [];
-      for (const line of slowEdits(edits, outcomes)) deps.log?.(line);
+      for (const line of editNotes(edits, outcomes)) deps.log?.(line);
       const done = new Set(edits.filter((_, i) => outcomes[i]?.ok).map((one) => pathKey(one.dir)));
       // A sync may have run meanwhile: keep what it recorded, less the walks that ran.
       const now = readOwnRecord(recordFile) ?? record;
@@ -1233,6 +1261,8 @@ export interface WindowsSessionDeps {
   runtime: SessionRuntime;
   /** The real user's profile folder (`USERPROFILE`). */
   profile: string;
+  /** Genex's data folder, when the person moved it off the profile ({@link ancestorDirs}). */
+  dataRoot?: string;
   ancestors: AncestorGrants;
   /** Filters deny paths before they reach srt-win ({@link keepWindowsDenies}). */
   keepDenies?: (paths: readonly string[], scope: DenyScope) => string[];
@@ -1410,7 +1440,9 @@ export class WindowsSandboxSession {
   async refreshAncestors(): Promise<void> {
     const applied = this.#applied;
     if (!applied) return;
-    await this.#deps.ancestors.sync(ancestorDirs(this.#deps.profile, [...applied.write, ...applied.read]));
+    await this.#deps.ancestors.sync(
+      ancestorDirs(this.#deps.profile, [...applied.write, ...applied.read], this.#deps.dataRoot),
+    );
   }
 
   /** Resolves once no regrant is queued or being applied (tests, quit). */
@@ -1573,7 +1605,7 @@ export class WindowsSandboxSession {
    */
   async #grantAncestors(grants: WindowsGrants): Promise<void> {
     try {
-      const dirs = ancestorDirs(this.#deps.profile, [...grants.write, ...grants.read]);
+      const dirs = ancestorDirs(this.#deps.profile, [...grants.write, ...grants.read], this.#deps.dataRoot);
       await this.#timed("folders above the grants", () => this.#deps.ancestors.sync(dirs));
     } catch (error) {
       await this.#deps.runtime.reset().catch(() => {});
@@ -1950,7 +1982,7 @@ async function logSrtSteps(log: (line: string) => void): Promise<void> {
  */
 export function windowsSessionFor(
   runtime: SessionRuntime,
-  options: { profile: string; srtWin: string; installDir: string; log?: (line: string) => void },
+  options: { profile: string; srtWin: string; installDir: string; dataRoot?: string; log?: (line: string) => void },
 ): WindowsSandboxSession {
   const existing = sessions.get(runtime);
   if (existing) return existing;
@@ -1974,6 +2006,7 @@ export function windowsSessionFor(
   const session = new WindowsSandboxSession({
     runtime,
     profile: options.profile,
+    ...(options.dataRoot ? { dataRoot: options.dataRoot } : {}),
     ancestors,
     own,
     launchDirs,

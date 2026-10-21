@@ -85,6 +85,13 @@ export const FixtureName = {
   NativeGames: "native-games",
   /** The studio open, its agents not started: the sidebar's line, its details and report; Try again clears it. */
   AgentsStartFailed: "agents-start-failed",
+  /**
+   * Settings → Storage's data folder as Windows shows it: Change… picks a stand-in drive, and Move
+   * and restart shows the start window moving the files (nothing is moved).
+   */
+  DataFolder: "data-folder",
+  /** The start window for a data folder whose drive is unplugged: its folder, Try again and Quit. */
+  DataMissing: "data-missing",
 } as const;
 export type FixtureName = (typeof FixtureName)[keyof typeof FixtureName];
 
@@ -119,6 +126,15 @@ export const FIXTURE_SANDBOX_PROBLEM: SandboxProblem = {
   installCommands: linuxInstallCommands([SandboxTool.Bubblewrap, SandboxTool.Socat]),
   details: ["bubblewrap (bwrap) not installed", "socat not installed"],
 };
+
+/** The data folder fixtures' folders and sizes, spelled as on Windows. */
+export const FIXTURE_DATA_FOLDER = {
+  current: "C:\\Users\\Ann\\AppData\\Roaming\\Genex",
+  picked: "D:\\",
+  to: "D:\\Genex",
+  bytes: 13_314_398_617,
+  done: 4_187_593_113,
+} as const;
 
 /** The release the update-ready fixture says is downloaded, named as update.electronjs.org names one. */
 export const FIXTURE_UPDATE_RELEASE = "Genex 0.2.0";

@@ -72,13 +72,11 @@ import {
   colyseusRelease,
   installColyseus,
   installMultiplayer,
-  matchmakingArg,
   type MultiplayerState,
   multiplayerState,
-  slugArg,
   usesMultiplayer,
-  writeMatchmaking,
 } from "./multiplayer.ts";
+import { matchmakingArg, slugArg, writeMatchmaking } from "../../substrate/genex-game-settings.ts";
 import { frameAt, type KeyPress, keysEnd, MAX_PLAY_SECONDS, PLAY_FPS, readKeys, recordingShots } from "./play-input.ts";
 import { MAX_STILLS, stillsAnswer, stillsForAgent, takeStills } from "./stills.ts";
 

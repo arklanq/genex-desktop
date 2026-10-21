@@ -28,6 +28,7 @@
  * manifest written. From then on every install has one.
  */
 import { createHash } from "node:crypto";
+import { constants } from "node:fs";
 import { cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteJson, pathExists, readJsonIfExists, readRegularFile, writeFileNoFollow } from "./fsx.ts";
@@ -750,7 +751,8 @@ async function seedEmptyWorkspace(
   seedHashes: Map<string, string>,
 ): Promise<SeedUpgradeReport> {
   if (options.laySeed) await options.laySeed(options.seedDir, options.workspaceDir, [...seedHashes.keys()]);
-  else await cp(options.seedDir, options.workspaceDir, { recursive: true, force: true });
+  else
+    await cp(options.seedDir, options.workspaceDir, { recursive: true, force: true, mode: constants.COPYFILE_FICLONE });
   const javascriptSeed = [...seedHashes.keys()].some(isLegacyModule);
   await writeManifest(options.manifestFile, seedHashes, {
     ...writtenBy(options),

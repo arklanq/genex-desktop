@@ -118,6 +118,10 @@ function NodeFrame({
     width: rect.w,
     height: rect.h,
     boxShadow: frameRing(variant, selected, edge),
+    // A large build has thousands of nodes and few on screen: the browser lays out and paints only
+    // those near the viewport, so opening Builds no longer lays out the whole graph at once.
+    contentVisibility: "auto",
+    containIntrinsicSize: `${rect.w}px ${rect.h}px`,
   };
   return (
     <button

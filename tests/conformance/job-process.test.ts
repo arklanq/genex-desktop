@@ -23,5 +23,8 @@ it("asks Windows PowerShell by its full path, with the process id as a number on
   assert.equal(command.file, "D:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe");
   assert.deepEqual(command.args.slice(0, 3), ["-NoProfile", "-NonInteractive", "-Command"]);
   assert.match(command.args[3] ?? "", /^\(Get-Process -Id 4321 -ErrorAction Stop\)\.StartTime/);
+  const fromPwsh = startTimeCommand(4321, "win32", { SystemRoot: "D:\\Windows", PSModulePath: "C:\\pwsh7\\Modules" });
+  assert.equal(fromPwsh.env?.PSModulePath, undefined, "Get-Process is not lost to PowerShell 7's module path");
+  assert.equal(fromPwsh.env?.SystemRoot, "D:\\Windows");
   assert.deepEqual(startTimeCommand(4321, "darwin"), { file: "/bin/ps", args: ["-o", "lstart=", "-p", "4321"] });
 });

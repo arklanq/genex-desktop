@@ -355,6 +355,15 @@ export interface StudioApi {
   storageSpace(project?: string): Promise<import("./storage-space.ts").StorageSpace>;
   /** Free space in one game (refused while it works) or (none named) in every game not working. */
   freeStorage(project?: string): Promise<import("./storage-space.ts").StorageFreed>;
+  /** Settings → Storage (Windows): the folder Genex keeps its files in, and the last move that did not happen. */
+  dataFolder(): Promise<import("./data-folder.ts").DataFolderState>;
+  /**
+   * Settings → Storage: asks for a folder to keep Genex's files in and checks it; null when
+   * cancelled. Nothing is written until {@link moveDataFolder}.
+   */
+  chooseDataFolder(): Promise<import("./data-folder.ts").DataFolderChoice | null>;
+  /** Move Genex's files to the folder chosen last: Genex restarts and moves them; a refusal says why. */
+  moveDataFolder(): Promise<import("./data-folder.ts").DataFolderChoice>;
   /** Takes back a game's engine link from its chat line; refused once the link has changed since. */
   undoEngineLink(request: import("./game-engine.ts").EngineLinkUndo): Promise<boolean>;
   /** The person's Stop on a job's chat line: the job's record, or null for a job the game never had. */
@@ -520,6 +529,8 @@ export interface StudioApi {
   playInstalls(): Promise<NativeInstalls>;
   /** Play: remove a game from this computer; its saves stay. */
   playUninstall(slug: string): Promise<void>;
+  /** Play: stop sharing who the player is with an installed game, on Genex and here. */
+  playForgetIdentity(slug: string): Promise<void>;
   /** Play: play an installed game in its own window (a running one comes forward); how it goes arrives as `UiEvent.PlaySessions`. */
   playLaunch(slug: string): Promise<void>;
   /** Play: bring a running game forward, quit it, or forget how it failed to start. */

@@ -3,6 +3,7 @@
  * chrome by it) and whether startup is complete or waiting on the protected workspace, the
  * process sandbox every agent runs in. Browser-safe: main answers `StudioApi.bootState` with it.
  */
+import type { DataMoveProgress } from "./data-folder.ts";
 
 /** The operating systems Studio builds for, in Node's `process.platform` spelling. */
 export const StudioPlatform = {
@@ -22,6 +23,10 @@ export const BootPhase = {
   Starting: "starting",
   /** The studio's harness would not start: the window says so, with Try again, a report and Quit. */
   Failed: "failed",
+  /** Genex is moving its data to the folder chosen in Settings → Storage, then starts again. */
+  Moving: "moving",
+  /** The folder Genex keeps its data in is not there (its drive is unplugged): Try again or Quit. */
+  DataMissing: "data-missing",
 } as const;
 export type BootPhase = (typeof BootPhase)[keyof typeof BootPhase];
 
@@ -131,8 +136,15 @@ export interface BootState {
   setupTried?: true;
   /** What the core is doing while the phase is Starting. */
   step?: StartStep;
-  /** Why the studio would not start, while the phase is Failed; why its agents would not, while it is Ready. */
+  /**
+   * Why the studio would not start, while the phase is Failed; why its agents would not, while it
+   * is Ready; why a move of Genex's data stopped, while the phase is Moving.
+   */
   failure?: string;
+  /** How far the move is, while the phase is Moving. */
+  move?: DataMoveProgress;
+  /** The folder that is not there, while the phase is DataMissing. */
+  dataFolder?: string;
 }
 
 /** How Set up (Windows) ended when it did not fail. */

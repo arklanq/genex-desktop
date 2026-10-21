@@ -73,6 +73,18 @@ const SERVER_ERROR = 500;
  * plugin instead. A user-origin rule, so not even the popover's inline `!important` styles win.
  */
 const HIDE_GUEST_POPOVER = "[data-genex-guest-popover]{display:none !important}";
+/**
+ * The browser's own focus ring on a game's canvas once the game takes the keyboard (a canvas focused by
+ * script matches :focus-visible): a line along the game's edges that tells the player nothing, since the
+ * game is all the view shows. Keys still reach the game; only the canvas's outline goes, and every other
+ * focus ring on the page stays. User-origin, so no page rule brings it back.
+ */
+const HIDE_GAME_FOCUS_RING = "canvas:focus{outline:none !important}";
+/**
+ * The bar's Full screen, as the game's own: its page asks for full screen as if the player had pressed
+ * a button in it, so Esc and the bar's return take the same path as a game's own full screen.
+ */
+const REQUEST_FULL_SCREEN = "document.documentElement.requestFullscreen().catch(() => undefined)";
 /** Where each system keeps its microphone privacy switch for apps. */
 const MIC_SETTINGS: Partial<Record<NodeJS.Platform, string>> = {
   darwin: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
@@ -393,7 +405,9 @@ function gameView(win: BrowserWindow, deps: PlayViewDeps, events: ViewerEvents, 
     });
     contents.on("render-process-gone", () => mine() && events.failed());
     contents.on("dom-ready", () => {
-      if (!contents.isDestroyed()) void contents.insertCSS(HIDE_GUEST_POPOVER, { cssOrigin: "user" }).catch(() => {});
+      if (contents.isDestroyed()) return;
+      for (const css of [HIDE_GUEST_POPOVER, HIDE_GAME_FOCUS_RING])
+        void contents.insertCSS(css, { cssOrigin: "user" }).catch(() => {});
     });
     contents.on("before-input-event", (_event, input) => events.key(input));
     void contents.loadURL(url).catch(() => {});
@@ -407,6 +421,11 @@ function gameView(win: BrowserWindow, deps: PlayViewDeps, events: ViewerEvents, 
     },
     hide: (): void => current?.setVisible(false),
     focus: (): void => current?.webContents.focus(),
+    fullScreen: (): void => {
+      const contents = current?.webContents;
+      if (contents && !contents.isDestroyed())
+        void contents.executeJavaScript(REQUEST_FULL_SCREEN, true).catch(() => undefined);
+    },
     close,
     /** Tell the game's page to open the microphone or close it; an opening is what the gate lets through. */
     mic: (command: PlayMicCommand): void => {

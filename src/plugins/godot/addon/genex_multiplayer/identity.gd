@@ -20,6 +20,9 @@ signal token_changed()
 signal session_expired()
 
 const TICKET_ENV := "GENEX_EMBED_TICKET"
+## Genex's API as the launcher names it: its local gateway when Genex's Play started this game in
+## its sandbox. It wins over `api_url`, whatever the game set.
+const API_ENV := "GENEX_API_URL"
 const REFRESH_AFTER_MS := 10 * 60 * 1000
 
 var api_url := "https://api.genex.games"
@@ -134,13 +137,19 @@ func _adopt(res: Dictionary) -> bool:
 	return true
 
 
+## The API this identity talks to: the launcher's (GENEX_API_URL) when it named one, else `api_url`.
+func _api() -> String:
+	var launcher := OS.get_environment(API_ENV)
+	return launcher if launcher != "" else api_url
+
+
 func _post(path: String, payload: Dictionary, bearer := "") -> Dictionary:
 	var req := HTTPRequest.new()
 	add_child(req)
 	var headers := PackedStringArray(["Content-Type: application/json", "Accept: application/json"])
 	if bearer != "":
 		headers.append("Authorization: Bearer " + bearer)
-	var err := req.request(api_url.trim_suffix("/") + path, headers, HTTPClient.METHOD_POST, JSON.stringify(payload))
+	var err := req.request(_api().trim_suffix("/") + path, headers, HTTPClient.METHOD_POST, JSON.stringify(payload))
 	if err != OK:
 		req.queue_free()
 		return {"code": 0, "body": null}

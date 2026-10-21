@@ -8,6 +8,8 @@ import assert from "node:assert/strict";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
+import { pathToFileURL } from "node:url";
+import * as esbuild from "esbuild";
 import { realpath } from "node:fs/promises";
 import { after } from "node:test";
 import { GenexTools } from "../../src/plugins/genex/adapter.ts";
@@ -67,6 +69,26 @@ describe("which CLI sends apps", () => {
       "1.36.11x",
     ])
       assert.equal(hasNativeCommand(version), false, version);
+  });
+});
+
+describe("the CLI Studio ships", () => {
+  it("sends apps from a bundle with no node_modules beside it, as the packaged app runs", async () => {
+    // The packaged app keeps the CLI only inside the Genex plugin's payload, never in its own
+    // node_modules: the main bundle must carry the pin's version, not look it up at run time.
+    const outdir = await realpath(await tmpDir("native-pin-"));
+    await esbuild.build({
+      entryPoints: [path.join(import.meta.dirname, "../../src/plugins/genex/native-publish.ts")],
+      outfile: path.join(outdir, "main.mjs"),
+      bundle: true,
+      platform: "node",
+      format: "esm",
+      logLevel: "silent",
+    });
+    const bundled = (await import(pathToFileURL(path.join(outdir, "main.mjs")).href)) as {
+      pinnedCliSendsApps: () => boolean;
+    };
+    assert.equal(bundled.pinnedCliSendsApps(), true);
   });
 });
 

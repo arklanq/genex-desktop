@@ -1,15 +1,15 @@
 /**
- * Play's game viewer: the studio's own bar is a strip of its own across the window's top, in a layer
- * above the game's view (`PlayViewerBar.tsx`): Back, the game's name and facts, Like, Comments, Share,
- * Invite a friend, Remix and Exit. A published game fills the window below it, never under it, and the
- * bar stays up for the whole game; only the game's own full screen gives it the whole window
- * (`bar-layout.ts`). Its Comments opens over the dimmed game (`viewer-comments.ts`), and so does a
- * game's coin purchase sheet (`viewer-purchase.ts`). Main keeps what the bar shows and acts on what it
- * asks (`studio:play.control`, `studio:play.purchase`). Holding Esc in the game moves the
- * keyboard to the bar (a tap still reaches the game: pause menus, mouse lock); Esc there gives it
- * back. A guest with no Genex account is offered a Genex account in the bar until its ×. A game in
- * voice chat gets the bar's mic switch and its menu (`mic.ts`). Electron-free: the game's view, the
- * bar's layer, the window, the clipboard, the microphone, genex.games' coin and the clock come in as deps.
+ * Play's game viewer: the studio's own bar is a strip of its own across the window's top, in a layer above
+ * the game's view (`PlayViewerBar.tsx`): Back, the game's name and facts, Like, Comments, Share, Invite a
+ * friend, Remix, Full screen and Exit. A published game fills the window below it, never under it, and the
+ * bar stays up for the whole game; only its page's full screen gives it the whole window, asked for by the
+ * game or by the bar's Full screen (`bar-layout.ts`). Its Comments opens over the dimmed game
+ * (`viewer-comments.ts`), and so does a game's coin purchase sheet (`viewer-purchase.ts`). Main keeps what
+ * the bar shows and acts on what it asks (`studio:play.control`, `studio:play.purchase`). Holding Esc in
+ * the game moves the keyboard to the bar (a tap still reaches the game: pause menus, mouse lock); Esc there
+ * gives it back. A guest with no Genex account is offered a Genex account in the bar until its ×. A game in
+ * voice chat gets the bar's mic switch and its menu (`mic.ts`). Electron-free: the game's view, the bar's
+ * layer, the window, the clipboard, the microphone, genex.games' coin and the clock come in as deps.
  */
 import { ESC_HOLD_MS, type FullScreenKey, type Rect } from "../game-full-screen.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
@@ -60,6 +60,8 @@ export interface PlayViewerDeps {
     show(bounds: Rect): void;
     hide(): void;
     focus(): void;
+    /** Ask the game's page for its own full screen, as if the player had asked it: its Esc and the bar's return follow. */
+    fullScreen(): void;
     close(): void;
   };
   /** The bar's layer above the game's view: where it lies, and the keyboard (the game lets go of the mouse). */
@@ -357,6 +359,10 @@ function barActions(ctx: ViewerContext): Record<PlayControl, (at?: PlayPoint) =>
     [PlayControl.Mic]: () => void toggleMic(ctx).catch(() => ctx.note(PlayNote.MicFailed)),
     [PlayControl.NativeApp]: () => pressNativeApp(ctx),
     [PlayControl.MicDevices]: (at) => chooseMic(ctx, at),
+    // Only a game on screen, with nothing over it, has a page to fill the window with.
+    [PlayControl.FullScreen]: () => {
+      if (ctx.session()?.phase === PlayViewerPhase.Playing && !ctx.covering()) ctx.deps.game.fullScreen();
+    },
   };
 }
 

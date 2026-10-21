@@ -13,6 +13,7 @@ import { execFile } from "node:child_process";
 import path from "node:path";
 import { promisify } from "node:util";
 import { SECOND_MS } from "../shared/duration.ts";
+import { windowsPowerShellEnv } from "./child-env.ts";
 
 /** How long the listing may take: PowerShell's own start is most of it. */
 const LIST_TIMEOUT_MS = 20 * SECOND_MS;
@@ -29,12 +30,13 @@ export interface WindowsProcessRow {
 }
 
 /** How the listing runs PowerShell; tests stand in for it. */
-export type PowerShellRun = (file: string, args: readonly string[]) => Promise<string>;
+export type PowerShellRun = (file: string, args: readonly string[], env: NodeJS.ProcessEnv) => Promise<string>;
 
 const runFile = promisify(execFile);
 
-const powerShellRun: PowerShellRun = async (file, args) =>
-  (await runFile(file, [...args], { timeout: LIST_TIMEOUT_MS, maxBuffer: LIST_MAX_BYTES, windowsHide: true })).stdout;
+const powerShellRun: PowerShellRun = async (file, args, env) =>
+  (await runFile(file, [...args], { timeout: LIST_TIMEOUT_MS, maxBuffer: LIST_MAX_BYTES, windowsHide: true, env }))
+    .stdout;
 
 /** Windows PowerShell by its full path under SystemRoot, so neither PATH nor the current folder stands in. */
 function powerShellPath(env: NodeJS.ProcessEnv): string {
@@ -121,6 +123,7 @@ export async function windowsProcesses(
   const script = Buffer.from(listScript(safe), "utf16le").toString("base64");
   const args = ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", script];
   const run = options.run ?? powerShellRun;
-  const stdout = await run(powerShellPath(options.env ?? process.env), args).catch(() => null);
+  const env = options.env ?? process.env;
+  const stdout = await run(powerShellPath(env), args, windowsPowerShellEnv(env)).catch(() => null);
   return stdout === null ? null : windowsProcessRows(stdout);
 }

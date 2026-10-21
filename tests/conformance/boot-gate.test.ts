@@ -244,6 +244,48 @@ describe("starting and a studio that would not start", () => {
   });
 });
 
+describe("moving Genex's files, and a data folder that is not there", () => {
+  it("shows how far a move is", () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    gate.moving({ to: "D:\\Genex", done: 0, total: 0 });
+    gate.moving({ to: "D:\\Genex", done: 10, total: 40 });
+    assert.deepEqual(gate.state(), {
+      platform: StudioPlatform.Windows,
+      phase: BootPhase.Moving,
+      sandbox: null,
+      move: { to: "D:\\Genex", done: 10, total: 40 },
+    });
+  });
+
+  it("a move that stopped part-way says why and offers Try again, which starts Genex again", async () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    let restarts = 0;
+    gate.moveStopped("D:\\Genex", "A file was in use.", async () => {
+      restarts++;
+    });
+    assert.equal(gate.state().phase, BootPhase.Moving);
+    assert.equal(gate.state().failure, "A file was in use.");
+    assert.equal(gate.state().move?.to, "D:\\Genex");
+    await gate.retry();
+    assert.equal(restarts, 1);
+  });
+
+  it("names a missing folder, and a Try again while it is still missing keeps it with the new words", async () => {
+    const gate = createBootGate(StudioPlatform.Windows);
+    let tries = 0;
+    gate.dataMissing("D:\\Genex", async () => {
+      tries++;
+      throw new Error("D:\\Genex is still not there.");
+    });
+    assert.equal(gate.state().phase, BootPhase.DataMissing);
+    assert.equal(gate.state().dataFolder, "D:\\Genex");
+    const after = await gate.retry();
+    assert.equal(tries, 1);
+    assert.equal(after.phase, BootPhase.DataMissing);
+    assert.equal(after.failure, "D:\\Genex is still not there.");
+  });
+});
+
 describe("Set up (Windows)", () => {
   it("installs the sandbox, then re-runs startup and opens the studio", async () => {
     const { gate, counts } = windowsGate(async () => ({ cancelled: false }));

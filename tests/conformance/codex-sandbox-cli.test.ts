@@ -7,10 +7,14 @@
  * folder. On Windows this is the lead's `node .studio/bridge/tool.mjs start_web_game` of #304:
  * without Codex's own Windows sandbox every such command was "rejected: blocked by policy".
  * Opt-in, like every test that needs this machine's own programs: `STUDIO_CODEX_CLI_TESTS=1` with
- * a `codex` the engine can find (or `STUDIO_CODEX_BIN`).
+ * a `codex` the engine can find (or `STUDIO_CODEX_BIN`). On Windows with a second drive the same
+ * sessions also run inside a Genex data folder moved there (Settings → Storage), locked down to
+ * this account as the move leaves it.
  */
 import assert from "node:assert/strict";
+import { existsSync, statSync } from "node:fs";
 import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 import { EngineId } from "../../src/shared/providers.ts";
@@ -21,7 +25,8 @@ import { resolveCodingCli } from "../../src/substrate/engines/external-cli.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { fixtureCodingCli } from "../helpers/external-cli.ts";
 import { codexProviderArgs, startFakeResponses } from "../helpers/fake-openai-responses.ts";
-import { tmpDir } from "../helpers/tmp.ts";
+import { lockDownFolder } from "../../src/substrate/windows-drive.ts";
+import { removeTree, tmpDir } from "../helpers/tmp.ts";
 
 const LIVE = process.env.STUDIO_CODEX_CLI_TESTS === "1";
 /** How long one scripted Codex turn may take. */
@@ -129,6 +134,38 @@ describe("a Codex session's commands run under Genex's flags (real CLI)", {
   for (const session of SESSIONS) {
     it(`${session.name}: a node command is not blocked by policy and writes the session's folder`, async () => {
       const root = await realpath(await tmpDir("studio-codex-cli-"));
+      const launch = await launchFor(root, session.request);
+      const run = await runForReal(root, launch);
+      const detail = `exit ${run.code}, shell ${run.shell}, output ${run.output}\n${run.log.slice(-4000)}`;
+      assert.ok(run.shell, `the scripted call was made: ${detail}`);
+      assert.doesNotMatch(run.output ?? "", /blocked by policy|rejected/i, detail);
+      assert.equal(run.proof, PROOF.text, detail);
+    });
+  }
+});
+
+/** A drive other than the temp folder's, where a hosted Windows runner has one. */
+function secondDrive(): string | null {
+  if (process.platform !== "win32") return null;
+  const temp = statSync(os.tmpdir()).dev;
+  for (const letter of ["D", "E"]) {
+    const root = `${letter}:\\`;
+    if (existsSync(root) && statSync(root).dev !== temp) return root;
+  }
+  return null;
+}
+const SECOND_DRIVE = secondDrive();
+
+describe("a Codex session in a Genex data folder on a second drive (real CLI, Windows)", {
+  skip: (!LIVE && "STUDIO_CODEX_CLI_TESTS=1") || (!SECOND_DRIVE && "Windows with a second drive"),
+}, () => {
+  for (const session of SESSIONS) {
+    it(`${session.name}: its command runs and writes there`, async (t) => {
+      const data = path.join(SECOND_DRIVE ?? os.tmpdir(), `genex-codex-data-${process.pid}`, "Genex");
+      t.after(() => removeTree(path.dirname(data)));
+      await mkdir(data, { recursive: true });
+      await lockDownFolder(data);
+      const root = await realpath(data);
       const launch = await launchFor(root, session.request);
       const run = await runForReal(root, launch);
       const detail = `exit ${run.code}, shell ${run.shell}, output ${run.output}\n${run.log.slice(-4000)}`;

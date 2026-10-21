@@ -8,6 +8,7 @@ import type { CreatorStats } from "../play/creator-stats.ts";
 import type { GameLinks } from "../play/game-links.ts";
 import type { GenexCredits } from "../play/credits.ts";
 import type { PlayGallery, PlayWorld } from "../play/gallery.ts";
+import { forgetNativeIdentity } from "../play/native-identity.ts";
 import type { PlayManage } from "../play/manage.ts";
 import type { NativeInstaller } from "../play/native-installs.ts";
 import { isSessionAction, NO_INSTALLS, SessionAction } from "../../shared/play-native.ts";
@@ -123,7 +124,7 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   // The purchase sheet's answer: the viewer reads it, and pays or cancels only the purchase it holds.
   handle("studio:play.purchase", async (payload) => viewer()?.answerPurchase(payload));
   registerCommentsIpc(handle, viewer);
-  registerInstallsIpc(handle, deps.installs);
+  registerInstallsIpc(handle, deps.installs, gallery);
   registerSessionsIpc(handle, deps.sessions);
   registerGameIpc(handle, deps);
 }
@@ -164,7 +165,11 @@ function registerGameIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
 }
 
 /** A native game's install: the renderer names a game by its slug; main reads its build from the catalog. */
-function registerInstallsIpc(handle: IpcHandle, installs: PlayIpcDeps["installs"]): void {
+function registerInstallsIpc(
+  handle: IpcHandle,
+  installs: PlayIpcDeps["installs"],
+  gallery: Pick<PlayGallery, "forgetIdentity">,
+): void {
   const installer = (): NativeInstaller => {
     const found = installs();
     if (!found) throw new Error(MESSAGE.noInstalls);
@@ -178,6 +183,18 @@ function registerInstallsIpc(handle: IpcHandle, installs: PlayIpcDeps["installs"
   handle("studio:play.install-cancel", (payload) => installer().cancel(slugOf(payload)));
   handle("studio:play.installs", async () => (await installs()?.state()) ?? NO_INSTALLS);
   handle("studio:play.uninstall", (payload) => installer().uninstall(slugOf(payload)));
+  handle("studio:play.forget-identity", (payload) => {
+    const slug = slugOf(payload);
+    const found = installer();
+    return forgetNativeIdentity(
+      {
+        projectOf: async (game) => (await found.record(game))?.identityProject ?? null,
+        forget: (projectId) => gallery.forgetIdentity(projectId),
+        knowsYou: (game, projectId) => found.knowsYou(game, projectId),
+      },
+      slug,
+    );
+  });
 }
 
 /** The viewed game's comments: always the game on screen, never one the renderer names. */

@@ -600,8 +600,21 @@ export function buildContractorBrief({
   ];
   const workersLine = workers ? WORKERS_BRIEF_LINE : "";
 
+  // A folder with no kind yet hears how its request picks one on every message, a resumed session's
+  // too: a plugin turned on from the chat's card resumes the session that asked for it.
+  const kindRule = !game.legacy && kindPending(game) ? pendingKindRule(engine, kinds, null, game.holds, false) : [];
   if (resume)
-    return [ask, "", identity, resumePickup(afterLoopRun, launch), ...launchBlock, workersLine, workHere, stills]
+    return [
+      ask,
+      "",
+      identity,
+      ...kindRule,
+      resumePickup(afterLoopRun, launch),
+      ...launchBlock,
+      workersLine,
+      workHere,
+      stills,
+    ]
       .filter(Boolean)
       .join("\n");
 

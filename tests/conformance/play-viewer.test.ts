@@ -1,12 +1,13 @@
 /**
- * Play's viewer: the studio's own bar (Back, the game's name and facts, Like, Comments, Share, Invite
- * a friend, Remix, Exit) is a strip of its own across the window's top, in a layer of its own, and the
- * game fills the window below it, never under it. The bar stays up for the whole game; only the game's
- * own full screen gives it the whole window. Its Comments covers the window and takes the keyboard. The viewer signs the
- * player in with a ticket when there is a Genex account, shows the cover until the page has loaded
- * (or long enough), and closes from Back, Exit, the guest card's Sign in, Remix or the maker's name.
- * A held Esc in the game moves the keyboard to the bar; Esc there gives it back. A guest with no
- * Genex account is offered the Genex plugin in the bar until its ×.
+ * Play's viewer: the studio's own bar (Back, the game's name and facts, Like, Comments, Share, Invite a
+ * friend, Remix, Full screen, Exit) is a strip of its own across the window's top, in a layer of its own,
+ * and the game fills the window below it, never under it. The bar stays up for the whole game; only its
+ * page's full screen (the game's own, or asked for by the bar's Full screen) gives it the whole window. Its
+ * Comments covers the window and takes the keyboard. The viewer signs the player in with a ticket when
+ * there is a Genex account, shows the cover until the page has loaded (or long enough), and closes from
+ * Back, Exit, the guest card's Sign in, Remix or the maker's name. A held Esc in the game moves the
+ * keyboard to the bar; Esc there gives it back. A guest with no Genex account is offered the Genex plugin
+ * in the bar until its ×.
  */
 import { EventEmitter } from "node:events";
 import { describe, it } from "node:test";
@@ -481,6 +482,28 @@ describe("Play viewer's bar above the game", () => {
     viewer.loaded();
     assert.ok(log.includes(`bar.show ${BAR_STRIP}`));
     assert.ok(log.includes(`game.show ${UNDER_BAR}`));
+  });
+
+  it("asks the game's page for its own full screen from the bar's Full screen, once the game plays and nothing covers it", async () => {
+    const { viewer, log } = rig();
+    viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    viewer.control(PlayControl.FullScreen);
+    assert.ok(!log.includes("game.fullScreen"), "nothing on screen to fill yet");
+    viewer.loaded();
+    log.length = 0;
+    viewer.control(PlayControl.FullScreen);
+    assert.deepEqual(log, ["game.fullScreen"], "the page's own full screen: its Esc and the bar's return follow");
+    viewer.hold({ comments: true });
+    log.length = 0;
+    viewer.control(PlayControl.FullScreen);
+    assert.deepEqual(log, [], "not under Comments");
+    const failed = rig();
+    failed.viewer.open("lost-cathedral", "Lost Cathedral");
+    await settle();
+    failed.viewer.failed();
+    failed.viewer.control(PlayControl.FullScreen);
+    assert.ok(!failed.log.includes("game.fullScreen"), "not over a game that could not load");
   });
 
   it("takes no full screen with no game open", () => {

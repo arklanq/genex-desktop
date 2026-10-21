@@ -126,6 +126,10 @@ describe("the connect script in a published page", () => {
         { apiUrl: "https://api.genex.games", channel: "production", slug: "rain-circuit" },
         "the host's environment stays, with the game's project beside it",
       );
+      // A Unity WebGL build's Genex package reads the same player through `window.genexEmbed`.
+      const embed = page.window.genexEmbed as { waitForPlayer: () => Promise<unknown>; getColyseusAuth: () => unknown };
+      assert.deepEqual(await embed.waitForPlayer(), { user: { id: "p1" }, guest: true });
+      assert.deepEqual(embed.getColyseusAuth(), { embedToken: "token-1" });
     } finally {
       delete page.window;
     }

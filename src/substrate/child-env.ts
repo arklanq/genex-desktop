@@ -68,6 +68,8 @@ const SANDBOX_ALLOW = new Set([
   "SSL_CERT_DIR",
 ]);
 const SANDBOX_ALLOW_PREFIX = /^LC_/;
+/** Windows PowerShell's module path variable, upper-cased: Windows names are case-insensitive. */
+const PS_MODULE_PATH = "PSMODULEPATH";
 
 /**
  * A variable whose name says it carries a secret, in any case. `_PWD` needs its underscore: `PWD`
@@ -141,6 +143,16 @@ export function childEnv(parent: Record<string, string | undefined>, request: Ch
   Object.assign(env, STUDIO_IDENTITY);
   for (const [key, value] of Object.entries(request.set ?? {})) if (value !== undefined) env[key] = value;
   return env;
+}
+
+/**
+ * `env` for a Windows PowerShell 5.1 child, without any inherited module path, whatever its case.
+ * 5.1 builds its own when none is set; one inherited from PowerShell 7 (Genex started from a pwsh
+ * terminal) puts 7.x modules first, 5.1 cannot load them, and their cmdlets vanish
+ * (Get-FileHash, ConvertTo-Json, Get-Process). `env` itself is left as it was.
+ */
+export function windowsPowerShellEnv<T extends string | undefined>(env: Record<string, T>): Record<string, T> {
+  return Object.fromEntries(Object.entries(env).filter(([name]) => name.toUpperCase() !== PS_MODULE_PATH));
 }
 
 /**

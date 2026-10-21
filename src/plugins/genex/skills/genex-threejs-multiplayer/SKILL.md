@@ -3,6 +3,13 @@
 You are building inside AI Game Studio. Below the upstream marker is Genex's multiplayer card,
 unchanged. Where it disagrees with this preface, this preface wins.
 
+## A Godot or Unity game has its own
+
+This card is for web games written with npm and three.js. A Godot game gets Genex multiplayer from
+`godot__multiplayer`, then `godot__skill {"name":"godot-multiplayer"}`; a Unity game from
+`unity__multiplayer`, then `unity__skill {"name":"unity-multiplayer"}`. Stop reading here for those,
+and never write a relay server of your own: Genex's relays already serve web, Godot and Unity players.
+
 ## Multiplayer runs on the Genex draft link, with two different players
 
 - Studio's preview is single-player. It opens a game that uses `@genex-ai/embed-sdk` in local

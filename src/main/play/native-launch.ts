@@ -15,7 +15,7 @@ import { isPlaySlug } from "../../shared/play.ts";
 import { LaunchFailure, NativeEngine, type NativeSession, NativeSessionPhase } from "../../shared/play-native.ts";
 import type { JobClock, JobProbe } from "../../substrate/job-process.ts";
 import { removeOwnedFolder } from "../../substrate/storage-folders.ts";
-import type { NativeGameRequest } from "../../substrate/plugins/native-process.ts";
+import type { GameGenexEnv, NativeGameRequest } from "../../substrate/plugins/native-process.ts";
 import type { InstallRecord } from "./native-installs.ts";
 import { SAVES } from "./native-installs.ts";
 
@@ -54,6 +54,16 @@ export interface GameProcess {
   once(event: "error", listener: (error: Error) => void): unknown;
 }
 
+/**
+ * A game's way to Genex while it plays: its gateway's ports (its sandbox's only network), what the
+ * game is told (Genex's address, a sign-in ticket), and the gateway's end once the game ends.
+ */
+export interface GameGenex {
+  ports: readonly number[];
+  env: GameGenexEnv;
+  close(): Promise<void>;
+}
+
 /** What the launcher works with. */
 export interface NativeSessionsDeps {
   /** The installed-games folder (`StudioLayout.installedGames`). */
@@ -79,6 +89,8 @@ export interface NativeSessionsDeps {
   /** A game ended: its older versions may go now. */
   ended(slug: string): Promise<void>;
   log(line: string): void;
+  /** Opens a game's way to Genex (`main/play/genex-gateway.ts`); without it a game has no network. */
+  genex?(slug: string): Promise<GameGenex | null>;
   /** Where presence and plays will be reported once genex.games takes them from the app; unused until then. */
   presence?: { started(slug: string): void; ended(slug: string): void };
 }
@@ -88,6 +100,7 @@ interface Live {
   session: NativeSession;
   pid: number;
   scratch: string;
+  genex: GameGenex | null;
   exited: Promise<void>;
   quitting: Promise<void> | null;
 }
@@ -175,6 +188,7 @@ export class NativeSessions {
   /** What happens once a game's process ends: running, it was played; starting, it failed. */
   async #onExit(slug: string, one: Live, output: () => string, code: number | null): Promise<void> {
     this.#live.delete(slug);
+    await one.genex?.close().catch(() => undefined);
     await this.#dropRecord(slug);
     await rm(one.scratch, { recursive: true, force: true });
     if (one.session.phase === NativeSessionPhase.Running) this.#deps.presence?.ended(slug);
@@ -187,20 +201,47 @@ export class NativeSessions {
     await this.#deps.ended(slug).catch(() => undefined);
   }
 
-  /** Start the game in its sandbox with a fresh temporary folder, removed again if it does not start. */
-  async #spawn(slug: string, record: InstallRecord): Promise<{ child: GameProcess; scratch: string }> {
+  /** The game's way to Genex, or none: one that can't open leaves the game offline, never unplayable. */
+  async #openGenex(slug: string): Promise<GameGenex | null> {
+    try {
+      return (await this.#deps.genex?.(slug)) ?? null;
+    } catch (error) {
+      this.#deps.log(`native game ${slug} plays offline: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
+    }
+  }
+
+  /**
+   * Start the game in its sandbox with a fresh temporary folder and its way to Genex, both given
+   * back if it does not start.
+   */
+  async #spawn(
+    slug: string,
+    record: InstallRecord,
+  ): Promise<{ child: GameProcess; scratch: string; genex: GameGenex | null }> {
     const app = path.join(this.#deps.root, slug, record.version, record.entry);
     const saves = path.join(this.#deps.root, slug, SAVES);
     await mkdir(saves, { recursive: true });
     const scratch = await mkdtemp(path.join(this.#deps.root, `${SCRATCH}${slug}-`));
     const { bundleId, bundleName } = record;
     const binary = path.join(app, record.executable);
-    const request = { binary, app, saves, scratch, bundleId, bundleName, args: launchArgs(record) };
+    const genex = await this.#openGenex(slug);
+    const request: NativeGameRequest = {
+      binary,
+      app,
+      saves,
+      scratch,
+      bundleId,
+      bundleName,
+      args: launchArgs(record),
+      ...(genex ? { genex: { ports: genex.ports, env: genex.env } } : {}),
+    };
     try {
       const child = await this.#deps.spawn(request);
       if (!child.pid) throw new Error("the game did not start");
-      return { child, scratch };
+      return { child, scratch, genex };
     } catch (error) {
+      await genex?.close().catch(() => undefined);
       await rm(scratch, { recursive: true, force: true });
       throw error;
     }
@@ -208,7 +249,7 @@ export class NativeSessions {
 
   /** Start `record`'s game and watch it until it ends. */
   async #start(slug: string, record: InstallRecord): Promise<void> {
-    const { child, scratch } = await this.#spawn(slug, record);
+    const { child, scratch, genex } = await this.#spawn(slug, record);
     const pid = child.pid ?? 0;
     const output = tail(child.stderr, OUTPUT_TAIL_BYTES);
     child.stdout.resume();
@@ -218,7 +259,7 @@ export class NativeSessions {
     });
     const startedAt = new Date(this.#deps.clock.now()).toISOString();
     const session: NativeSession = { slug, phase: NativeSessionPhase.Starting, startedAt, failure: null };
-    const one: Live = { session, pid, scratch, quitting: null, exited: Promise.resolve() };
+    const one: Live = { session, pid, scratch, genex, quitting: null, exited: Promise.resolve() };
     one.exited = ended.then((code) => this.#onExit(slug, one, output, code));
     this.#live.set(slug, one);
     this.#failed.delete(slug);

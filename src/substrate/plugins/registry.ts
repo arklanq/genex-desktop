@@ -1,5 +1,5 @@
 import path from "node:path";
-import { watch as watchPath } from "node:fs";
+import { constants, watch as watchPath } from "node:fs";
 import { mkdir, readFile, readdir, cp, rm, stat } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { isPluginId } from "../../shared/plugin-id.ts";
@@ -965,7 +965,12 @@ export class PluginRegistry {
       await inspectPackage(directory);
       const installed = path.join(this.#packages(), manifest.id, `${manifest.version}-${randomUUID()}`);
       await mkdir(path.dirname(installed), { recursive: true });
-      await cp(directory, installed, { recursive: true, filter: withoutSeedDependencies(directory) });
+      // A clone where the disk can (APFS): every profile installs every seed, and a copy is written only once edited.
+      await cp(directory, installed, {
+        recursive: true,
+        filter: withoutSeedDependencies(directory),
+        mode: constants.COPYFILE_FICLONE,
+      });
       this.onInitStep?.(PluginInitStep.Seed, manifest.id);
       const lost = this.#lostSeedCopies.get(manifest.id);
       this.#lostSeedCopies.delete(manifest.id);
@@ -1700,6 +1705,7 @@ export class PluginRegistry {
         errorOnExist: true,
         force: false,
         filter: (source) => packaged(source) && fromSeed(source),
+        mode: constants.COPYFILE_FICLONE,
       });
       await inspectPackage(destination);
     } catch (e) {

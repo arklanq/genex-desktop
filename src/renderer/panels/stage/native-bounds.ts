@@ -1,6 +1,6 @@
 /** Where the native game view sits: over the stage's slot, or nowhere while something else owns the stage. */
 import type { RefObject } from "react";
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useSyncExternalStore } from "react";
 import { NATIVE_VIEW_ATTRIBUTE } from "../../native-view.ts";
 import { scheduleBounds } from "./bounds-schedule.ts";
 
@@ -133,12 +133,24 @@ export interface StageCover {
   watching: boolean;
 }
 
+/** Whether the studio window is shown: not hidden or minimized (a window merely covered by others still counts as shown). */
+function useWindowShown(): boolean {
+  return useSyncExternalStore(
+    (changed) => {
+      document.addEventListener("visibilitychange", changed);
+      return () => document.removeEventListener("visibilitychange", changed);
+    },
+    () => document.visibilityState !== "hidden",
+  );
+}
+
 /**
  * Whether the stage shows the running game at all. The compact sidebar and the stage toolbar's
  * panels only float over it: they cover the game like a popover does (see `overlaid`), so the
  * game is photographed before it leaves rather than leaving a black stage behind them.
  */
-const showsGame = (cover: StageCover): boolean =>
+const showsGame = (cover: StageCover, windowShown: boolean): boolean =>
+  windowShown &&
   cover.visible &&
   Boolean(cover.project) &&
   ![
@@ -158,6 +170,9 @@ const showsGame = (cover: StageCover): boolean =>
 // paint over it).
 /** Report the slot's rectangle to main while the game shows, and zero it the moment anything covers it. */
 export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cover: StageCover): void {
+  // The game view never throttles itself (agents watch it in the background), so a window out of
+  // sight takes it off the stage like any cover: its frames pause and it comes back as it was.
+  const windowShown = useWindowShown();
   // The floating covers change without re-placing the view: report() reads them when they move.
   const overlaid = useRef(false);
   overlaid.current = cover.toolbarOpen || cover.sidebarOverlay;
@@ -181,7 +196,7 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
   useEffect(() => {
     const element = slot.current;
     if (!element) return;
-    if (!showsGame(cover)) {
+    if (!showsGame(cover, windowShown)) {
       element.removeAttribute(NATIVE_VIEW_ATTRIBUTE);
       holdStill(element, null);
       void window.studio.previewBounds({ ...HIDDEN_BOUNDS, watching });
@@ -244,6 +259,7 @@ export function useNativeViewBounds(slot: RefObject<HTMLDivElement | null>, cove
     stillsOnStage,
     watching,
     stopped,
+    windowShown,
   ]);
 }
 

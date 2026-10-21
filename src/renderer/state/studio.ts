@@ -92,6 +92,8 @@ import {
   harnessDown,
   isGameThread,
   projectOf,
+  Room,
+  roomOf,
   stageProjectSet,
   statusBootstrapped,
   personFirstReported,
@@ -292,16 +294,22 @@ interface StageFollower {
   threadsChanged(): void;
   /** Run a change that loads the preview itself, so the follower leaves that one change alone. */
   whileLoading(project: string, change: () => void): void;
+  /** Main says what Live loaded (`preview.identity`): the game it holds, none after a failed load. */
+  liveLoaded(identity: { project: string | null; error: string | null } | null | undefined): void;
+  /** Whether Live still holds this game's page from before: going back to it needs no new load. */
+  holds(project: string): boolean;
 }
 
 /**
  * The preview follows the game on the stage: whenever it changes to a game, main is asked to
  * load it. A command that loads the preview itself (opening a game) says so, and the follower
- * leaves that one change alone.
+ * leaves that one change alone. Live keeps its page while the stage is out of sight (home, Play),
+ * paused, so a game it still holds comes back as it was left rather than loading from the start.
  */
 function stageFollower(api: StudioApi, threads: ThreadsStore, storage: KeyValueStorage | null): StageFollower {
   let followed: string | null = projectOf(threads.getState());
   let loading: string | null = null;
+  let held: string | null = null;
   let lastGame = threads.getState().lastGameThreadId;
   const follow = (): void => {
     const project = projectOf(threads.getState());
@@ -309,7 +317,7 @@ function stageFollower(api: StudioApi, threads: ThreadsStore, storage: KeyValueS
     followed = project;
     if (!project) return;
     writeText(STORAGE_KEYS.reviewProject, project, storage);
-    if (project !== loading) void api.loadPreview(project);
+    if (project !== loading && project !== held) void api.loadPreview(project);
   };
   const rememberLastGame = (): void => {
     const next = threads.getState().lastGameThreadId;
@@ -328,6 +336,10 @@ function stageFollower(api: StudioApi, threads: ThreadsStore, storage: KeyValueS
       change();
       loading = null;
     },
+    liveLoaded(identity) {
+      held = identity && !identity.error ? identity.project : null;
+    },
+    holds: (project) => held === project,
   };
 }
 
@@ -479,6 +491,11 @@ async function enterProject(
   { beforeOpen, open = (select) => select() }: OpenHooks = {},
 ): Promise<ConversationRecord | null> {
   const { api, stores, storage, notify } = ctx;
+  // Opening the game already on the stage reloads it, as the sidebar always did; coming back to the
+  // game Live still holds (from home, Play or Studio) shows it as it was left.
+  const threadsNow = stores.threads.getState();
+  const onStage = roomOf(threadsNow) === Room.Build && projectOf(threadsNow) === name;
+  const reload = onStage || !ctx.follower.holds(name);
   let record: ConversationRecord;
   try {
     record = await api.threadForGame(name);
@@ -497,6 +514,10 @@ async function enterProject(
     }),
   );
   writeText(STORAGE_KEYS.reviewProject, name, storage);
+  if (!reload) {
+    void stores.library.refreshGames();
+    return record;
+  }
   void api
     .loadPreview(name)
     .then(() => stores.library.refreshGames())
@@ -592,6 +613,7 @@ function startStores(ctx: StudioContext, bootstrap: () => Promise<void>, timers:
     for (const record of previous.records) if (!ids.has(record.id)) stores.eventLog.forgetThread(record.id);
   });
   const off = api.onEvent((event) => {
+    if (event.type === UiEvent.PreviewIdentity) follower.liveLoaded(event.payload);
     applyUiEvent(stores, event);
     refreshAfter(stores, event);
   });

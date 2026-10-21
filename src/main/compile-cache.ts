@@ -11,7 +11,7 @@
  */
 import { readdir, rm } from "node:fs/promises";
 import path from "node:path";
-import { StudioFlag } from "./dev/launch-flags.ts";
+import { isLaunchSwitch } from "./dev/launch-flags.ts";
 
 /** The cache's folder inside the profile's data folder. */
 export const COMPILE_CACHE_FOLDER = "v8-compile-cache";
@@ -53,15 +53,6 @@ export function startCompileCache(host: CompileCacheHost): void {
     if (directory) await removeOlderRuntimes(directory);
   });
   host.onQuit(write);
-}
-
-const LAUNCH_SWITCHES: readonly string[] = Object.values(StudioFlag);
-/** Windows' installer launches the app to make or remove shortcuts, then it exits at once. */
-const SQUIRREL_SWITCH = "--squirrel-";
-
-function isLaunchSwitch(arg: string): boolean {
-  if (arg.startsWith(SQUIRREL_SWITCH)) return true;
-  return LAUNCH_SWITCHES.some((flag) => arg === flag || arg.startsWith(`${flag}=`));
 }
 
 /**

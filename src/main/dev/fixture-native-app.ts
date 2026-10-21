@@ -3,7 +3,9 @@
  * games and the native launch tests install and run it. It draws a Metal view in the game's colour
  * with its name and how many times it was played (a save it keeps in its own Application Support),
  * plays silence through the audio engine, quits when its window closes or on SIGTERM, and with
- * `--probe` reports what its sandbox lets it do as JSON lines and exits. It is compiled here with
+ * `--probe` reports what its sandbox lets it do as JSON lines and exits (with `GENEX_API_URL` set, also
+ * whether it reaches that Genex gateway and holds a ticket; with `--other-port=N`, whether it reaches
+ * another port of this Mac). It is compiled here with
  * the Xcode toolchain and ad-hoc signed, never committed: a Mac developer's machine has Xcode.
  */
 import { execFile } from "node:child_process";
@@ -81,6 +83,27 @@ func probe() {
     done.signal()
   }.resume()
   _ = done.wait(timeout: .now() + 5)
+  let env = ProcessInfo.processInfo.environment
+  if let api = env["GENEX_API_URL"], let url = URL(string: api + "/api/ping") {
+    let reached = DispatchSemaphore(value: 0)
+    URLSession.shared.dataTask(with: url) { _, response, _ in
+      let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+      report("genex", ["api": api, "ticket": env["GENEX_EMBED_TICKET"] != nil, "status": status])
+      reached.signal()
+    }.resume()
+    _ = reached.wait(timeout: .now() + 5)
+  }
+  for argument in CommandLine.arguments where argument.hasPrefix("--other-port=") {
+    let port = argument.dropFirst("--other-port=".count)
+    let other = DispatchSemaphore(value: 0)
+    var request = URLRequest(url: URL(string: "http://127.0.0.1:\(port)/")!)
+    request.timeoutInterval = 3
+    URLSession.shared.dataTask(with: request) { _, response, _ in
+      report("other-local", ["reached": response != nil])
+      other.signal()
+    }.resume()
+    _ = other.wait(timeout: .now() + 5)
+  }
   report("done")
 }
 
@@ -196,6 +219,8 @@ function infoPlist(spec: FixtureAppSpec): string {
     ["LSMinimumSystemVersion", `<string>${MIN_MACOS}</string>`],
     ["NSHighResolutionCapable", "<true/>"],
     ["GenexFixtureHue", `<integer>${Math.round(spec.hue) % 360}</integer>`],
+    // A game's Genex gateway is plain http on this Mac; App Transport Security refuses that otherwise.
+    ["NSAppTransportSecurity", "<dict><key>NSAllowsLocalNetworking</key><true/></dict>"],
   ];
   const body = entries.map(([key, value]) => `<key>${key}</key>${value}`).join("\n");
   return `<?xml version="1.0" encoding="UTF-8"?>

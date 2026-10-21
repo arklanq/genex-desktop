@@ -6,16 +6,16 @@
  * sent only from inside the folder.
  */
 import { lstat, realpath } from "node:fs/promises";
-import { createRequire } from "node:module";
 import path from "node:path";
+// Read at build time: the packaged app ships the CLI only inside the Genex plugin's payload, so a
+// look-up at run time from the app's own bundle finds nothing and no app would ever be sent.
+import cliPackage from "@genex-ai/cli-demo/package.json" with { type: "json" };
 import {
   type GenexNativeFailure,
   type GenexNativeListing,
   type GenexNativeSent,
   GenexListingState,
 } from "../../shared/genex.ts";
-
-const require = createRequire(import.meta.url);
 
 /** The first Genex CLI with `genex native`: an older pin sends no app. */
 const NATIVE_CLI = [1, 36, 11] as const;
@@ -46,15 +46,8 @@ export function hasNativeCommand(version: string): boolean {
   return match[4] === undefined;
 }
 
-/** Whether the CLI Studio ships can send apps; none found (a plugin package without it) sends none. */
-export function pinnedCliSendsApps(): boolean {
-  try {
-    const { version } = require("@genex-ai/cli-demo/package.json") as { version?: unknown };
-    return typeof version === "string" && hasNativeCommand(version);
-  } catch {
-    return false;
-  }
-}
+/** Whether the CLI Studio ships, the version this build pins, can send apps. */
+export const pinnedCliSendsApps = (): boolean => hasNativeCommand(cliPackage.version);
 
 /** One app to send: what the CLI is handed (a `.app`, or a Windows program's folder) and its platform. */
 export interface NativeUpload {

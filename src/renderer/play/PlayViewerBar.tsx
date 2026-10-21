@@ -1,21 +1,21 @@
 /**
- * The viewer's bar: the app's own 48px strip across the window's top, the game below it, drawn in the
- * bar's layer above the game's view (`PlayBarPage.tsx`). Back and the game's name with its facts (players
- * now, plays, maker) on the left; Like, Comments (its count, or the icon alone), Share (its icon
- * alone), Invite a friend in a multiplayer game, Remix and Exit on the right, as 32px buttons with 9px
- * corners, every one with a visible background. A note is worn by the button it is about, in place of its label
- * ("Link copied" on Share), and the button turns back when main drops it; a like of the player's own
- * bursts. Main keeps what it shows (`PlayViewerEvent.bar`) and acts on what it asks
- * (`studio:play.control`). An Esc held in the game puts the keyboard here (Esc gives it back).
- * A signed-out guest is offered a Genex account here until its ×. A game in voice chat gets the mic
- * switch beside its name, with a menu of microphones. Offline, the facts say so in place of the
- * players, and Like and Remix wait for the connection.
+ * The viewer's bar: the app's own 48px strip across the window's top, the game below it, drawn in the bar's
+ * layer above the game's view (`PlayBarPage.tsx`). Back and the game's name with its facts (players now,
+ * plays, maker) on the left; Like, Comments (its count, or the icon alone), Share (its icon alone), Invite
+ * a friend in a multiplayer game, Remix, Full screen (its icon alone, once the game plays) and Exit on the
+ * right, as 32px buttons with 9px corners, every one with a visible background. A note is worn by the
+ * button it is about, in place of its label ("Link copied" on Share), and the button turns back when main
+ * drops it; a like of the player's own bursts. Main keeps what it shows (`PlayViewerEvent.bar`) and acts on
+ * what it asks (`studio:play.control`). An Esc held in the game puts the keyboard here (Esc gives it back).
+ * A signed-out guest is offered a Genex account here until its ×. A game in voice chat gets the mic switch
+ * beside its name, with a menu of microphones. Offline, the facts say so in place of the players, and Like
+ * and Remix wait for the connection.
  */
 import { sizeWords } from "../../shared/byte-size.ts";
 import { NativeAppOffer, type PlayBarNative } from "../../shared/play-native.ts";
 import type { CSSProperties, JSX, PointerEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
-import { type PlayBarState, type PlayMicBar, PlayControl, type PlayPoint } from "../../shared/play.ts";
+import { type PlayBarState, type PlayMicBar, PlayControl, type PlayPoint, PlayViewerPhase } from "../../shared/play.ts";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { useOnline } from "../ui/use-online.ts";
 import { NATIVE_WORDS, PLAY_WORDS } from "../words.ts";
@@ -314,18 +314,21 @@ function CommentsButton({ count, onOpen }: { count: number | null; onOpen: () =>
 
 /**
  * The game's actions: Like with its count, Comments, Share, Invite a friend in a multiplayer game,
- * Remix when it may be remixed, Exit.
+ * Remix when it may be remixed, Full screen once the game is on screen, Exit.
  */
 function Actions({
   bar,
   actions,
   online,
+  playing,
   send,
   onComments,
 }: {
   bar: PlayBarState | null;
   actions: RefObject<HTMLDivElement | null>;
   online: boolean;
+  /** The game is on screen: Full screen has a game to fill the window with. */
+  playing: boolean;
   send: SendControl;
   onComments: () => void;
 }): JSX.Element {
@@ -365,6 +368,15 @@ function Actions({
           send={send}
           className="play-viewer-bar-remix"
           disabled={remixWaits}
+        />
+      )}
+      {playing && (
+        <BarButton
+          control={PlayControl.FullScreen}
+          icon="maximize"
+          ariaLabel={WORDS.fullScreen}
+          bar={bar}
+          send={send}
         />
       )}
       <button
@@ -473,7 +485,14 @@ export function PlayViewerBar({
       <span className="sr-only" role="status">
         {bar?.note ? WORDS.notes[bar.note] : null}
       </span>
-      <Actions bar={bar} actions={actions} online={online} send={send} onComments={onComments} />
+      <Actions
+        bar={bar}
+        actions={actions}
+        online={online}
+        playing={view.phase === PlayViewerPhase.Playing}
+        send={send}
+        onComments={onComments}
+      />
     </div>
   );
 }

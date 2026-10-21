@@ -96,7 +96,7 @@ function rig(options: { access?: boolean; on?: string[]; device?: string | null 
     },
     gameUrl: (slug) => `game:${slug}`,
     window: { contentSize: () => ({ width: 1200, height: 800 }), buttons: () => {} },
-    game: { open: () => {}, show: () => {}, hide: () => {}, focus: () => {}, close: () => {} },
+    game: { open: () => {}, show: () => {}, hide: () => {}, focus: () => {}, fullScreen: () => {}, close: () => {} },
     bar: { show: () => {}, hide: () => {}, focus: () => {}, focused: () => false, warm: () => {} },
     comments: {
       list: async () => ({ items: [], nextCursor: null }),

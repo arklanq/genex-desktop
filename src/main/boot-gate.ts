@@ -21,6 +21,7 @@ import {
   type SandboxSetupResult,
   StartStep,
 } from "../shared/boot.ts";
+import type { DataMoveProgress } from "../shared/data-folder.ts";
 import { errorMessage } from "../shared/errors.ts";
 import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 
@@ -54,6 +55,18 @@ export interface BootGate {
    * runs `attempt`, and a failure there shows its own words.
    */
   agentsFailed(error: string, attempt: () => Promise<void>): void;
+  /** Genex is moving its data before it starts again: the window shows how far. */
+  moving(progress: DataMoveProgress): void;
+  /**
+   * A move that stopped part-way and could not be put back: the window says so with `error`, Try
+   * again (which runs `attempt`, starting Genex again to carry the move on) and Quit.
+   */
+  moveStopped(to: string, error: string, attempt: () => Promise<void>): void;
+  /**
+   * The folder Genex keeps its data in is not there: the window names it, with Try again (which
+   * runs `attempt`, throwing while it is still missing) and Quit.
+   */
+  dataMissing(dir: string, attempt: () => Promise<void>): void;
   /** A start still running at its limit shows as failed, as {@link fail}; nothing once the gate is past starting. */
   overdue(error: string, attempt: () => Promise<void>): boolean;
   /** Run the held attempt; the state after it. */
@@ -81,9 +94,9 @@ export function startStepAfter(mark: string): StartStep | null {
 /** What a Set up runs instead of the install once one has gone through this launch. */
 const ALREADY_INSTALLED = async (): Promise<SandboxInstall> => ({ cancelled: false });
 
-/** Showing a failure whose Try again shows the next one's words: the studio's, or its agents'. */
+/** Showing a failure whose Try again shows the next one's words: the studio's, its agents', or a missing data folder's. */
 function showsFailure(state: BootState): boolean {
-  return state.phase === BootPhase.Failed || state.failure !== undefined;
+  return state.phase === BootPhase.Failed || state.phase === BootPhase.DataMissing || state.failure !== undefined;
 }
 
 /** Held on the problem Set up fixes: a sandbox that has not been provisioned yet. */
@@ -104,6 +117,13 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
   // The install went through but the startup after it failed: the sandbox is there, so the next
   // Set up only starts again, without another administrator prompt.
   let installed = false;
+
+  // Every screen with a Try again: its state, and the attempt the Try again runs.
+  const holdOn = (next: BootState, run: () => Promise<void>): void => {
+    holds++;
+    state = next;
+    attempt = run;
+  };
 
   const settle = async (run: () => Promise<void>): Promise<BootState> => {
     const held = holds;
@@ -157,24 +177,22 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
       attempt = null;
       state = ready;
     },
-    hold(problem, next) {
-      holds++;
-      state = { platform, phase: BootPhase.SandboxSetup, sandbox: problem };
-      attempt = next;
+    hold: (problem, next) => holdOn({ platform, phase: BootPhase.SandboxSetup, sandbox: problem }, next),
+    fail: (error, next) => holdOn({ platform, phase: BootPhase.Failed, sandbox: null, failure: error }, next),
+    agentsFailed: (error, next) => holdOn({ ...ready, failure: error }, next),
+    moving(progress) {
+      state = { platform, phase: BootPhase.Moving, sandbox: null, move: progress };
     },
-    fail(error, next) {
-      holds++;
-      state = { platform, phase: BootPhase.Failed, sandbox: null, failure: error };
-      attempt = next;
-    },
-    agentsFailed(error, next) {
-      holds++;
-      state = { ...ready, failure: error };
-      attempt = next;
-    },
+    moveStopped: (to, error, next) =>
+      holdOn(
+        { platform, phase: BootPhase.Moving, sandbox: null, move: { to, done: 0, total: 0 }, failure: error },
+        next,
+      ),
+    dataMissing: (dir, next) =>
+      holdOn({ platform, phase: BootPhase.DataMissing, sandbox: null, dataFolder: dir }, next),
     overdue(error, next) {
       if (state.phase !== BootPhase.Starting) return false;
-      this.fail(error, next);
+      holdOn({ platform, phase: BootPhase.Failed, sandbox: null, failure: error }, next);
       return true;
     },
     retry,

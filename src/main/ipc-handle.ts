@@ -49,6 +49,8 @@ const STUDIO_UI_ONLY = [
   "studio:assets.",
   "studio:play.manage",
   "studio:play.cover",
+  // Moving Genex's data restarts Genex and moves every file it keeps.
+  "studio:data-folder.",
 ];
 
 // Writing and deleting comments as the Genex account: Studio's main frame or Play's bar layer only.

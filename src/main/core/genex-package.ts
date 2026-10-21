@@ -20,6 +20,18 @@ import { GENEX_CLI_PROMPT } from "./genex-cli-prompts.ts";
 
 /** A Godot game's project, where the Godot plugin makes it (`godot/`): it takes Genex's multiplayer itself. */
 const GODOT_PROJECT = "godot/project.godot";
+/** A Unity game's project, at the game's root or in `unity/`: it takes Genex's multiplayer itself. */
+const UNITY_PROJECTS = ["ProjectSettings/ProjectVersion.txt", "unity/ProjectSettings/ProjectVersion.txt"];
+
+const isFileAt = async (dir: string, file: string) =>
+  (await lstat(path.join(dir, file)).catch(() => null))?.isFile() === true;
+
+/** The refusal for a folder with no package.json and no template page: an engine game's own words, else npm's. */
+async function noPackageRefusal(dir: string): Promise<string> {
+  if (await isFileAt(dir, GODOT_PROJECT)) return GENEX_CLI_PROMPT.GodotGame;
+  for (const file of UNITY_PROJECTS) if (await isFileAt(dir, file)) return GENEX_CLI_PROMPT.UnityGame;
+  return GENEX_CLI_PROMPT.NoPackageJson;
+}
 
 const WORKTREE_LINE = "worktree ";
 
@@ -132,8 +144,7 @@ export class GenexPackageService {
     if (manifest?.isFile()) return { dir };
     const templatePage = await templatePageOf(dir);
     if (templatePage) return { dir, templatePage };
-    const godot = await lstat(path.join(dir, GODOT_PROJECT)).catch(() => null);
-    throw new Error(godot?.isFile() ? GENEX_CLI_PROMPT.GodotGame : GENEX_CLI_PROMPT.NoPackageJson);
+    throw new Error(await noPackageRefusal(dir));
   }
 
   /** The binding's folder by real path: the game's own, or a worktree of it under Studio's scratch. */

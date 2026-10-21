@@ -74,6 +74,7 @@ import {
   FIRST_LAUNCH_STATUS,
   FIXTURE_GAME,
   FIXTURE_AGENTS_FAILURE,
+  FIXTURE_DATA_FOLDER,
   FIXTURE_SANDBOX_PROBLEM,
   FIXTURE_UPDATE_RELEASE,
   FixtureName,
@@ -157,12 +158,14 @@ import { registerAssetLibraryIpc } from "./ipc/asset-library.ts";
 import { readAssetPreview } from "./asset-preview.ts";
 import { fixtureDownload, fixtureFileResponse } from "./dev/fixture-asset-library.ts";
 import { buildHostsFor, networkRequest, type PlayGallery, playGallery, type PlayWorld } from "./play/gallery.ts";
+import { relayHostsOf, startGenexGateway } from "./play/genex-gateway.ts";
 import { GAME_LINK_SCHEME, gameLinkIn, gameLinks } from "./play/game-links.ts";
 import { thisComputer } from "./play/native-host.ts";
+import { IDENTITY_QUESTION, nativeTicket } from "./play/native-identity.ts";
 import { type InstallOutcome, type NativeInstaller, nativeInstalls } from "./play/native-installs.ts";
 import { checkNativeUpdates } from "./play/native-updates.ts";
 import { runTool } from "./play/native-unpack.ts";
-import { type NativeSessions, nativeSessions } from "./play/native-launch.ts";
+import { type GameGenex, type NativeSessions, nativeSessions } from "./play/native-launch.ts";
 import { hasGameWindow, showGameWindow } from "./play/native-windows.ts";
 import { spawnNativeGame } from "../substrate/plugins/native-process.ts";
 import { psProbe, SYSTEM_CLOCK } from "../substrate/job-process.ts";
@@ -194,6 +197,20 @@ import { routeStudioLink } from "./link-policy.ts";
 import { createLoginControllers, type SubscriptionEngine } from "./login-controllers.ts";
 import { createOpenRouterLogin } from "./openrouter-login.ts";
 import { openStudioLog } from "./logs.ts";
+import {
+  DATA_FOLDER_FILE,
+  DataLaunchKind,
+  defaultDataDir,
+  quitsAtOnce,
+  quitTakenLaunch,
+  thisDataLaunch,
+} from "./data-folder.ts";
+import { createDataFolderChoices, type DataFolderChoices } from "./data-folder-choice.ts";
+import { type DataFolderIpcDeps, registerDataFolderIpc } from "./ipc/data-folder.ts";
+import { freeBytes, measureData } from "../substrate/data-move.ts";
+import { lockDownFolder, windowsDriveFacts } from "../substrate/windows-drive.ts";
+import { type DataMoveOutcome, finishMove, removeLeftover, runDataMove } from "./data-move-launch.ts";
+import { DataFolderProblem } from "../shared/data-folder.ts";
 import { migrateLegacyUserData, userDataMigrationLine } from "./user-data-migration.ts";
 import { confirmPluginInstall, reacquirePlugin } from "./plugin-install-dialog.ts";
 import { PLUGIN_PANEL_CSP } from "./plugin-panel-csp.ts";
@@ -212,11 +229,18 @@ import { layoutFor } from "./core/layout.ts";
 import { appLookRun, macAppLook, stubAppLook, unsupportedAppLook } from "../substrate/app-look.ts";
 import { TerminalService, type TerminalHost } from "./terminal-service.ts";
 import { windowControlsPainter } from "./window-chrome.ts";
-import { appUserModelId, installedWorkingDir, runSquirrelStep, squirrelStartup } from "./windows-install.ts";
+import {
+  appUserModelId,
+  installedWorkingDir,
+  installRoot,
+  runSquirrelStep,
+  squirrelStartup,
+} from "./windows-install.ts";
+import { samePath } from "../substrate/paths.ts";
 import { BootPhase, type SandboxProblem, StartStep, StudioPlatform } from "../shared/boot.ts";
 import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 import { type Painter, paintWhileUsed } from "../substrate/paint-while-used.ts";
-import { longPath, takeBackSandboxEntries } from "../substrate/windows-sandbox.ts";
+import { ensureHostGit, longPath, takeBackSandboxEntries } from "../substrate/windows-sandbox.ts";
 import { installWindowsSandbox } from "../substrate/windows-sandbox-setup.ts";
 import { toolchain } from "../substrate/toolchain.ts";
 import { errorMessage } from "../shared/errors.ts";
@@ -228,6 +252,7 @@ import { TerminalKind } from "../shared/terminal.ts";
 import {
   flagValue,
   hasFlag,
+  isNormalLaunch,
   linuxSecretStorageSwitches,
   quitsWhenLastWindowCloses,
   StudioFlag,
@@ -300,6 +325,8 @@ const MESSAGE = {
   keepsCrashing: "The studio window keeps crashing",
   keepsCrashingDetail: "Work in progress continues in the background.",
   reload: "Reload",
+  dataFolderStillMissing: (dir: string) => `${dir} is still not there.`,
+  moveStopped: "A file was in use, or the drive refused it. Close other apps, then try again.",
   startTookTooLong: (minutes: number) =>
     `The protected workspace was still starting after ${minutes} minutes. Genex keeps trying and opens by itself if it finishes; Try again restarts Genex.`,
 } as const;
@@ -363,6 +390,10 @@ if (developerBuildUnlaunched || developerLaunchUnbacked) {
 }
 /** The normal profile's data folder, read before a developer or test launch moves userData. */
 const normalProfileData = app.getPath("userData");
+/** Electron's own default data folder, which holds the record of where the person moved the data. */
+const defaultData = defaultDataDir(app.getPath("appData"), app.getName());
+/** What `boot.ts` decided about this launch's data: in place, moved, to move now, or missing. */
+const dataLaunch = thisDataLaunch(defaultData);
 const dev =
   devLaunchConfig !== undefined && __STUDIO_DEV_BUILD__
     ? (await import("./dev/launch-context.ts")).initializeLaunch(__STUDIO_DEV_BUILD__, devLaunchConfig)
@@ -1085,8 +1116,53 @@ function playSessionsFor(studio: StudioCore): NativeSessions | null {
     played: (slug) => installs.played(slug),
     ended: (slug) => installs.sweep(slug),
     log: (line) => studioLog.write("main", line),
+    // A fixture launch has no Genex to reach: its games stay offline.
+    ...(fixtureNativePolicy ? {} : { genex: (slug: string) => openGameGenex(studio, slug) }),
   });
   return nativeLauncher;
+}
+
+/**
+ * A native game's way to Genex while it plays: its own gateway to Genex's API and relays, and a
+ * single-use sign-in ticket for it while the person's Genex account is unlocked (a guest otherwise).
+ */
+async function openGameGenex(studio: StudioCore, slug: string): Promise<GameGenex> {
+  const gateway = await startGenexGateway({
+    api: playOrigin.api,
+    relay: relayHostsOf(new URL(playOrigin.api).hostname),
+  });
+  const catalog = playCatalogFor(studio);
+  const installs = playInstallsFor(studio);
+  const ticket = await nativeTicket(
+    {
+      ticket: (game, delivery) => catalog.ticket(game, delivery),
+      ask: async ({ slug: game }) => askNativeIdentity((await installs?.record(game))?.title ?? game),
+      share: (projectId) => catalog.shareIdentity(projectId),
+      shared: async (game, projectId) => installs?.knowsYou(game, projectId),
+    },
+    slug,
+  );
+  const env = { GENEX_API_URL: gateway.apiUrl, ...(ticket ? { GENEX_EMBED_TICKET: ticket } : {}) };
+  return { ports: gateway.ports, env, close: gateway.close };
+}
+
+/**
+ * Ask the player, once per game, whether a native game may know who they are, as a sheet on
+ * Studio's window: the game would see their Genex name and avatar (App Review 4.7.3).
+ */
+async function askNativeIdentity(game: string): Promise<boolean> {
+  const words = IDENTITY_QUESTION;
+  const options = {
+    type: "question" as const,
+    message: words.title(game),
+    detail: words.detail,
+    buttons: [words.accept, words.decline],
+    defaultId: 0,
+    cancelId: 1,
+  };
+  const parent = window && !window.isDestroyed() ? window : null;
+  const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
+  return response === 0;
 }
 
 /**
@@ -1240,6 +1316,7 @@ function remixPlayGame(studio: StudioCore, world: PlayWorld): Promise<string> {
       if (game) await studio.builds.ensure({ project: name, dir: game.dir, shape: game.shape, guarded: true });
     },
     progress: (progress) => pushUiEvent({ type: UiEvent.PlayRemix, payload: { slug: world.slug, ...progress } }),
+    log: (message) => studioLog.write("main", message),
   });
 }
 
@@ -1643,6 +1720,60 @@ function bootFeedbackSources(): FeedbackSources {
   };
 }
 
+/** The data folder's channels: the real choices, or the data-folder fixture's stand-ins. */
+function dataFolderIpc(studio: StudioCore): DataFolderIpcDeps {
+  if (!fixtureProviders || dev?.fixture !== FixtureName.DataFolder)
+    return { choices: dataFolderChoices(studio), window: () => window };
+  return { choices: fixtureDataFolder(), window: () => window, pick: async () => FIXTURE_DATA_FOLDER.picked };
+}
+
+/**
+ * The data-folder fixture: Storage shows a Windows data folder as movable, a pick finds the
+ * stand-in drive good, and Move and restart shows the start window moving the files. Nothing is
+ * read, written or moved.
+ */
+function fixtureDataFolder(): DataFolderChoices {
+  const { current, to, bytes, done } = FIXTURE_DATA_FOLDER;
+  return {
+    state: () => ({ dir: current, movable: true, failed: null, kept: [] }),
+    choose: async () => ({ ok: true, to, bytes }),
+    move: async () => {
+      bootGate.moving({ to, done, total: bytes });
+      setImmediate(() => void reshowBoot());
+      return { ok: true, to, bytes };
+    },
+  };
+}
+
+/** Settings → Storage's data folder: the person's own launch on Windows may move it, with Genex restarting to do so. */
+function dataFolderChoices(studio: StudioCore) {
+  const windows = process.platform === StudioPlatform.Windows;
+  return createDataFolderChoices({
+    platform: process.platform,
+    normal: isNormalLaunch(process.argv),
+    defaultDir: defaultData,
+    dataDir: userDataRoot,
+    occupied: async () => [
+      studio.layout.gamesRoot,
+      ...(await studio.games.list()).map((game) => game.dir),
+      installRoot(process.execPath),
+    ],
+    // What a quit would ask about (a run, a paused build's planned resume), or a reply under way.
+    busy: () => quitPrompt(true) !== null || studio.budget.userInFlight > 0,
+    drive: windows ? windowsDriveFacts : async () => null,
+    lockDown: windows ? lockDownFolder : async () => {},
+    measure: () => measureData(userDataRoot, samePath(userDataRoot, defaultData) ? [DATA_FOLDER_FILE] : []),
+    free: freeBytes,
+    // After the answer reaches the window: quitting stops the core, the relaunch moves the files.
+    restart: () =>
+      setImmediate(() => {
+        app.relaunch();
+        app.quit();
+      }),
+    log: (line) => studioLog.write("main", line),
+  });
+}
+
 /** The coding-CLI installs Settings offers: busy while a sign-in, a run or a turn is under way. */
 function cliInstalls(studio: StudioCore) {
   return createCliInstalls({
@@ -1773,6 +1904,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   });
   registerCliInstallIpc(handle, cliInstalls(studio));
   registerProjectsIpc(handle, { core: studio, window: () => window, gamesRootLabel, web: playOrigin.web });
+  registerDataFolderIpc(handle, dataFolderIpc(studio));
   registerGenexAccountIpc(handle, { account: genexAccountFor(studio) });
   registerPlayIpc(handle, playIpcDeps(studio));
   const { library } = playAccountFor(studio);
@@ -1788,6 +1920,16 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
 async function main(): Promise<void> {
   if (isSelfTest) {
     await runSelfTestAndExit();
+    return;
+  }
+  if (quitsAtOnce(dataLaunch)) {
+    await quitTakenLaunch({
+      ready: () => app.whenReady(),
+      tell: async (message, button) => {
+        await dialog.showMessageBox({ type: "info", message, buttons: [button] });
+      },
+      exit: (code) => app.exit(code),
+    });
     return;
   }
   if (!claimTheMac()) return;
@@ -1812,6 +1954,7 @@ async function main(): Promise<void> {
     }),
   });
   addCheckForUpdatesMenuItem();
+  if (await settleDataFolder()) return;
   // Before the core: a start that fails, waits on Set up or never ends (a Windows start can take
   // minutes) still finds the release that fixes it, and its screen offers the relaunch.
   setTimeout(checkForUpdates, firstCheckDelay(process.argv)).unref();
@@ -1821,6 +1964,105 @@ async function main(): Promise<void> {
     return;
   }
   if (!dev) app.on("activate", reopenWindow);
+}
+
+/**
+ * A launch that moves Genex's data, or cannot find it, does only that: the start window shows the
+ * move, then Genex starts again; or it names the missing folder, with Try again and Quit. True
+ * when this launch was one of those.
+ */
+async function settleDataFolder(): Promise<boolean> {
+  if (dataLaunch.kind === DataLaunchKind.Move) {
+    await moveDataAndRestart(dataLaunch.from, dataLaunch.to);
+    return true;
+  }
+  if (dataLaunch.kind === DataLaunchKind.Missing) {
+    await waitForDataFolder(dataLaunch.dir);
+    return true;
+  }
+  // Only the person's own launch tends the normal profile's record: a developer, test or smoke
+  // launch runs on a folder of its own and must never repair or clean up the real one.
+  if (!isNormalLaunch(process.argv)) return false;
+  if (dataLaunch.kind === DataLaunchKind.Moved || dataLaunch.kind === DataLaunchKind.Default) {
+    const log = (line: string) => studioLog.write("main", line);
+    // A move Genex closed after recording repairs its links before anything reads them, and only
+    // then may what it left in the old folder go.
+    await finishMove(defaultData, dataLaunch.dir, { log, ...hostGitForMoves() }).catch((error: unknown) =>
+      log(`data folder: finishing the move failed: ${errorMessage(error)}`),
+    );
+    void removeLeftover(defaultData, dataLaunch.dir, log);
+  }
+  return false;
+}
+
+/** The host's own Git for repairing build copies after a move (Windows); elsewhere the PATH's. */
+function hostGitForMoves(): { hostGit?: () => Promise<boolean> } {
+  return process.platform === StudioPlatform.Windows ? { hostGit: () => ensureHostGit() } : {};
+}
+
+/** Move the data with the start window showing how far, then start Genex again; quitting waits for it. */
+async function moveDataAndRestart(from: string, to: string): Promise<void> {
+  bootGate.moving({ to, done: 0, total: 0 });
+  const win = await createSetupWindow();
+  let moving = true;
+  // Closing the window must not stop a copy half-way; once the move is over it may close.
+  win.on("close", (event) => {
+    if (moving) event.preventDefault();
+  });
+  const lines: string[] = [];
+  const log = (line: string) => {
+    lines.push(line);
+    studioLog.write("main", line);
+  };
+  const outcome = await runDataMove({
+    from,
+    to,
+    defaultDir: defaultData,
+    progress: (progress) => bootGate.moving(progress),
+    log,
+    ...hostGitForMoves(),
+  }).catch((error: unknown): DataMoveOutcome => {
+    log(`data folder: the move stopped: ${errorMessage(error)}`);
+    return { moved: false, problem: DataFolderProblem.Failed, stranded: [] };
+  });
+  moving = false;
+  // The lines go in the log of the folder Genex now starts from, where a report reads them. A move
+  // that stopped part-way writes nothing in either folder: the next start carries it on.
+  const logDir = moveLogDir(outcome, from, to);
+  if (logDir) {
+    const kept = openStudioLog(path.join(logDir, "logs"), { home: app.getPath("home") });
+    for (const line of lines) kept.write("main", line);
+  }
+  const restart = async () => {
+    app.relaunch();
+    app.exit(0);
+  };
+  // Part of the data in each folder, or a move that ended without saying: no restart into it on
+  // its own (that could repeat for ever); the window offers Try again, which carries it on, and Quit.
+  if (!outcome.moved && outcome.stranded) bootGate.moveStopped(to, MESSAGE.moveStopped, restart);
+  else await restart();
+}
+
+/** The data folder a moving launch's log lines go to: the one Genex starts from, or none while the move is unfinished. */
+function moveLogDir(outcome: DataMoveOutcome, from: string, to: string): string | null {
+  if (outcome.moved) return to;
+  return outcome.stranded ? null : from;
+}
+
+/** Name the missing data folder with Try again (Genex starts again once it is there) and Quit. */
+async function waitForDataFolder(dir: string): Promise<void> {
+  studioLog.write("main", `data folder: ${dir} is not there`);
+  holdOnMissingData(dir);
+  window = await createSetupWindow();
+}
+
+/** The start window names the missing folder; Try again starts Genex again once it is there. */
+function holdOnMissingData(dir: string): void {
+  bootGate.dataMissing(dir, async () => {
+    if (!existsSync(dir)) throw new Error(MESSAGE.dataFolderStillMissing(dir));
+    app.relaunch();
+    app.exit(0);
+  });
 }
 
 /** Is `event` from the studio window's own top frame (not a plugin page or a game)? */
@@ -2181,6 +2423,7 @@ async function launchStudio(studio: StudioCore): Promise<StartedStudio | null> {
     showFixtureAgentsFailure(userData);
     const view = requirePreview();
     if (dev && __STUDIO_DEV_BUILD__) devRuntime = await startDevRuntime(dev, studio, win, view);
+    await showFixtureDataMissing();
     return { core: studio, window: win, preview: view };
   } catch (err) {
     failStartup(err);
@@ -2200,6 +2443,13 @@ function announceReady(userData: string): void {
 function showFixtureAgentsFailure(userData: string): void {
   if (!fixtureProviders || dev?.fixture !== FixtureName.AgentsStartFailed) return;
   showAgentsFailure(FIXTURE_AGENTS_FAILURE, async () => announceReady(userData));
+}
+
+/** The data-missing fixture: over a started studio, the window shows the stand-in drive's folder as missing. */
+async function showFixtureDataMissing(): Promise<void> {
+  if (!fixtureProviders || dev?.fixture !== FixtureName.DataMissing) return;
+  holdOnMissingData(FIXTURE_DATA_FOLDER.to);
+  await reshowBoot();
 }
 
 /** The game view `createWindow` attached; every started window has one. */

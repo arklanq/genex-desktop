@@ -180,7 +180,8 @@ account on this Mac; turning the Genex plugin off signs nothing out.
 
 Remix clones the game's public source over https from git.genex.games into a new folder in your
 games folder, without its history, hooks, content filters or symbolic links; files the game keeps
-in Git LFS come from that same repository, through your Mac's git-lfs. The copy's
+in Git LFS are downloaded over https without git-lfs: the same repository's Git LFS batch API says
+where each one is, possibly a storage host it names, and each is kept only if its SHA-256 matches. The copy's
 Claude settings and hooks are not trusted. Recent (the last 12 games played) and a dismissed Genex
 card stay in the app profile. Development fixture launches answer from local data and open no
 connection.

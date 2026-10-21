@@ -40,16 +40,16 @@ is a host project with the plugin in `Plugins/`; its tools build, test and packa
 
 Godot 4.3+, Mac only (on Windows, Get Godot opens its download page): makes a **New Godot game**
 (2D/3D, `godot/`), opens your editor (saving at save points, reloading after Rewind); **Change
-project** links one. `web/` plays in Live; **Multiplayer** joins web, native.
+project** links one. **Multiplayer** joins web, native.
 
 **Roblox Studio** sets up your Studio; **New Roblox game** writes a Baseplate place, **Use in this
-game** links one per game. Unity sets up and opens its project; agents add packages, build and
-play (keys, mouse: Input System). Publish lists Web, Mac and Windows builds.
+game** links one per game. Unity sets up and opens its project; agents add packages,
+**Multiplayer**, build, play (keys, mouse: Input System). Publish lists Web, Mac and Windows builds.
 
 ## Live's views
 
-Live shows the web preview, an engine's card (latest shot and next step) or run pictures; only the
-preview has web controls. A web game plus an engine project gets a tab each, the last chosen kept
+Live shows the web preview, an engine's card (its latest shot) or run pictures; only the preview
+has web controls. A web game plus an engine project gets a tab each, the last chosen kept
 per game; a chat's web build brings Web game forward.
 
 ## Where to work

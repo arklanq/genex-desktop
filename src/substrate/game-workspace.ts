@@ -59,7 +59,9 @@ import {
   type ProjectStarter,
   type ScaffoldRecord,
   type SourcedFactRule,
+  engineWebVersion,
   settleFacts,
+  withEngineWebVersion,
 } from "../shared/project-facts.ts";
 import {
   copySkipRulesFor,
@@ -83,7 +85,7 @@ import {
 } from "./fsx.ts";
 import { ensureFactIgnoreRules, ensureIgnoreRules, ignoreRulesToWrite, nestedRepos } from "./nested-repos.ts";
 import { isBelow, isInside, samePath, throughClaudeFolder, toPosixRelative } from "./paths.ts";
-import { detectFacts } from "./project-facts.ts";
+import { detectFoundFacts } from "./project-facts.ts";
 import type { HookEvent } from "../shared/plugin-hooks.ts";
 import {
   declaresDependencies,
@@ -368,6 +370,21 @@ interface FactRecord {
   engine: EngineBinding | undefined;
   portedFrom: ProjectFact[];
   scaffoldStamp: string | undefined;
+}
+
+/**
+ * The web starter's files that tell its page from a game built on it: the page, and the game code it
+ * boots, which every build of a web game changes. Neither has changed in the template since 0.1.0.
+ */
+const STARTER_PAGE_FILES = ["index.html", "src/main.js"] as const;
+
+/** The placeholder New game fills with the game's title (`fillTemplateTitle`). */
+const TITLE_PLACEHOLDER = "__GAME_TITLE__";
+
+/** Whether `text` is the template's `template` with its title placeholders filled by any one-line title. */
+function filledTemplate(template: string, text: string): boolean {
+  const escaped = template.split(TITLE_PLACEHOLDER).map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  return new RegExp(`^${escaped.join("[^\\n]*")}$`).test(text);
 }
 
 /** A game's studio.json as an object, or null when it is missing or does not parse. */
@@ -1094,16 +1111,20 @@ export class GameWorkspaces {
    * of `scaffold`, else of the scaffold studio.json records) and its engine link.
    */
   async #rawFacts(dir: string, engine: EngineBinding | undefined, scaffold?: ScaffoldRecord): Promise<ProjectFact[]> {
+    return settleFacts(await this.#foundFacts(dir, engine, scaffold));
+  }
+
+  /** `#rawFacts` before they are settled: a web game below another (an engine's web version) is still there. */
+  async #foundFacts(dir: string, engine: EngineBinding | undefined, scaffold?: ScaffoldRecord): Promise<ProjectFact[]> {
     const recorded = scaffold ?? (await readScaffold(dir));
-    const detected = await detectFacts(dir, [...this.#factRules(), ...scaffoldRules(recorded)]);
+    const detected = await detectFoundFacts(dir, [...this.#factRules(), ...scaffoldRules(recorded)]);
     const declared = engine ? this.#engines().get(engine.kind) : undefined;
     if (!engine || !declared) return detected;
     // The link stands for the game's project in its engine: a project file of that engine it holds
     // besides (one the game made before it was switched to another) is no second one, and its files
     // are the link's own.
     const linked = await linkFact(dir, engine, declared);
-    const others = detected.filter((fact) => fact.id !== linked.id);
-    return settleFacts([linked, ...others]);
+    return [linked, ...detected.filter((fact) => fact.id !== linked.id)];
   }
 
   /** The game's engine link among the installed plugins' engines, or undefined for a web game. */
@@ -1160,16 +1181,20 @@ export class GameWorkspaces {
   /**
    * The facts a game lists: its raw facts minus what a port replaced (`portedFrom`), minus the web
    * template an engine link left beside its project (a link with no `portedFrom` is an older
-   * record), and none at all for a starter nothing has been built in yet (no kind picked). With no
-   * facts, what the folder holds besides (`folderHolds`).
+   * record), with a Unity or Godot game's web version in web/ as its web game
+   * (`withEngineWebVersion`), and none at all for a starter nothing has been built in yet (no kind
+   * picked). With no facts, what the folder holds besides (`folderHolds`).
    */
   async #kind(dir: string, record: FactRecord): Promise<FolderKind> {
-    const raw = await this.#rawFacts(dir, record.engine);
+    const found = await this.#foundFacts(dir, record.engine);
+    const raw = settleFacts(found);
     const linkedLegacy = record.engine !== undefined && record.portedFrom.length === 0;
-    const facts = raw.filter((fact) => {
+    const counted = raw.filter((fact) => {
       if (hasFact(record.portedFrom, fact.id, fact.path)) return false;
       return !(linkedLegacy && fact.id === CoreFact.WebGame && fact.path === ".");
     });
+    const besideWebVersion = engineWebVersion(counted, found) !== null && hasFact(counted, CoreFact.WebGame, ".");
+    const facts = withEngineWebVersion(counted, found, besideWebVersion && (await this.#starterPageAtRoot(dir)));
     // New game's untouched starter is the template as it was made: nothing of the person's yet.
     if (await this.#untouchedStarter(dir, raw, record.scaffoldStamp)) return { facts: [], holds: FolderHolds.Nothing };
     if (facts.length > 0) return { facts };
@@ -1189,6 +1214,18 @@ export class GameWorkspaces {
     if (stamp === scaffoldStamp) return true;
     if (stamp) this.#touched.add(key);
     return false;
+  }
+
+  /** Whether the folder's root page is still the web starter's (`STARTER_PAGE_FILES`), nothing built on it. */
+  async #starterPageAtRoot(dir: string): Promise<boolean> {
+    for (const file of STARTER_PAGE_FILES) {
+      const [own, template] = await Promise.all([
+        readFile(path.join(dir, file), "utf8").catch(() => null),
+        readFile(path.join(this.templateDir, file), "utf8").catch(() => null),
+      ]);
+      if (own === null || template === null || !filledTemplate(template, own)) return false;
+    }
+    return true;
   }
 
   /** Write a detected shape into studio.json once, so the folder's way of running is explicit and editable. */

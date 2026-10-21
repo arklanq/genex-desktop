@@ -10,6 +10,7 @@ import { once } from "node:events";
 import { SECOND_MS } from "../shared/duration.ts";
 import path from "node:path";
 import { envValue, isWindows } from "./toolchain.ts";
+import { windowsPowerShellEnv } from "./child-env.ts";
 import { killProcessTree, type TreeKillCommand } from "./process-tree.ts";
 
 /** How long `ps` may take to tell a process's start time. */
@@ -72,13 +73,14 @@ export function startTimeCommand(
   pid: number,
   platform: NodeJS.Platform = process.platform,
   env: NodeJS.ProcessEnv = process.env,
-): { file: string; args: string[] } {
+): { file: string; args: string[]; env?: NodeJS.ProcessEnv } {
   if (!isWindows(platform)) return { file: "/bin/ps", args: ["-o", "lstart=", "-p", String(pid)] };
   const systemRoot = envValue(env, "SystemRoot") || "C:\\Windows";
   const script = `(Get-Process -Id ${Math.trunc(pid)} -ErrorAction Stop).StartTime.ToUniversalTime().ToString('o')`;
   return {
     file: path.win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),
     args: ["-NoProfile", "-NonInteractive", "-Command", script],
+    env: windowsPowerShellEnv(env),
   };
 }
 
@@ -93,8 +95,8 @@ export function psProbe(platform: NodeJS.Platform = process.platform): JobProbe 
   return {
     startTime: (pid) =>
       new Promise((resolve, reject) => {
-        const { file, args } = startTimeCommand(pid, platform);
-        execFile(file, args, { timeout, windowsHide: true }, (error, stdout) => {
+        const { file, args, env } = startTimeCommand(pid, platform);
+        execFile(file, args, { timeout, windowsHide: true, env }, (error, stdout) => {
           if (error && !exitedWithCode(error)) return reject(error);
           resolve(error ? null : stdout.trim() || null);
         });

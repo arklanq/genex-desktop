@@ -23,6 +23,14 @@ export const TEMPLATE_GENEX_SETTINGS = "genex.json";
  * plugin's `godot__multiplayer`, in the game's `godot/` project): its multiplayer is Studio's copy.
  */
 const GODOT_MULTIPLAYER_ADDON = "godot/addons/genex_multiplayer/plugin.cfg";
+/**
+ * The file a Unity game's project holds once Genex's multiplayer package is embedded in it (the
+ * Unity plugin's `unity__multiplayer`), in a project at the game's root or in its `unity/`.
+ */
+const UNITY_MULTIPLAYER_PACKAGES = [
+  "Packages/com.genex.multiplayer/package.json",
+  "unity/Packages/com.genex.multiplayer/package.json",
+];
 /** A `genex.matchmaking` block larger than this, as JSON, is left out. */
 const MAX_MATCHMAKING_CHARS = 4096;
 /** A version range as npm writes one for a registry package; links, paths and URLs are left out. */
@@ -86,15 +94,22 @@ export function templateGenexManifest(html: string, settings: unknown): GenexGam
 }
 
 /**
- * A Godot game's Genex manifest once its project carries Genex's multiplayer addon: multiplayer at
- * the version Studio ships the web build's bridge with, and its `genex.json` settings.
+ * An engine game's Genex manifest once its project carries Genex's multiplayer (Godot's addon,
+ * Unity's package): multiplayer at the version Studio ships, and its `genex.json` settings.
  */
-function godotGenexManifest(settings: unknown): GenexGameManifest {
+function engineGenexManifest(settings: unknown): GenexGameManifest {
   const dependencies: GenexGameManifest["dependencies"] = {
     [MULTIPLAYER_PACKAGE]: GENEX_GAME_PACKAGES[MULTIPLAYER_PACKAGE],
   };
   const genex = genexSettings({ genex: settings });
   return genex ? { dependencies, genex } : { dependencies };
+}
+
+/** Whether a game's engine project carries Genex's multiplayer: Godot's addon or Unity's package. */
+async function carriesEngineMultiplayer(dir: string): Promise<boolean> {
+  for (const file of [GODOT_MULTIPLAYER_ADDON, ...UNITY_MULTIPLAYER_PACKAGES])
+    if ((await readOwnFile(dir, file)) !== null) return true;
+  return false;
 }
 
 /** A small regular file that really lives inside `dir` (a link out of it is not followed); null otherwise. */
@@ -120,16 +135,16 @@ function parsedJson(text: string | null): unknown {
 }
 
 /**
- * The game's Genex manifest: from `dir/package.json` when the game has one, else, for a Godot game
- * whose project carries Genex's multiplayer addon, from that and its `genex.json`, else, for a game
+ * The game's Genex manifest: from `dir/package.json` when the game has one, else, for a Godot or
+ * Unity game whose project carries Genex's multiplayer, from that and its `genex.json`, else, for a game
  * made from the template, from its `index.html` import map and `genex.json`. Undefined when there
  * is none to read.
  */
 export async function readGenexGameManifest(dir: string): Promise<GenexGameManifest | undefined> {
   const pkg = await readOwnFile(dir, "package.json");
   if (pkg !== null) return genexGameManifest(parsedJson(pkg));
-  if ((await readOwnFile(dir, GODOT_MULTIPLAYER_ADDON)) !== null)
-    return godotGenexManifest(parsedJson(await readOwnFile(dir, TEMPLATE_GENEX_SETTINGS)));
+  if (await carriesEngineMultiplayer(dir))
+    return engineGenexManifest(parsedJson(await readOwnFile(dir, TEMPLATE_GENEX_SETTINGS)));
   const html = await readOwnFile(dir, "index.html");
   if (html === null) return undefined;
   return templateGenexManifest(html, parsedJson(await readOwnFile(dir, TEMPLATE_GENEX_SETTINGS)));

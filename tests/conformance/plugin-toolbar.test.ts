@@ -207,11 +207,13 @@ test("Multiplayer stands beside Publish only on a built single-player game with 
   );
 });
 
-test("a Godot game's project takes Genex's multiplayer; another engine's export does not", () => {
+test("a Godot or Unity game's project takes Genex's multiplayer; another engine's export does not", () => {
   const godot = { facts: [{ id: "godot-project", path: "godot", source: "core" as const }] };
   const unity = { facts: [{ id: "unity-project", path: ".", source: "core" as const }] };
+  const unreal = { facts: [{ id: "unreal-project", path: ".", source: "core" as const }] };
   assert.equal(takesEngineMultiplayer(godot), true);
-  assert.equal(takesEngineMultiplayer(unity), false);
+  assert.equal(takesEngineMultiplayer(unity), true);
+  assert.equal(takesEngineMultiplayer(unreal), false);
 });
 test("toolbarStatusFrom keeps attention as a boolean", () => {
   assert.deepEqual(toolbarStatusFrom({ attention: true }), { attention: true });

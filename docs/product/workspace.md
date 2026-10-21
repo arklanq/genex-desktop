@@ -10,8 +10,8 @@ opens **home** (also the wordmark): one composer over an optional picture. A gam
 conversation beside the stage (Live, Builds once planned, Assets); Harness opens its conversation
 and Activity; Plugins fills the workspace.
 
-Settings is a modal: Genex account, Model Providers, Local Models, Appearance, Games, Storage,
-Harness, Permissions, Privacy, About. Narrow windows use a drawer.
+Settings (a modal): Genex account, Model Providers, Local Models, Appearance, Games, Storage,
+Harness, Permissions, Privacy, About; narrow windows: a drawer.
 
 The bell keeps unanswered questions, plans and permission requests, then build endings and
 sign-outs, each opening where answered; unfocused, macOS notifications and the Dock badge carry
@@ -36,7 +36,7 @@ administrator prompt (two if Secondary Logon is off).
 - **Home's first message** starts a game the model names, where the chip says
   ([its kind](projects-engines.md)). Duplicates never overwrite; a greeting stays **Untitled game** until an idea. **New game**, the Games **+** and Command-N open home.
 - **Settings → Games** moves new games to an empty folder (default `~/AI Games`);
-  **Storage** frees older builds, keeping paused and latest finished.
+  **Storage** frees older builds (keeps paused, latest) and [moves data](../windows-sandbox.md#data-folder-on-another-drive) (Windows).
 - **Settings → Privacy**: Share build metrics (off by default), its preview and delete, and
   policy links ([PRIVACY](../../PRIVACY.md)).
 - Home's **Open a folder…** inspects before writing (Claude settings and hooks trusted unless

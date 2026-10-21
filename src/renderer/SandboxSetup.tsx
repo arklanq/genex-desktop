@@ -7,11 +7,14 @@
  * The same card says which step a Windows start is on ("Starting Genex"), and that the studio
  * would not start ("Genex couldn't start") with Try again, a report and Quit.
  * Each of them offers a new version downloaded meanwhile (`BootUpdate`): it may fix what stopped the start.
+ * It also shows Genex moving its files to the folder chosen in Settings → Storage, and a data
+ * folder that is not there.
  * `BootRoot` chooses between these, the studio itself, and nothing while main has not answered yet.
  */
 import { type JSX, type ReactNode, useState } from "react";
 import { type ReadyUpdate, UpdateAction } from "../shared/app-update.ts";
 import { type InstallCommand, type SandboxProblem, StartStep, toolPackage, WindowsSetupNeed } from "../shared/boot.ts";
+import type { DataMoveProgress } from "../shared/data-folder.ts";
 import { App } from "./App.tsx";
 import { useAppLoaderDismissal } from "./app-loader.ts";
 import { type Boot, BootView, bootView, canSetUp, SetupReport } from "./state/boot.ts";
@@ -29,6 +32,8 @@ export function BootRoot({ boot }: { boot: Boot }): JSX.Element | null {
   const settingUp = useBoot(boot.store, (s) => s.settingUp);
   const report = useBoot(boot.store, (s) => s.report);
   const step = useBoot(boot.store, (s) => s.step);
+  const move = useBoot(boot.store, (s) => s.move);
+  const dataFolder = useBoot(boot.store, (s) => s.dataFolder);
   const update = useBoot(boot.store, (s) => s.update);
   const onUpdate = (): void => void boot.restartToUpdate();
   // The studio dismisses the startup loader once its own first screen is drawn; the others are drawn now.
@@ -37,6 +42,8 @@ export function BootRoot({ boot }: { boot: Boot }): JSX.Element | null {
   // Try again starts the studio again: the card says so until it opens, or fails again.
   if (view === BootView.Starting || (view === BootView.Failed && retrying))
     return <StartingCard step={step ?? StartStep.Studio} update={update} onUpdate={onUpdate} />;
+  const dataCard = dataFolderCard({ view, move, dataFolder, error, retrying, boot });
+  if (dataCard) return dataCard;
   if (view === BootView.Failed) {
     return (
       <StartFailed
@@ -172,6 +179,105 @@ export function StartingCard({ step, update, onUpdate }: { step: StartStep } & U
       <p className="text-ink-2">{WORDS.starting.line}</p>
       <WorkingLine text={WORDS.starting.step[step]} />
       <BootUpdate update={update} onUpdate={onUpdate} />
+    </AnimationCard>
+  );
+}
+
+/** The screens of a launch that moves Genex's files or cannot find them, or null for any other. */
+function dataFolderCard({
+  view,
+  move,
+  dataFolder,
+  error,
+  retrying,
+  boot,
+}: {
+  view: BootView;
+  move: DataMoveProgress | null;
+  dataFolder: string | null;
+  error: string | null;
+  retrying: boolean;
+  boot: Boot;
+}): JSX.Element | null {
+  const onRetry = () => void boot.retry();
+  const onQuit = () => void boot.quit();
+  if (view === BootView.Moving && move && error !== null)
+    return <MoveStoppedCard to={move.to} error={error} retrying={retrying} onRetry={onRetry} onQuit={onQuit} />;
+  if (view === BootView.Moving && move) return <MovingCard move={move} />;
+  if (view === BootView.DataMissing && dataFolder !== null)
+    return <DataMissingCard dir={dataFolder} error={error} retrying={retrying} onRetry={onRetry} onQuit={onQuit} />;
+  return null;
+}
+
+/** Genex moving its files before it starts again: where to, and how far. */
+export function MovingCard({ move }: { move: DataMoveProgress }): JSX.Element {
+  const words = WORDS.moving;
+  return (
+    <AnimationCard selector={{ "data-boot-moving": "" }} titleId="boot-moving-title" title={words.title}>
+      <p className="text-ink-2">{words.line(move.to)}</p>
+      <WorkingLine text={move.total > 0 ? words.progress(move.done, move.total) : words.counting} />
+    </AnimationCard>
+  );
+}
+
+/** A move that stopped part-way with some files already moved: why, Try again (carries the move on) and Quit. */
+export function MoveStoppedCard({
+  to,
+  error,
+  retrying,
+  onRetry,
+  onQuit,
+}: {
+  to: string;
+  error: string;
+  retrying: boolean;
+  onRetry: () => void;
+  onQuit: () => void;
+}): JSX.Element {
+  const words = WORDS.moveStopped;
+  return (
+    <AnimationCard selector={{ "data-boot-move-stopped": "" }} titleId="boot-move-stopped-title" title={words.title}>
+      <p className="text-ink-2">{words.line(to)}</p>
+      <div className="flex flex-wrap items-center gap-2 pt-2">
+        <Button variant="default" data-boot-try-again disabled={retrying} onClick={onRetry}>
+          {retrying ? WORDS.dataMissing.checking : words.tryAgain}
+        </Button>
+        <Button variant="ghost" data-boot-quit onClick={onQuit}>
+          {words.quit}
+        </Button>
+      </div>
+      <p className="text-sm text-orange">{error}</p>
+    </AnimationCard>
+  );
+}
+
+/** The folder Genex keeps its files in is not there: which one, Try again and Quit. */
+export function DataMissingCard({
+  dir,
+  error,
+  retrying,
+  onRetry,
+  onQuit,
+}: {
+  dir: string;
+  error: string | null;
+  retrying: boolean;
+  onRetry: () => void;
+  onQuit: () => void;
+}): JSX.Element {
+  const words = WORDS.dataMissing;
+  return (
+    <AnimationCard selector={{ "data-boot-data-missing": "" }} titleId="boot-data-missing-title" title={words.title}>
+      <p className="text-ink-2">{words.line(dir)}</p>
+      <div className="flex flex-wrap items-center gap-2 pt-2">
+        <Button variant="default" data-boot-try-again disabled={retrying} onClick={onRetry}>
+          {retrying ? words.checking : words.tryAgain}
+        </Button>
+        <Button variant="ghost" data-boot-quit onClick={onQuit}>
+          {words.quit}
+        </Button>
+      </div>
+      {error !== null && <p className="text-sm text-orange">{error}</p>}
     </AnimationCard>
   );
 }

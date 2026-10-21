@@ -13,8 +13,10 @@
  *   take it back out (`setup.ts`); the person confirms each.
  * - `open-editor` and `restart-editor`: open the game's project in the Unity it was saved with
  *   (`editor-open.ts`), or end a stalled editor first; the person confirms a restart.
- * - `save-all`, `end-editor`, `reopen-editor`, `editor-state`, `open-for-run`, `scene-shots` and
- *   `editor-activity`: the steps at Genex's moments and the editor lock's probe (`editor-moments.ts`).
+ * - `save-all`, `end-editor`, `reopen-editor`, `editor-state`, `open-for-run`, `after-run`,
+ *   `scene-shots` and `editor-activity`: the steps at Genex's moments and the editor lock's probe
+ *   (`editor-moments.ts`). Once a run ended, the backend looks every half minute for an editor Genex
+ *   opened for a run that nobody uses any more, and closes it (`editor-idle.ts`).
  *
  * The person reaches the same project through the plugin's panel and its toolbar button, whose
  * actions answer in codes the panel words itself: `status` and `toolbar-status` only look
@@ -28,14 +30,18 @@
  */
 import { mkdir, realpath, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { MINUTE_MS } from "../../shared/duration.ts";
+import { matchmakingArg, slugArg, writeMatchmaking } from "../../substrate/genex-game-settings.ts";
 import { errorMessage } from "../../shared/errors.ts";
 import { ENGINE_PLAY_TOOLS, type EnginePlayTool } from "../../shared/engine-play.ts";
 import type { Activate, PluginActivation, PluginContext } from "../../plugin-sdk/index.d.ts";
 import { getUnityLaunch, systemOpener, UnitySource } from "./editor-launch.ts";
 import { createComputerPlay } from "./computer-play.ts";
 import { endEditor, firstSetup } from "./editor-life.ts";
+import { CLOSE_IDLE_SETTING, closeIdleEditors, IDLE_LOOK_MS } from "./editor-idle.ts";
 import {
+  afterRun,
   editorActivity,
   editorState,
   endForRestore,
@@ -53,6 +59,13 @@ import { type PanelStatus, panelStatus, toolbarStatusOf } from "./panel-status.t
 import { systemPipelineDeps } from "./pipeline.ts";
 import { systemIdleMs, systemProcesses } from "./processes.ts";
 import {
+  installUnityMultiplayer,
+  MULTIPLAYER_PACKAGE,
+  SETTINGS_FILE,
+  type UnityMultiplayerState,
+  unityMultiplayerState,
+} from "./multiplayer.ts";
+import {
   findUnityProject,
   folderInGame,
   GAME_PROJECT_FOLDER,
@@ -66,7 +79,11 @@ import { readFacts, SetupAction, setupCard, skippedCard } from "./setup-steps.ts
 import { createInstaller, type InstallDeps, type Installer, systemInstallDeps } from "./unity-install.ts";
 
 /** The host services this backend calls, by their public SDK names. */
-const HostService = { StorageRoot: "storage.root", EngineSteps: "game.engine.steps" } as const;
+const HostService = {
+  StorageRoot: "storage.root",
+  EngineSteps: "game.engine.steps",
+  SettingsRead: "settings.read",
+} as const;
 
 /** The plugin's tools, by the names its manifest declares. Wire values: never rename one. */
 export const UnityTool = {
@@ -82,9 +99,11 @@ export const UnityTool = {
   ReopenEditor: "reopen-editor",
   EditorState: "editor-state",
   OpenForRun: "open-for-run",
+  AfterRun: "after-run",
   SceneShots: "scene-shots",
   EditorActivity: "editor-activity",
   ShowSteps: "show-steps",
+  Multiplayer: "multiplayer",
 } as const;
 export type UnityTool = (typeof UnityTool)[keyof typeof UnityTool];
 
@@ -119,7 +138,53 @@ const isUnityAction = (name: string): name is UnityAction => (Object.values(Unit
  * editor's network and the computer's processes, and what installing Unity for the person reaches
  * (this computer's own unless a test stands in).
  */
-export type UnityBackendDeps = MomentDeps & { install?: InstallDeps };
+export type UnityBackendDeps = MomentDeps & {
+  install?: InstallDeps;
+  /** Genex's Unity multiplayer package as the plugin ships it (`multiplayer/com.genex.multiplayer`). */
+  multiplayerPackage?: string;
+  /** Runs `look` every `ms` until the backend ends; this computer's timer unless a test stands in. */
+  every?: (look: () => void, ms: number) => void;
+};
+
+/** The shipped multiplayer package, beside the built backend. */
+const SHIPPED_MULTIPLAYER_PACKAGE = path.join(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "multiplayer",
+  MULTIPLAYER_PACKAGE,
+);
+
+/** This computer's timer, which never by itself keeps the backend running. */
+const systemEvery = (look: () => void, ms: number): void => {
+  setInterval(look, ms).unref();
+};
+
+/** Whether the person left closing an idle editor on: it is on unless the setting reads false. */
+async function closeIdleOn(context: PluginContext): Promise<boolean> {
+  const settings = await context.host(HostService.SettingsRead).catch(() => ({}) as Record<string, unknown>);
+  return settings[CLOSE_IDLE_SETTING] !== false;
+}
+
+/**
+ * The looks at idle editors, started at the first run's end and kept going while the backend runs;
+ * one look at a time, so a slow editor never has two.
+ */
+function idleWatch(deps: UnityBackendDeps): (storage: string) => void {
+  let watching = false;
+  let looking = false;
+  return (storage) => {
+    if (watching) return;
+    watching = true;
+    (deps.every ?? systemEvery)(() => {
+      if (looking) return;
+      looking = true;
+      void closeIdleEditors(storage, deps)
+        .catch(() => undefined)
+        .finally(() => {
+          looking = false;
+        });
+    }, IDLE_LOOK_MS);
+  };
+}
 
 const HUB = "Unity Hub (Add, then Add project from disk)";
 /**
@@ -133,6 +198,17 @@ const SKIPPED_FOLDER = path.join("unity-setup", "skipped");
 
 const MESSAGE = {
   UnknownTool: (name: string) => `Unknown Unity tool ${name}`,
+  Multiplayer: (state: UnityMultiplayerState, kept: readonly string[], manifestChanged: boolean) =>
+    [
+      `Genex multiplayer is in this game's Unity project: Packages/${MULTIPLAYER_PACKAGE} (Genex's package) and the Colyseus Unity SDK it runs on in Packages/manifest.json${manifestChanged ? ", which Unity fetches from Colyseus's repository when its editor next comes forward (it needs git on this Mac)" : ""}.`,
+      state.slug
+        ? `Its Genex project is ${state.slug} (${SETTINGS_FILE}).`
+        : `It has no Genex project yet: after its first publish, call unity__multiplayer again with slug (genex__publish-status names it) so its builds know which game to join, then build again.`,
+      kept.length ? `Kept your changed ${kept.join(", ")} beside the new ones as .mine~.` : "",
+      "Write the game's online play now, as the unity-multiplayer skill says (unity__skill): GenexMultiplayer.Connect or GenexMatchmaker with the slug, WebGL identity from the page and native identity through GenexNativeIdentity; then check it compiles in the editor.",
+    ]
+      .filter(Boolean)
+      .join("\n"),
   UnknownAction: (name: string) => `Unknown Unity action ${name}`,
   NotKept: (reason: string) =>
     `Genex could not keep this game's Unity project for the editor connector (${reason}), so its calls to Unity will say no project was found.`,
@@ -240,6 +316,22 @@ async function gameOf(context: PluginContext, words: RefusalWords = MESSAGE): Pr
   const folder = directory ? await realpath(directory).catch(() => undefined) : undefined;
   if (!id || !folder) throw new Error(words.NoGame);
   return { id, folder };
+}
+
+/**
+ * The agent's `multiplayer`: Genex multiplayer into the game's Unity project (the package, Colyseus,
+ * the game's Genex project) and the game's matchmaking in its genex.json. Arguments are checked
+ * before anything is written.
+ */
+async function setUpMultiplayer(deps: UnityBackendDeps, context: PluginContext, args: Record<string, unknown>) {
+  const { folder } = await gameOf(context);
+  const { project } = await projectOf(deps, context);
+  const slug = slugArg(args.slug);
+  const matchmaking = matchmakingArg(args.matchmaking);
+  const source = deps.multiplayerPackage ?? SHIPPED_MULTIPLAYER_PACKAGE;
+  const { kept, manifestChanged } = await installUnityMultiplayer(project.root, source, slug ? { slug } : {});
+  if (matchmaking) await writeMatchmaking(folder, matchmaking);
+  return MESSAGE.Multiplayer(await unityMultiplayerState(project.root, source), kept, manifestChanged);
 }
 
 /** The bound game's existing Unity project, kept for the connector; refused when the game holds none. */
@@ -481,11 +573,12 @@ export function createUnityBackend(deps: UnityBackendDeps): PluginActivation {
     installing ??= createInstaller(deps.install ?? systemInstallDeps(deps.editors, deps.open), async () => storage);
     return installing;
   };
+  const watchIdle = idleWatch(deps);
   const atMoment =
     <T>(handler: (moment: Moment, momentDeps: MomentDeps) => Promise<T>) =>
     async (context: PluginContext) =>
       handler(await momentOf(context), deps);
-  const tools: Record<UnityTool, (context: PluginContext) => Promise<unknown>> = {
+  const tools: Record<UnityTool, (context: PluginContext, args: Record<string, unknown>) => Promise<unknown>> = {
     [UnityTool.FindProject]: (context) => findProject(deps, context),
     [UnityTool.EngineStatus]: async () => readinessOf(await findEditors(deps.editors)),
     [UnityTool.NewGame]: (context) => newGame(deps, context),
@@ -498,9 +591,16 @@ export function createUnityBackend(deps: UnityBackendDeps): PluginActivation {
     [UnityTool.ReopenEditor]: atMoment(reopenEditor),
     [UnityTool.EditorState]: atMoment(editorState),
     [UnityTool.OpenForRun]: atMoment(openForRun),
+    [UnityTool.AfterRun]: async (context) => {
+      const moment = await momentOf(context);
+      const answer = await afterRun(moment, deps, await closeIdleOn(context));
+      watchIdle(moment.storage);
+      return answer;
+    },
     [UnityTool.SceneShots]: atMoment(sceneShots),
     [UnityTool.EditorActivity]: atMoment(editorActivity),
     [UnityTool.ShowSteps]: async (context) => showSteps(deps, await installerOf(context), context),
+    [UnityTool.Multiplayer]: (context, args) => setUpMultiplayer(deps, context, args),
   };
   // An action takes nothing from its arguments: the open game's own project is all it acts on.
   const actions: Record<UnityAction, (context: PluginContext) => Promise<unknown>> = {
@@ -521,7 +621,7 @@ export function createUnityBackend(deps: UnityBackendDeps): PluginActivation {
       if ((ENGINE_PLAY_TOOLS as readonly string[]).includes(name))
         return play(name as EnginePlayTool, args, context, await storageOf(context));
       if (!isUnityTool(name)) throw new Error(MESSAGE.UnknownTool(name));
-      return tools[name](context);
+      return tools[name](context, args);
     },
     async action(name, _args, context) {
       if (!isUnityAction(name)) throw new Error(MESSAGE.UnknownAction(name));

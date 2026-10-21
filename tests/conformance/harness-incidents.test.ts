@@ -8594,6 +8594,32 @@ describe("the chat's main agent asked to read the owner's Downloads", () => {
   });
 });
 
+describe("an engine's plugin turned on from the chat's card (mp-unity)", () => {
+  // A chat asked for a Unity game while the Unity plugin was off; its card turned the plugin on and
+  // the same session resumed with "Go on with what I asked". The resumed brief carried no kind rules,
+  // so the lead never heard "When the request names Unity, call unity__new-game" and launched a Loop:
+  // the Loop gave the kindless folder the web starter, and unity__new-game was refused under the run.
+  it("tells a resumed session of a folder with no kind yet which tool makes each kind on offer", async () => {
+    const { buildContractorBrief } = await import("../../src/harness-seed/loop/chat-session.ts");
+    const { toolCall } = await import("../../src/harness-seed/loop/model-roles.ts");
+    const engine = "claude-code";
+    const unity = { plugin: "unity", name: "Unity", tool: "unity__new-game", makes: ["unity-project"] };
+    const ask = "I turned on the Unity plugin from your card. Go on with what I asked.";
+    const launch = { toolName: "start_autopilot", hours: 0.5, frameCount: 0, project: "cube-arena" };
+    const resumed = buildContractorBrief({ ask, resume: true, engine, facts: [], kinds: [unity], launch });
+    assert.ok(resumed.includes(`When the request names Unity, call ${toolCall(engine, unity.tool)}`), resumed);
+    const made = buildContractorBrief({
+      ask,
+      resume: true,
+      engine,
+      facts: [{ id: "unity-project", path: "unity" }],
+      kinds: [unity],
+      launch,
+    });
+    assert.ok(!made.includes(toolCall(engine, unity.tool)), "a folder that has its kind is not told again");
+  });
+});
+
 describe("stuck ladders and small reviewers", () => {
   const rulesUrl = "../../src/harness-seed/loop/facet/rules.ts";
   const judgementUrl = "../../src/harness-seed/loop/facet/round-judgement.ts";

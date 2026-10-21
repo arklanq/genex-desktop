@@ -10,7 +10,8 @@
  * | `reopen-editor` at `restore.after` | reopens only when `end-editor` closed one for this restore | same |
  * | `reopen-editor` at `crash` | ends what is left of the editor, then opens the project again | same |
  * | `editor-state` at `health` | answers: nothing; starting, reloading or busy: pending; not running: block; a main thread that ran nothing for two minutes: block when nobody is at the computer, pending while somebody is (the dialog may be theirs) | same |
- * | `open-for-run` at `run.prepare` | opens Unity and waits; a project that is not set up, or an editor that does not answer: block | — |
+ * | `open-for-run` at `run.prepare` | opens Unity and waits, remembering when Genex opened it; a project that is not set up, or an editor that does not answer: block | — |
+ * | `after-run` at `run.end` | an editor Genex opened for the run starts its idle time, after which it may be closed (`editor-idle.ts`) | — |
  * | `scene-shots` at `checkpoint.after`, and as the `viewport` observer | the main camera's still as an image; one flat colour (a scene built only when Play starts): no image, a note | nothing: no still taken |
  * | `editor-activity` as the lock's probe | no editor: nobody, nothing unsaved; a play counts only when the agent did not start it (its play kept while it starts and while it is seen running), and not while agents may use Unity as the person plays (said once per game: `wentAhead`); an editor that can't be asked: can't tell, but nobody when it is stalled and the computer was left alone | same |
  */
@@ -24,7 +25,8 @@ import { decodePng } from "../../substrate/png.ts";
 import { agentPlaying, agentPlayStarting, forgetAgentPlay, sawAgentPlay } from "./agent-play.ts";
 import { agentsSetting, firstWentAhead } from "../../substrate/engine-agents.ts";
 import { editorCommand, editorRuns, endEditor, openScenes, saveWork } from "./editor-life.ts";
-import { type OpenDeps, Opened, type Opening, openProject, usable } from "./editor-open.ts";
+import { runEnded, runGoesOn, rememberLaunch } from "./editor-idle.ts";
+import { launched, type OpenDeps, Opened, type Opening, openProject, usable } from "./editor-open.ts";
 import { editorStatus, PIPELINE_PACKAGE, PipelineProblem, PLAY_STOPPED } from "./pipeline.ts";
 import type { UnityProject } from "./project-folder.ts";
 import { pipelineVersionOf } from "./setup.ts";
@@ -249,10 +251,19 @@ export async function openForRun(moment: Moment, deps: MomentDeps): Promise<Plug
   if (!project) return {};
   if (!(await pipelineVersionOf(project.root).catch(() => undefined))) return { block: WORDS.NotSetUp };
   const opening = await openProject(deps, project, openingAt(moment, deps, RUN_OPEN_WAIT_MS));
+  // Only an editor Genex opened for a run is ever closed after one (`editor-idle.ts`).
+  if (launched(opening)) await rememberLaunch(moment.storage, moment.game, project.root);
+  else await runGoesOn(moment.storage, moment.game, project.root);
   if (usable(opening)) return opening.setAside ? { note: WORDS.SetAside(opening.setAside) } : {};
   if (opening.opened === Opened.NoEditor) return { block: WORDS.NoEditor(opening.version) };
   if (opening.opened === Opened.Failed) return { block: WORDS.NotReopened(reasonOf(opening.why)) };
   return { block: WORDS.NotReady };
+}
+
+/** `after-run`: the editor Genex opened for this run starts its idle time, unless the person turned closing off. */
+export async function afterRun(moment: Moment, deps: MomentDeps, closeIdle: boolean): Promise<PluginHookAnswer> {
+  await runEnded(moment.storage, moment.game, deps.now().getTime(), closeIdle);
+  return {};
 }
 
 /** Whether an editor that plays nothing may still be entering the agent's play: it reloads, or the play was just asked for. */

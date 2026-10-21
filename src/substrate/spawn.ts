@@ -181,6 +181,11 @@ export interface SandboxOptions {
   ownHome?: readonly string[];
   /** Set false only in unit tests that assert the fallback path. */
   enabled?: boolean;
+  /**
+   * Windows: Genex's data folder. Moved off the profile (Settings → Storage), it is as closed as
+   * the profile, so the folders between it and each root it holds get the read-attributes grant.
+   */
+  dataRoot?: string;
   /** Extra always-readable roots (vendored toolchain, app resources). */
   readableRoots?: string[];
   /**
@@ -221,6 +226,11 @@ export interface WindowsSeams {
   profile?: string;
   /** What of the Windows sandbox is not set up yet (default: {@link windowsSetupGaps}). */
   setupGaps?: () => Promise<WindowsSetupGap[]>;
+}
+
+/** The data folder spelled by its long name on Windows, as the grants are; null when none was given. */
+function longDataRoot(dataRoot: string | undefined, platform: NodeJS.Platform): string | null {
+  return dataRoot ? longPath(dataRoot, platform) : null;
 }
 
 /** The part of sandbox-runtime's `SandboxManager` this file drives. */
@@ -561,6 +571,7 @@ export class ProcessSandbox {
   readonly #platform: NodeJS.Platform;
   #seams: WindowsSeams = {};
   #windows: WindowsBackend | null = null;
+  #dataRoot: string | null = null;
 
   private constructor(policy: SandboxPolicy, enabled: boolean, scratchDir: string, platform: NodeJS.Platform) {
     this.policy = policy;
@@ -592,6 +603,7 @@ export class ProcessSandbox {
     sandbox.#toolPath = options.toolPath ?? null;
     sandbox.#runtime = options.runtime ?? null;
     sandbox.#seams = options.windows ?? {};
+    sandbox.#dataRoot = longDataRoot(options.dataRoot, platform);
     sandbox.#log = options.log ?? null;
     sandbox.#bubblewrap = platform === StudioPlatform.Linux ? (options.bubblewrap ?? ownBubblewrap()) : null;
     if (!sandbox.enabled) return sandbox;
@@ -767,6 +779,7 @@ export class ProcessSandbox {
         profile,
         srtWin: srtWinPath(),
         installDir,
+        ...(this.#dataRoot ? { dataRoot: this.#dataRoot } : {}),
         ...(this.#log ? { log: this.#log } : {}),
       });
     const backend = { session, bash, read, profile, curlHome: await writeCurlHome(this.scratchDir) };

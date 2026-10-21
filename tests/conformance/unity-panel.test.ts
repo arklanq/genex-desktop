@@ -9,7 +9,7 @@
  * Playwright Chromium already installed.
  */
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
@@ -20,7 +20,7 @@ import { PanelStep } from "../../src/plugins/unity/panel-status.ts";
 import { PIPELINE_VERSION } from "../../src/plugins/unity/pipeline.ts";
 import { PLUGIN_CALL_TIMEOUT_MS } from "../../src/substrate/plugins/registry.ts";
 import { backendOn, look, ready, withProject } from "../helpers/unity-backend.ts";
-import { editorRow, type Reply } from "../helpers/unity-editor-stand-in.ts";
+import { editorRow, type Reply, UNITY_PREFERENCES } from "../helpers/unity-editor-stand-in.ts";
 
 const PANEL = path.resolve("src/plugins/unity/panel.html");
 const UNITY_6 = "6000.3.10f1";
@@ -118,6 +118,15 @@ const STEPS: Record<
       return computer;
     },
     title: /^Unity is ready$/,
+  },
+  [PanelStep.Terms]: {
+    arrange: async () => {
+      const { computer, root } = await setUpGame();
+      await rm(path.join(computer.env.home, ...UNITY_PREFERENCES));
+      computer.table.start(editorRow(55, root));
+      return computer;
+    },
+    title: /^Unity is waiting for you$/,
   },
   [PanelStep.Stalled]: {
     arrange: async () => {

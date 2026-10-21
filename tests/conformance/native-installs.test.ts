@@ -410,6 +410,35 @@ describe("Play's native installer", { skip: SKIP }, () => {
     assert.equal(await readFile(path.join(root, "dust-runners", SAVES, "slot1.sav"), "utf8"), "level 3");
   });
 
+  it("remembers which installed game knows who the player is, keeps it across an update, and forgets it", async () => {
+    const work = await tmpDir("native-app-");
+    const archive = await zipApp(await makeApp(work, "Dust Runners"), path.join(work, "game.zip"));
+    const v1 = buildOf("dust-runners", archive);
+    const v2 = buildOf("dust-runners", archive, { version: "1.1", url: `https://${HOST}/dust-runners/1.1/mac.zip` });
+    const games: Record<string, NativeBuild[]> = { "dust-runners": [v1] };
+    const { installs } = await installer(
+      games,
+      new Map([
+        [v1.url, archive],
+        [v2.url, archive],
+      ]),
+    );
+    await installs.install("dust-runners");
+    await installs.idle();
+    const shown = async () => (await installs.state()).installed[0]?.identityProject;
+    assert.equal(await shown(), undefined, "a game knows nobody until the player says so");
+    await installs.knowsYou("dust-runners", "cm1");
+    assert.equal(await shown(), "cm1");
+    games["dust-runners"] = [v2];
+    await installs.install("dust-runners");
+    await installs.idle();
+    assert.equal(await shown(), "cm1", "an update keeps it");
+    await installs.knowsYou("dust-runners", null);
+    assert.equal(await shown(), undefined);
+    await installs.knowsYou("not-installed", "cm2");
+    assert.equal((await installs.state()).installed.length, 1, "a game that is not installed is not added");
+  });
+
   it("clears what a quit left mid-install at the next start", async () => {
     const { installs, root } = await installer({}, new Map());
     await mkdir(path.join(root, ".incoming-abc", "game", "Dust Runners.app"), { recursive: true });

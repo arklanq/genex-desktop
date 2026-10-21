@@ -128,11 +128,21 @@ the setup screen opens on `git-missing`. What differs from macOS:
   over 2 s); one that runs out of time keeps what it set, and the next try goes on. Where the
   sandbox user (in BUILTIN\Users) can open nothing under a denied path with or without the walk
   (the path passes no allow down to anyone but its owner, SYSTEM and the Administrators, before or
-  after the edit, and every entry under it, read for its owner and DACL alone, is owned by and
-  allows only them, protected or not), the start writes the path alone, which files made in it
+  after the edit, and every entry under it, read for its owner and DACL alone, is owned by them
+  and allows only them, protected or not), the start writes the path alone, which files made in it
   inherit, and records the walk; the session runs
   it two minutes after the start (`own entries passed down` in the log), and the next start runs
-  one a Genex quit before. A browser profile's walk took 17 s of a Windows 11 first start. A per-command
+  one a Genex quit before. A browser profile's walk took 17 s of a Windows 11 first start. An allow
+  for an app container or a capability SID (`S-1-15-2-*`, `S-1-15-3-*`: Chrome gives its own
+  sandboxes its profile's network folder) counts as theirs: Windows matches those only in an app
+  container's second access check, and an app container gets only what its user is allowed too.
+  Where Windows refuses a deny with ERROR_ACCESS_DENIED (the person may not change that path's
+  entries, as security software or another owner can leave a browser profile; a field PC's Chrome
+  `User Data` refused at every start, so the agents never started) and the same check finds the
+  sandbox user can open nothing at the path or under it, the start goes on without that deny, and
+  the log says so (`left … as it is`). The deny stays recorded, so every start asks for it and
+  checks again. A deny refused on a path the sandbox user could open, or refused for any other
+  reason, still stops the start. A per-command
   deny Genex already sets is not sent again. Without the group, where PowerShell cannot run the
   batch or the running user holds the SID, srt-win sets every grant and deny as before, and the
   log says so (`own entries off`). srt-win keeps a missing deny path (it makes its placeholder), a
@@ -174,6 +184,46 @@ reads every executable and DLL in the package and fails on a runtime import with
 `.git-credentials`, `_netrc`, the `%APPDATA%`/`%LOCALAPPDATA%` credential and DPAPI stores, GitHub
 CLI and gcloud, and the Chrome, Edge, Brave, Firefox and Opera profiles. Genex sets those that
 exist itself; a missing one outside every grant is not sent.
+
+## Data folder on another drive
+
+Settings → Storage's **Where Genex keeps its files** moves all of Genex's data (Electron's
+userData, the core's folders and Chromium's) off the profile. The default folder
+(`%APPDATA%\Genex`) then keeps only `data-folder.json`
+([`data-folder.ts`](../src/main/data-folder.ts)), which `boot.ts` reads before anything reads
+userData and points userData and sessionData at. A picked folder is refused when it overlaps
+Genex's data, a game or the install, sits on a network or removable drive or a file system
+without permissions (CIM's `Win32_LogicalDisk`), holds files, or lacks room (a move on the data's
+own volume only renames). A drive's root or a folder with files gets a `Genex` folder. Change… is refused while a quit would ask
+first (a run, a paused build's planned resume) or a reply is under way. Move and
+restart makes the folder, takes ownership of it and locks it down (`icacls /setowner`, then
+`/inheritance:r` granting only the account, LocalSystem and Administrators; `whoami` and `icacls`
+run from System32, never Git's look-alikes), records `moveTo` and restarts.
+
+The next person's launch takes Genex's one-instance lock in the old folder, so a move never starts
+while another Genex runs on that data (that launch only wakes it), then runs on
+`%TEMP%\genex-data-move` and moves the files
+([`data-move-launch.ts`](../src/main/data-move-launch.ts)): renamed on one volume (an entry the
+volume will not rename, `EXDEV`, is copied with the rest), copied with progress and then removed
+across volumes. The entries, and how each one moved, are recorded as it goes, so a Genex closed
+part-way carries on knowing which side is the data: a renamed entry's new side is never removed,
+even when something wrote its old name again; then both stay. The finished move is recorded with
+the repairs still to do, which run (each on its own, so one failing or Git missing never skips
+another) before anything is removed, and again at the next start if Genex closed first:
+`projects.json`, `games-root.json` and Claude Code's `.claude.json` are rebased, links into the old
+folder repointed, Claude Code's sessions of moved folders renamed for their new paths, build
+copies' `.git` files repointed and `git worktree repair` run. A failure is put back and recorded
+for Storage; one that cannot be put back keeps the move recorded and the window offers Try again
+(which carries it on) and Quit, never a restart loop. Copies left behind are listed and removed at
+later starts, never one that holds the folder in use, and never a file changed since the move
+began, which is someone's edit: it stays and Storage names its folder. A picked folder inside
+what a move left is refused. A missing folder shows Try again and Quit. Developer, test and
+installer launches follow a finished move and never start one.
+
+A second drive's root lets every signed-in user, the sandbox user included, change what is under
+it; the lock-down keeps the moved data as closed as the profile, and `ancestorDirs` gives the
+read-attributes grant from the data folder down to each root inside it, as it does under the
+profile. `data-folder-windows.test.ts` proves the move and the sandbox on the runner's D:.
 
 ## Residual risks
 

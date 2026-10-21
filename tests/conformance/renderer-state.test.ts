@@ -947,6 +947,35 @@ describe("the studio: one subscription, the bootstrap and the commands that span
     );
   });
 
+  it("coming back from home to the game Live still holds keeps its page; another game or a failed load loads", async () => {
+    const moss = thread("moss-chat", { kind: "game", project: "moss" });
+    const { fake, app } = started({ threadForGame: async () => moss });
+    await tick();
+    const loads = fake.callsOf("loadPreview").length;
+    await app.enterProject("moss");
+    fake.emit({ type: "preview.identity", payload: { project: "moss", head: null, state: "loaded", error: null } });
+    await tick();
+    app.goHome();
+    await app.enterProject("moss");
+    await tick();
+    assert.equal(app.threads.getState().activeThreadId, "moss-chat");
+    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [["moss"]], "the paused game is shown as it was left");
+    app.goHome();
+    fake.emit({ type: "preview.identity", payload: { project: "moss", head: null, state: "failed", error: "boom" } });
+    await app.enterProject("moss");
+    await tick();
+    assert.deepEqual(fake.callsOf("loadPreview").slice(loads), [["moss"], ["moss"]], "a failed load is tried again");
+    app.goHome();
+    fake.emit({ type: "preview.identity", payload: { project: "pond", head: null, state: "loaded", error: null } });
+    await app.enterProject("moss");
+    await tick();
+    assert.deepEqual(
+      fake.callsOf("loadPreview").slice(loads),
+      [["moss"], ["moss"], ["moss"]],
+      "Live holding another game loads this one",
+    );
+  });
+
   it("a refused open is toasted in plain words", async () => {
     const { app } = started({
       threadForGame: async () => {

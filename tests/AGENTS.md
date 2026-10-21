@@ -20,9 +20,12 @@ sandbox-runtime's socat bridges run until the last sandbox is disposed. Node run
 `after` hooks once the tests registered so far have ended, so the check also waits for tests a
 file registers after a top-level await (it follows `node:test`'s `node.test` trace).
 
-Each batch also runs with `TMPDIR`, `TMP` and `TEMP` set to a folder of its own (`/tmp/gt-…` off
-Windows, or in the inherited temp folder where `/tmp` is not writable), removed when the batch
-ends, so what a test leaves in the temp folder does not pile up.
+Each batch also runs with `TMPDIR`, `TMP` and `TEMP` set to a folder of its own (`/tmp/gt-<pid>-…`
+off Windows, or in the inherited temp folder where `/tmp` is not writable), removed when the batch
+ends, so what a test leaves in the temp folder does not pile up. A file run directly with
+`node --test` puts its `tmpDir`s in a `gt-<pid>-…` folder of its own the same way. A run killed
+before its cleanup leaves its folder: each batch first removes every `gt-` folder whose owner
+process is gone, or that sat unchanged for a day (`scripts/test-tmp.mjs`).
 
 CI partitions literal test groups with direct callbacks. Ordinary groups stay whole; the large
 `harness incidents` suite is split into direct test subtrees, with each test's runtime descendants

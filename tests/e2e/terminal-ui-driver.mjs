@@ -260,9 +260,10 @@ async function acceptance() {
     replace("studio:terminal.run", (payload) =>
       terminals.open({
         ...fixture(payload.project),
+        // Like a real install, it is still tidying up for a moment after its last line.
         args: [
           "-c",
-          "printf '\\033[34m==>\\033[0m Downloading ffmpeg\\n\\033[34m==>\\033[0m Pouring ffmpeg--7.1.arm64_sequoia.bottle.tar.gz\\n/opt/homebrew/Cellar/ffmpeg/7.1: 285 files, 52.3MB\\n'",
+          "printf '\\033[34m==>\\033[0m Downloading ffmpeg\\n\\033[34m==>\\033[0m Pouring ffmpeg--7.1.arm64_sequoia.bottle.tar.gz\\n/opt/homebrew/Cellar/ffmpeg/7.1: 285 files, 52.3MB\\n'; sleep 0.5",
         ],
         kind: "command",
         title: payload.command,
@@ -287,6 +288,8 @@ async function acceptance() {
       ),
       terminals.list(),
     );
+    // Its last lines show before it has exited: read its exit code once the session has ended.
+    await until(() => terminals.list().some((session) => session.kind === "command" && session.phase === "exited"));
     const ran = terminals.list().find((session) => session.kind === "command");
     check(
       "a finished command reports its exit code and plain last lines",

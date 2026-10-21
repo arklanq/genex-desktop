@@ -122,9 +122,12 @@ export const showsMultiplayer = (game: {
     Boolean,
   );
 
-/** Whether the game's engine project takes Genex's multiplayer itself: a Godot game, through its plugin's addon. */
+/** The engines whose project takes Genex's multiplayer itself: Godot (its plugin's addon) and Unity (its package). */
+const ENGINE_MULTIPLAYER: ReadonlySet<string> = new Set([CoreFact.GodotProject, CoreFact.UnityProject]);
+
+/** Whether the game's engine project takes Genex's multiplayer itself: a Godot or a Unity game. */
 export const takesEngineMultiplayer = (game: GameKind): boolean =>
-  game.facts.some((fact) => fact.id === CoreFact.GodotProject);
+  game.facts.some((fact) => ENGINE_MULTIPLAYER.has(fact.id));
 
 /** What Multiplayer's press does, by where Genex stands. */
 export const MultiplayerPress = { SetUp: "set-up", Update: "update", Ask: "ask" } as const;

@@ -77,6 +77,19 @@ describe("listing Windows' processes", () => {
     assert.match(script, /Win32_Process -Filter "Name LIKE 'Unity\.exe'"/);
   });
 
+  it("runs that PowerShell without an inherited module path, which would lose Get-CimInstance", async () => {
+    const seen: Array<NodeJS.ProcessEnv> = [];
+    await windowsProcesses(["Unity.exe"], {
+      env: { SystemRoot: "D:\\Win", PSModulePath: "C:\\Program Files\\PowerShell\\7\\Modules" },
+      run: async (_file, _args, env) => {
+        seen.push(env);
+        return "[]";
+      },
+    });
+    assert.equal(seen[0]?.PSModulePath, undefined);
+    assert.equal(seen[0]?.SystemRoot, "D:\\Win");
+  });
+
   it("never puts a name that is not a plain program name into the query, and runs nothing for none", async () => {
     const hostile = ["Unity.exe' OR Name LIKE '%", 'x" ; Remove-Item C:\\', "a b", "$(calc)", ""];
     let ran = 0;

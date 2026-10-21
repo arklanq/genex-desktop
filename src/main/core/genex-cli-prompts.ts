@@ -41,6 +41,8 @@ export const GENEX_CLI_PROMPT = {
     "This game has its own page but no package.json, and is not made from Studio's template, so there is nothing to add Genex packages to. Give it one with a build (npm init, then a bundler such as Vite), then call genex__package again.",
   GodotGame:
     "This is a Godot game: Genex's multiplayer goes into its Godot project with godot__multiplayer (read the godot-multiplayer skill first), and its web build is Godot's export, which takes no npm packages. Its players' sign-in on Genex is Studio's: nothing to add for it.",
+  UnityGame:
+    "This is a Unity game: Genex's multiplayer goes into its Unity project with unity__multiplayer (read the unity-multiplayer skill first), and its WebGL build is Unity's, which takes no npm packages. Its players' sign-in on Genex is Studio's: nothing to add for it.",
   TemplatePageUnreadable:
     "This game's index.html has no import map Studio can read, so nothing was added. Restore the template's import map (three from /vendor/) and try again.",
   TemplateSdkMapped: [

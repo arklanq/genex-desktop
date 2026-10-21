@@ -175,6 +175,7 @@ const Step = {
   Opening: "opening",
   Ready: "ready",
   Stalled: "stalled",
+  Terms: "terms",
 };
 const Action = {
   Status: "status",
@@ -264,6 +265,11 @@ const STEPS = {
     text: (s) => readyWords(s),
     quiet: { action: Action.RestartEditor, label: "Restart Unity" },
   },
+  [Step.Terms]: {
+    title: "Unity is waiting for you",
+    text: () =>
+      "The first time it starts, Unity shows its Software Terms in a window of its own. Bring Unity to the front and accept them; Genex goes on once Unity answers.",
+  },
   [Step.Stalled]: {
     title: "Unity isn't answering",
     text: () =>
@@ -283,6 +289,7 @@ const STATE = {
   [Step.Opening]: ["Starting", Tone.Starting],
   [Step.Ready]: ["Ready", Tone.Ok],
   [Step.Stalled]: ["Stalled", Tone.Warn],
+  [Step.Terms]: ["Waiting for you", Tone.Warn],
 };
 /** The first Unity that Genex builds with: 6, numbered 6000 by Unity. */
 const UNITY_6_MAJOR = 6000;

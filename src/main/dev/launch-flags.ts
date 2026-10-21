@@ -58,6 +58,21 @@ export const StudioFlag = {
 } as const;
 export type StudioFlag = (typeof StudioFlag)[keyof typeof StudioFlag];
 
+const LAUNCH_SWITCHES: readonly string[] = Object.values(StudioFlag);
+/** Windows' installer launches the app to make or remove shortcuts, then it exits at once. */
+const SQUIRREL_SWITCH = "--squirrel-";
+
+/** Whether `arg` makes a launch something other than the person opening Genex: a runner's, a developer's or the installer's. */
+export function isLaunchSwitch(arg: string): boolean {
+  if (arg.startsWith(SQUIRREL_SWITCH)) return true;
+  return LAUNCH_SWITCHES.some((flag) => arg === flag || arg.startsWith(`${flag}=`));
+}
+
+/** The person opening Genex: no runner, developer or installer switch. */
+export function isNormalLaunch(argv: readonly string[]): boolean {
+  return !argv.some(isLaunchSwitch);
+}
+
 /** `--studio-expected-<engine>=<status>`: the connection status the smoke expects for one engine. */
 export type ExpectedStatusFlag = `--studio-expected-${string}`;
 

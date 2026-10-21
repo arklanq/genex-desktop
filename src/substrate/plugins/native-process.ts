@@ -178,6 +178,7 @@ export function nativeSandboxProfile(p: {
     ...(p.denied.length ? [`(deny file-read* ${subpaths(p.denied)})`] : []),
     ...(p.game ? gameRules(p.game) : []),
     "(deny network*)",
+    ...gameNetwork(p.game),
   ].join("\n");
 }
 
@@ -189,6 +190,21 @@ export interface GameSandbox {
   bundleName: string;
   /** The person's temporary folder (`DARWIN_USER_TEMP_DIR`) by its real path, where those folders are. */
   userTemp: string;
+  /** Its Genex gateway's ports on 127.0.0.1 (`main/play/genex-gateway.ts`): its only network. */
+  genexPorts?: readonly number[];
+}
+
+/** A port a game's profile may name: an unprivileged one, written as a plain number. */
+const isGatewayPort = (port: number) => Number.isInteger(port) && port >= 1024 && port <= 65535;
+
+/**
+ * A game's one way onto the network: TCP to its Genex gateway's ports on this Mac. It comes after
+ * the profile's `(deny network*)`, which it narrows, since Seatbelt's last matching rule wins.
+ */
+function gameNetwork(game: GameSandbox | undefined): string[] {
+  const ports = (game?.genexPorts ?? []).filter(isGatewayPort);
+  if (!ports.length) return [];
+  return [`(allow network-outbound ${ports.map((port) => `(remote ip "localhost:${port}")`).join(" ")})`];
 }
 
 /** A game's own preference domain: Genex's prefix and a slug. */
@@ -610,12 +626,36 @@ export interface NativeGameRequest {
   bundleName: string;
   /** Arguments for the game: a game from Play gets its engine's full-screen one (`launchArgs`), or none. */
   args?: string[];
+  /** Its way to Genex: its gateway's ports and what it tells the game (`GameGenexEnv`); none, no network at all. */
+  genex?: { ports: readonly number[]; env: GameGenexEnv };
+}
+
+/**
+ * What a launched game is told about Genex (CLI_INTEGRATION §6b): its API's address, which is its
+ * gateway's, and a single-use sign-in ticket while the person is signed in.
+ */
+export interface GameGenexEnv {
+  GENEX_API_URL: string;
+  GENEX_EMBED_TICKET?: string;
+}
+/** A gateway address a game may be told: plain http on this Mac, an unprivileged port. */
+const GATEWAY_URL = /^http:\/\/127\.0\.0\.1:(\d{4,5})$/;
+/** A ticket as Genex mints one: a short token of URL-safe characters. */
+const TICKET = /^[A-Za-z0-9._~-]{16,4096}$/;
+
+/** The Genex part of a game's environment, each value checked; nothing that doesn't hold up. */
+export function gameGenexEnv(env: GameGenexEnv | undefined): Record<string, string> {
+  const port = Number(GATEWAY_URL.exec(env?.GENEX_API_URL ?? "")?.[1]);
+  if (!env || !isGatewayPort(port)) return {};
+  const ticket = env.GENEX_EMBED_TICKET && TICKET.test(env.GENEX_EMBED_TICKET) ? env.GENEX_EMBED_TICKET : undefined;
+  return { GENEX_API_URL: env.GENEX_API_URL, ...(ticket ? { GENEX_EMBED_TICKET: ticket } : {}) };
 }
 
 /**
  * A game from Play in the native-job sandbox with a window, the GPU and sound: its app read-only,
  * its saves folder its home (Foundation's too, so Application Support lands there), its own
- * preferences, no network, its own process group, stdin closed and its output for the caller to
+ * preferences, no network but its Genex gateway's ports when it has one (and the Genex address and
+ * ticket in its environment), its own process group, stdin closed and its output for the caller to
  * drain. Nothing it starts outlives it.
  */
 export async function spawnNativeGame(p: NativeGameRequest): Promise<ChildProcessByStdio<null, Readable, Readable>> {
@@ -626,7 +666,7 @@ export async function spawnNativeGame(p: NativeGameRequest): Promise<ChildProces
   );
   const reads = await aliases([binaryRoot, ...SYSTEM_READS, ...GAME_SYSTEM_READS]);
   const writes = await aliases([p.saves, p.scratch, ...extensions]);
-  const game = { bundleId: p.bundleId, bundleName: p.bundleName, userTemp };
+  const game = { bundleId: p.bundleId, bundleName: p.bundleName, userTemp, genexPorts: p.genex?.ports ?? [] };
   const profile = path.join(p.scratch, "game.sb");
   await writeFile(
     profile,
@@ -643,6 +683,7 @@ export async function spawnNativeGame(p: NativeGameRequest): Promise<ChildProces
       TEMP: p.scratch,
       PATH: JOB_PATH,
       LANG: "en_US.UTF-8",
+      ...gameGenexEnv(p.genex?.env),
     },
     detached: true,
     stdio: ["ignore", "pipe", "pipe"],

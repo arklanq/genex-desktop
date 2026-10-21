@@ -100,8 +100,11 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   48px strip of its own across the top that never covers the game and never fades, as on the
   genex.games game page. The bar is drawn in a transparent view of its own above the game's
   (`renderer/play-bar.html`, `main/play/bar-layout.ts`): back, the name and facts, Like, Comments,
-  Share (its icon), Invite a friend (multiplayer games), Remix, Exit. Only the game's own full screen
-  gives it the whole window; the bar comes back when it ends. A held Esc gives the bar the keyboard. Only Studio's own page and the bar's may post or delete a comment. A single-use ticket in the address's fragment signs the player in; a guest is offered
+  Share (its icon), Invite a friend (multiplayer games), Remix, Full screen (its icon, once the game
+  plays), Exit. Only full screen gives the game the whole window: the game's own, or the bar's Full
+  screen, which asks the game's page for that same full screen; Esc ends it and the bar comes back.
+  A held Esc gives the bar the keyboard. The browser's focus ring is hidden on the game's canvas (a
+  user-origin rule); the keyboard stays with the game, and the page's other focus rings stay. Only Studio's own page and the bar's may post or delete a comment. A single-use ticket in the address's fragment signs the player in; a guest is offered
   sign-in. The rest of the app is inert until the game closes. Closing the window closes it; another
   window over the studio's, another desktop or minimizing leaves it playing (`view-drop.ts`).
 - Comments (the count, or the icon alone) opens a modal over the dimmed game: its count as the
@@ -139,8 +142,10 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
 - Voice chat: a game that asks for a microphone gets the bar's mic switch, remembered per game.
   Main lets the page open the microphone only right after it asked it to, and only on the game's
   own origin.
-- Remix clones the game's public source from Genex's git (https only, no hooks or filters, its Git
-  LFS files from the same repository; a download fails only once it stalls for a minute) into a
+- Remix clones the game's public source from Genex's git (https only, no hooks or filters; its Git
+  LFS files come from the same repository's batch API over https, with no git-lfs needed, and each
+  replaces its pointer only once its SHA-256 and size match; a download fails only once it stalls
+  for a minute; a failed remix logs why in `studio.log`) into a
   hidden folder, installs its packages with npm without running any of their scripts (a stale or
   another manager's lockfile: from package.json), moves it to `<slug>-remix`, adopts it without trusting its settings and builds it
   once, so it opens playing. One remix at a time. Remix (a card's, or the viewer's, which closes
@@ -188,7 +193,8 @@ is.
   game (refused while it runs) keeps its saves; an update keeps the running version until it quits.
 - Playing (`main/play/native-launch.ts`): one copy per game, in the game sandbox (`spawnNativeGame`:
   the app read-only, `saves/` its HOME and `CFFIXED_USER_HOME`, its own preference domain, its
-  `NSIRD_` atomic-save folder, window, GPU and sound, no network). Genex finds its window by pid and
+  `NSIRD_` atomic-save folder, window, GPU and sound; its only network is its Genex gateway, below).
+  Genex finds its window by pid and
   brings it forward (macOS does not). A game opens full screen with its engine's own argument
   (`launchArgs`: Unity `-screen-fullscreen 1`, Godot `--fullscreen`, Unreal `-fullscreen`; the
   engine is the catalog's, kept in the install record), unless its app sets `GenexWindowed` in its
@@ -196,6 +202,29 @@ is.
   quitting Genex ends every game, and the next start ends a leftover only while it is the same
   process. A web game's Mac app is offered in the viewer's bar (install, progress, play: the viewer
   gives way), and opening a game whose app runs brings the app forward.
+- Genex from a native game (`main/play/genex-gateway.ts`).
+  - **The gateway.** Each launch opens a gateway on 127.0.0.1: one port for Genex's API, and six for
+    relays as answers name them (`relayHostsOf`: `relay[-<region>].<api's domain>`).
+  - **The sandbox.** The game's profile allows outbound TCP to those ports only. Seatbelt names no
+    host but `localhost`, so the gateway is how "Genex only" is enforced.
+  - **What goes through.** Requests and WebSockets go on to their own Genex host over TLS. Relay
+    addresses in JSON answers (relay lists, a seat's `publicAddress`) are rewritten to their local
+    port, so the next connection comes back through the gateway. Anything else is refused: a port
+    with no host yet, a relay once the ports are full, a request over 1 MB.
+  - **What the game is told.** Its environment carries `GENEX_API_URL` (the gateway) and, while the
+    Genex account is unlocked, `GENEX_EMBED_TICKET`. That is a single-use ticket minted with
+    `delivery: "native"` (`gallery.ticket`); otherwise the game plays as a guest. Genex's Godot
+    addon and Unity package read both (CLI_INTEGRATION §6b).
+  - **The player's yes** (`main/play/native-identity.ts`). Genex mints a native ticket only for a game
+    the player agreed may know who they are (App Review 4.7.3, per game and account): it answers
+    `consent_required` with the game's project. Play then asks once, as a sheet on Studio's window
+    in Genex's own words (Continue as me, Play as guest); a yes is recorded on Genex
+    (`PUT /api/embed/consent/<project>`) and in the install record (`identityProject`), and the
+    ticket is minted again. A no, a refusal or a failure plays as a guest and records nothing.
+    Settings › Storage marks such a game "Knows who you are" with Stop sharing, which withdraws it on
+    Genex first (`DELETE`, `studio:play.forget-identity`) and then here; the next launch asks again.
+  - **Failure and shutdown.** A gateway that can't open leaves the game offline, not unplayable. The
+    gateway closes when the game ends. A fixture launch opens none.
 - Links (`main/play/game-links.ts`): the website's Open in Genex sends `genex://game/<slug>`.
   The packaged app declares the scheme (`protocols` in `forge.config.cjs`, the Linux packages'
   `x-scheme-handler/genex`) and registers it at start; macOS hands a link over `open-url`, Windows

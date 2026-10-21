@@ -13,10 +13,8 @@ import {
   claimFolder,
   cloneArgs,
   isRemixSource,
-  lfsDownloaded,
-  lfsPointers,
   DOWNLOAD_STALL_MS,
-  lfsPullArgs,
+  lfsRoutedFiles,
   type RemixDeps,
   remixGame,
   type StallClock,
@@ -24,6 +22,7 @@ import {
   tracksLfs,
 } from "../../src/main/play/remix.ts";
 import { type RemixProgress, RemixStep } from "../../src/shared/play.ts";
+import { gitFile } from "../helpers/git.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
 const WORLD: PlayWorld = {
@@ -80,6 +79,7 @@ const quiet = (root: string, overrides: Partial<RemixDeps> = {}): RemixDeps => (
   adopt: async () => "adopted",
   build: async () => {},
   progress: () => {},
+  log: () => {},
   ...overrides,
 });
 
@@ -125,27 +125,39 @@ describe("Play remix", () => {
     assert.deepEqual(args.slice(-3), ["--", WORLD.cloneUrl, "/games/lost-cathedral-remix"]);
   });
 
-  it("brings a copy's Git LFS files from the game's own repository, never where a file in it points", async () => {
-    const url = WORLD.cloneUrl as string;
-    const args = lfsPullArgs(url);
-    assert.ok(args.includes(`lfs.url=${url}/info/lfs`), "the repository's own LFS, whatever its .lfsconfig says");
-    for (const setting of ["protocol.allow=never", "protocol.https.allow=always", "core.hooksPath=/dev/null"])
-      assert.ok(args.includes(setting), setting);
-    // The host's git runs without the person's git config, where `git lfs install` put the filter:
-    // without it here, git-lfs downloads the models and then leaves its pointers in their place.
-    for (const setting of [
-      "filter.lfs.process=git-lfs filter-process",
-      "filter.lfs.smudge=git-lfs smudge -- %f",
-      "filter.lfs.required=true",
-    ])
-      assert.ok(args.includes(setting), setting);
-    assert.deepEqual(args.slice(-2), ["lfs", "pull"]);
+  it("downloads Git LFS files only for a copy whose attributes name the lfs filter", async () => {
     const dir = await tmpDir("studio-remix-lfs-");
     assert.equal(await tracksLfs(dir), false, "no attributes");
     await writeFile(path.join(dir, ".gitattributes"), "# models: filter=lfs\n*.txt text\n");
     assert.equal(await tracksLfs(dir), false, "a comment turns nothing on");
     await writeFile(path.join(dir, ".gitattributes"), "*.txt text\n*.glb filter=lfs diff=lfs merge=lfs -text\n");
     assert.equal(await tracksLfs(dir), true);
+  });
+
+  it("routes through Git LFS only the files the clone's own attributes name, nested ones included", async () => {
+    const dir = await tmpDir("studio-remix-routed-");
+    await gitFile(["init", "-q"], { cwd: dir });
+    await mkdir(path.join(dir, "art", "ui"), { recursive: true });
+    await writeFile(path.join(dir, ".gitattributes"), "*.glb filter=lfs diff=lfs merge=lfs -text\n");
+    await writeFile(path.join(dir, "art", ".gitattributes"), "*.png filter=lfs -text\nui/*.png -filter\n");
+    const files = ["hero.glb", "notes.txt", "logo.png", "art/sky.png", "art/ui/button.png", "art/tree model.glb"].map(
+      (file) => file.split("/").join(path.sep),
+    );
+    for (const file of files) await writeFile(path.join(dir, file), "x");
+    const routed = await lfsRoutedFiles(dir, files);
+    assert.deepEqual([...routed].map((file) => file.split(path.sep).join("/")).sort(), [
+      "art/sky.png",
+      "art/tree model.glb",
+      "hero.glb",
+    ]);
+    assert.deepEqual(await lfsRoutedFiles(dir, []), new Set());
+  });
+
+  it("fails, never crashes, when git stops reading the paths it was given", async () => {
+    // No repository: git exits at once, and a list bigger than a pipe's buffer meets a closed input.
+    const dir = await tmpDir("studio-remix-not-a-repo-");
+    const files = Array.from({ length: 20_000 }, (_, index) => `models/a-rather-long-folder-name/${index}.glb`);
+    await assert.rejects(lfsRoutedFiles(dir, files));
   });
 
   it("claims the first free remix folder by making it, so two remixes never share one", async () => {
@@ -202,6 +214,24 @@ describe("Play remix", () => {
       /network went away/,
     );
     assert.deepEqual(await readdir(root), [], "neither the copy nor its hidden folder");
+  });
+
+  it("says in the log why a remix failed, which its toast does not", async () => {
+    const root = await tmpDir("play-remix-log");
+    const logged: string[] = [];
+    const failing = quiet(root, {
+      clone: async () => {
+        throw new Error("3 of this game’s files didn’t download from Git LFS");
+      },
+      log: (message) => {
+        logged.push(message);
+      },
+    });
+    await assert.rejects(remixGame(WORLD, failing), /didn’t download/);
+    assert.deepEqual(logged, ["remix of lost-cathedral failed: 3 of this game’s files didn’t download from Git LFS"]);
+    logged.length = 0;
+    assert.equal(await remixGame(WORLD, quiet(root, { log: (message) => logged.push(message) })), "adopted");
+    assert.deepEqual(logged, [], "a remix that worked logs nothing");
   });
 
   it("refuses a game that may not be remixed before touching the disk", async () => {
@@ -368,29 +398,5 @@ describe("Play remix", () => {
     finished.stop();
     advance(DOWNLOAD_STALL_MS * 2);
     assert.equal(finished.signal.aborted, false, "a finished download is never given up");
-  });
-
-  it("finds the files git-lfs left as pointers, from its listing", () => {
-    const listing = [
-      "9000ee0141 * public/models/character/player.glb",
-      "a45e6d25fd - public/animations/Emotes.glb",
-      "fb7093552e - public/sounds/footstep 1.mp3",
-      "",
-    ].join("\n");
-    assert.deepEqual(lfsPointers(listing), ["public/animations/Emotes.glb", "public/sounds/footstep 1.mp3"]);
-    assert.deepEqual(lfsPointers("9000ee0141 * a.glb\n"), []);
-  });
-
-  it("counts the models downloaded so far from git-lfs's progress lines", () => {
-    const lines = [
-      "download 1/3 1369/7660640 public/models/player.glb",
-      "download 1/3 7660640/7660640 public/models/player.glb",
-      "download 2/3 4096/9000 public/sounds/shot.mp3",
-      "checkout 1/1 9000/9000 public/sounds/shot.mp3",
-      "download 3/3 500",
-      "not a progress line",
-    ].join("\n");
-    assert.equal(lfsDownloaded(lines), 7660640 + 4096);
-    assert.equal(lfsDownloaded(""), 0);
   });
 });

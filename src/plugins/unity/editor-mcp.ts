@@ -15,10 +15,13 @@
  * sent: its system save panel is a dialog Pipeline itself does not see, and it stalls the editor
  * until a person answers. A captured picture is handed over as an image, not as its base64 text.
  * While a play the agent started runs, the bridge keeps a marker (`agent-play.ts`), so the editor
- * lock tells the agent's play from the person's.
+ * lock tells the agent's play from the person's, and it notes each command it sends, so an editor
+ * an agent still uses is never taken for idle (`editor-idle.ts`). A capture that names no size is
+ * taken at the size of Genex's own looks at the game.
  */
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { ENGINE_PLAY_VIEW } from "../../shared/engine-play.ts";
 import { CONNECTOR_OUTCOME_META } from "../../shared/mcp.ts";
 import { isJsonObject } from "../../substrate/fsx.ts";
 import { type AgentPlayMarker, NO_AGENT_PLAY } from "./agent-play.ts";
@@ -53,6 +56,7 @@ const Command = {
   ListOpenScenes: "list_open_scenes",
   Play: "editor_play",
   Stop: "editor_stop",
+  Capture: "capture_game_view",
 } as const;
 
 /** The bridge's tools, by the names agents call. Wire values: never rename one. */
@@ -192,6 +196,7 @@ interface Call {
   at: GatePlace;
   deps: PipelineDeps;
   agentPlay: AgentPlayMarker;
+  noteUse: () => Promise<void>;
   signal: AbortSignal;
 }
 
@@ -205,6 +210,36 @@ function commandsOf(sent: Sent): Sent[] {
     command: String(operation.command),
     parameters: isJsonObject(operation.params) ? operation.params : {},
   }));
+}
+
+/** A capture's parameters with `size` added, unless they name a size of their own. */
+function sizedCapture(parameters: Record<string, unknown>, size: Record<string, number>): Record<string, unknown> {
+  return "width" in parameters || "height" in parameters ? parameters : { ...size, ...parameters };
+}
+
+/** One operation of a batch, its capture sized as {@link sizedCaptures} says. */
+function sizedOperation(operation: unknown, size: Record<string, number>): unknown {
+  if (!isJsonObject(operation) || operation.command !== Command.Capture) return operation;
+  const params = isJsonObject(operation.params) ? operation.params : {};
+  return { ...operation, params: sizedCapture(params, size) };
+}
+
+/**
+ * The command with each capture that names no size given the one Genex's own looks at a Unity game
+ * use ({@link ENGINE_PLAY_VIEW}), in the size parameters the editor's capture takes: an unsized
+ * capture is the Game view at its full size (a Retina screen's double), and every picture stays in
+ * the agent's transcript for the rest of its session. A size the agent names is kept.
+ */
+function sizedCaptures(sent: Sent, catalogue: readonly PipelineCommand[]): Sent {
+  const capture = catalogue.find((command) => command.name === Command.Capture);
+  const takes = new Set(capture?.parameters.map((parameter) => parameter.name));
+  const size = Object.fromEntries(Object.entries(ENGINE_PLAY_VIEW).filter(([name]) => takes.has(name)));
+  if (Object.keys(size).length === 0) return sent;
+  if (sent.command === Command.Capture) return { ...sent, parameters: sizedCapture(sent.parameters, size) };
+  const operations = sent.parameters.operations;
+  if (sent.command !== Command.Batch || !Array.isArray(operations)) return sent;
+  const sized = operations.map((operation) => sizedOperation(operation, size));
+  return { ...sent, parameters: { ...sent.parameters, operations: sized } };
 }
 
 /** Whether a command saves a scene under the name it already has, which an untitled scene has none of. */
@@ -274,13 +309,14 @@ async function callRunCommand(call: Call, args: Record<string, unknown>): Promis
   if (!Array.isArray(catalogue)) return catalogue;
   const gate = await gateCall(call.at, catalogue, args.command, args.parameters);
   if (!gate.ok) return refusedResult(gate);
-  const sent = { command: gate.command, parameters: gate.parameters };
+  const sent = sizedCaptures({ command: gate.command, parameters: gate.parameters }, catalogue);
   // A main thread that runs nothing gets no command queued behind what holds it.
   const look = await editorStatus(call.at.root, call.deps, { signal: call.signal, waits: true });
   if (!look.ok) return problemResult(look, sent.command);
   const held = await unnamedSave(call, sent);
   if (held) return held;
   await markPlay(call, sent);
+  await call.noteUse().catch(() => undefined);
   const answer = await runCommand(call.at.root, sent, call.deps, { signal: call.signal });
   if (!answer.ok) return problemResult(answer, sent.command);
   await noteStop(call, sent);
@@ -290,13 +326,14 @@ async function callRunCommand(call: Call, args: Record<string, unknown>): Promis
 /**
  * The bridge for one game: `findProject` answers the real paths of the game's Unity project and of
  * the game's folder, as the plugin's backend recorded them, `deps` reaches the editor (this
- * computer's own unless a test stands in), and `agentPlay` marks the agent's own play (without one,
- * nothing is marked).
+ * computer's own unless a test stands in), `agentPlay` marks the agent's own play and `noteUse`
+ * each command sent (without them, nothing is marked).
  */
 export function createEditorMcp(
   findProject: () => Promise<GatePlace | undefined>,
   deps: PipelineDeps = systemPipelineDeps,
   agentPlay: AgentPlayMarker = NO_AGENT_PLAY,
+  noteUse: () => Promise<void> = async () => {},
 ) {
   const server = new Server({ name: "unity-editor", version: BRIDGE_VERSION }, { capabilities: { tools: {} } });
   server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -305,7 +342,7 @@ export function createEditorMcp(
     if (!isEditorTool(name)) return errorResult(MESSAGE.UnknownTool(name));
     const at = await findProject();
     if (!at) return errorResult(MESSAGE.NoProject);
-    const call: Call = { at, deps, agentPlay, signal: extra.signal };
+    const call: Call = { at, deps, agentPlay, noteUse, signal: extra.signal };
     const args = request.params.arguments ?? {};
     if (name === EditorTool.ListCommands) return callListCommands(call);
     if (name === EditorTool.DescribeCommand) return callDescribeCommand(call, args);

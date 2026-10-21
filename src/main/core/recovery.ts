@@ -10,6 +10,7 @@ import type { OptimizationCheckpointV1, OptimizationResultV1 } from "../../share
 import path from "node:path";
 import { once } from "node:events";
 import { interruptedReplyNotice } from "../../shared/message-queue.ts";
+import { constants } from "node:fs";
 import { cp, readdir, rm } from "node:fs/promises";
 import { shortId } from "../../substrate/ids.ts";
 import { pathExists } from "../../substrate/fsx.ts";
@@ -72,7 +73,7 @@ const MESSAGE = {
  */
 async function layHarnessSeed(seedDir: string, workspaceDir: string, files: readonly string[]): Promise<void> {
   if (await pathExists(path.join(workspaceDir, ".git")))
-    await cp(seedDir, workspaceDir, { recursive: true, force: true });
+    await cp(seedDir, workspaceDir, { recursive: true, force: true, mode: constants.COPYFILE_FICLONE });
   else await checkOutNewRepo(seedDir, workspaceDir, files);
 }
 

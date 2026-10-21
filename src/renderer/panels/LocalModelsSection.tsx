@@ -17,8 +17,10 @@ import { LOCAL_SERVER_WORDS } from "../words.ts";
 /** Where the Add from Ollama hint sends the user to find a model's name. */
 const OLLAMA_LIBRARY_URL = "https://ollama.com/search";
 
-/** What deleting an installed model says. */
+/** What deleting an installed model says, and where Ollama keeps its models. */
 const WORDS = {
+  /** Ollama stores what it downloads itself; its own Settings moves it to another drive. */
+  ollamaModelsFolder: "Ollama keeps its models in its own folder: move them in Ollama → Settings → Model location.",
   delete: "Delete",
   deleteModel: (title: string) => `Delete ${title}`,
   deleteAsk: "Delete it from this Mac? You can download it again.",
@@ -633,6 +635,9 @@ function AddFromOllama({
           Ollama library ↗
         </button>
         . Studio checks its size before downloading.
+      </p>
+      <p data-ollama-models-folder className="text-body-sm text-muted-foreground">
+        {WORDS.ollamaModelsFolder}
       </p>
       {ollama && ollama.status.code !== EngineStatusCode.Ready && (
         <p className="text-body-sm text-muted-foreground">

@@ -71,6 +71,9 @@ func start_online() -> bool:
 
 - On the web, the page's Genex player (a guest or a signed-in player) is used automatically. The
   `identity` and `urls` options are native-only.
+- When Genex's Play starts the game on this Mac, the addon reaches Genex through Play's gateway
+  (`GENEX_API_URL`) and signs the player in with Play's ticket. `from_launcher` takes it. Keep
+  `from_launcher` first and `guest` second, as above.
 - `mode`:
   - `"matchmake"` uses the queue, the seat and the match room;
   - `"play"` joins one shared room per game (a hangout, a persistent world);

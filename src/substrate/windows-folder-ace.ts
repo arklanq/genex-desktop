@@ -20,6 +20,8 @@
  * path's parent folder alone. A deny on a path the sandbox user can open nothing under anyway (a
  * browser profile only its owner, SYSTEM and the Administrators may open, checked entry by entry)
  * waits for its walk ({@link OwnWalk}): walking one took 17 s of a lived-in Windows 11 first start.
+ * On such a path a deny Windows refuses (the person may not change its entries: a field PC's
+ * Chrome profile refused at every start, so the agents never started) is done without.
  * Those have no `icacls` fallback: `icacls` would walk a denied path's parent, which is what they
  * exist to avoid.
  */
@@ -28,6 +30,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { errorMessage } from "../shared/errors.ts";
+import { windowsPowerShellEnv } from "./child-env.ts";
 
 const run = promisify(execFile);
 
@@ -100,10 +103,12 @@ export interface FolderOwnEdit {
 /**
  * What became of one edit: done (and how long Windows took, for an edit that passed entries
  * down, and `deferred` when it left that walk for later, {@link OwnWalk}), or the reason it was
- * refused; `timedOut` when the batch ran out of time before it.
+ * refused; `timedOut` when the batch ran out of time before it. A deny Windows refused with
+ * ERROR_ACCESS_DENIED on a path the sandbox user can open nothing at or under anyway is done
+ * without it, and `refused` carries Windows' words.
  */
 export type FolderAceOutcome =
-  | { ok: true; ms?: number; deferred?: true }
+  | { ok: true; ms?: number; deferred?: true; refused?: string }
   | { ok: false; error: string; timedOut?: true };
 
 /** Applies edits in order and answers one outcome per edit; never throws. */
@@ -184,6 +189,7 @@ $DENIED = @{ read = 0x1F01FF; write = 0x10156 }
 # write, execute and DELETE, without FILE_DELETE_CHILD, so a denied file in it cannot be deleted).
 $GRANTED = @{ read = 0x1200A9; modify = 0x1301BF }
 $DELETE_CHILD = 0x40
+$ACCESS_DENIED = 5
 # ObjectInherit | ContainerInherit: an entry the path passes down.
 $INHERITS = 3
 $PASSED_DOWN = [Security.AccessControl.AceFlags]'ObjectInherit, ContainerInherit'
@@ -234,25 +240,45 @@ function Shapes($aces, $inheritable) {
 function Entry($flags, $qualifier, $mask, $sid) {
   New-Object Security.AccessControl.CommonAce($flags, [Security.AccessControl.AceQualifier]::$qualifier, $mask, $sid, $false, $null)
 }
-# Whether the path passes an allow down to anyone the sandbox user may be: only SYSTEM, the
-# Administrators and the person running Genex never are (it is a standard user in BUILTIN\\Users).
+# Whether an allow for the SID can never reach the sandbox user, a standard user in BUILTIN\\Users:
+# SYSTEM's, the Administrators' or the person running Genex's ($UNREACHED), or an app container's
+# or a capability's (S-1-15-2-*, S-1-15-3-*; Chrome gives its own sandboxes its profile's network
+# folder). Windows matches those only in an app container's second access check, and an app
+# container gets only what its user is allowed as well.
+function Unreached($sid) {
+  $ordinal = [StringComparison]::Ordinal
+  ($UNREACHED -contains $sid) -or $sid.Value.StartsWith('S-1-15-2-', $ordinal) -or $sid.Value.StartsWith('S-1-15-3-', $ordinal)
+}
+# Whether the path passes an allow down to anyone the sandbox user may be (Unreached).
 function PassesAllowDown($acl) {
   foreach ($ace in $acl) {
     if (([int]$ace.AceFlags -band $INHERITS) -eq 0) { continue }
     $qualified = $ace -is [Security.AccessControl.QualifiedAce]
     if ($qualified -and $ace.AceQualifier -ne [Security.AccessControl.AceQualifier]::AccessAllowed) { continue }
-    if ($qualified -and $UNREACHED -contains $ace.SecurityIdentifier) { continue }
+    if ($qualified -and (Unreached $ace.SecurityIdentifier)) { continue }
     return $true
   }
   return $false
 }
-# Whether nothing under the path is open to anyone the sandbox user may be: every entry is owned
-# by and allows only SYSTEM, the Administrators or the person running Genex, whatever it inherited
-# (a folder moved in keeps what it inherited elsewhere until a walk) and whether its DACL is
-# protected or not. Reading each entry's owner and DACL opens it for READ_CONTROL alone, and most
-# entries share one descriptor, judged once: Chrome's 15,000-entry profile took 1.5 s, its walk
-# 17 s. A link is checked, never followed; an entry that cannot be read, or anything else unsure,
-# answers no. Inline on purpose: a PowerShell function call per entry more than doubled the time.
+# Whether a security descriptor opens nothing to the sandbox user: owned by SYSTEM, the
+# Administrators or the person running Genex, and every allow in it Unreached. Anything else,
+# no DACL or an entry of a kind not judged here included, answers no.
+function OpensNothing($sd) {
+  if ($null -eq $sd.DiscretionaryAcl -or $UNREACHED -notcontains $sd.Owner) { return $false }
+  foreach ($ace in $sd.DiscretionaryAcl) {
+    if ($ace -isnot [Security.AccessControl.QualifiedAce]) { return $false }
+    $allow = $ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed
+    if ($allow -and -not (Unreached $ace.SecurityIdentifier)) { return $false }
+  }
+  return $true
+}
+# Whether nothing under the path is open to anyone the sandbox user may be: every entry
+# OpensNothing, whatever it inherited (a folder moved in keeps what it inherited elsewhere until a
+# walk) and whether its DACL is protected or not. Reading each entry's owner and DACL opens it for
+# READ_CONTROL alone, and most entries share one descriptor, judged once: Chrome's 15,000-entry
+# profile took 1.5 s, its walk 17 s. A link is checked, never followed; an entry that cannot be
+# read, or anything else unsure, answers no. Inline on purpose, but for the judging of a
+# descriptor not seen yet: a PowerShell function call per entry more than doubled the time.
 function ClosedBelow($dir) {
   $folders = New-Object Collections.Generic.Stack[string]
   $folders.Push($dir)
@@ -263,13 +289,7 @@ function ClosedBelow($dir) {
       if (-not $api::GetFileSecurityW($item.FullName, $OWNER_AND_DACL, $SCAN_BUFFER, $SCAN_BUFFER.Length, [ref]$needed)) { return $false }
       $descriptor = [Convert]::ToBase64String($SCAN_BUFFER, 0, $needed)
       if (-not $judged.Contains($descriptor)) {
-        $sd = New-Object Security.AccessControl.RawSecurityDescriptor($SCAN_BUFFER, 0)
-        if ($null -eq $sd.DiscretionaryAcl -or $UNREACHED -notcontains $sd.Owner) { return $false }
-        foreach ($ace in $sd.DiscretionaryAcl) {
-          if ($ace -isnot [Security.AccessControl.QualifiedAce]) { return $false }
-          $allow = $ace.AceQualifier -eq [Security.AccessControl.AceQualifier]::AccessAllowed
-          if ($allow -and $UNREACHED -notcontains $ace.SecurityIdentifier) { return $false }
-        }
+        if (-not (OpensNothing (New-Object Security.AccessControl.RawSecurityDescriptor($SCAN_BUFFER, 0)))) { return $false }
         [void]$judged.Add($descriptor)
       }
       $folder = ($item.Attributes -band [IO.FileAttributes]'Directory, ReparsePoint') -eq [IO.FileAttributes]::Directory
@@ -278,13 +298,34 @@ function ClosedBelow($dir) {
   }
   return $true
 }
+# Whether the sandbox user can open nothing at the path or under it: the path's own owner and
+# entries OpensNothing, and everything under it is ClosedBelow (already known when this edit's
+# walk could wait).
+function ClosedAt($dir) {
+  $needed = 0
+  if (-not $api::GetFileSecurityW($dir, $OWNER_AND_DACL, $SCAN_BUFFER, $SCAN_BUFFER.Length, [ref]$needed)) { return $false }
+  if (-not (OpensNothing (New-Object Security.AccessControl.RawSecurityDescriptor($SCAN_BUFFER, 0)))) { return $false }
+  if ($script:closedBelow) { return $true }
+  try { return ClosedBelow $dir } catch { return $false }
+}
+# Whether a refused edit was not needed: Windows refused a deny with ERROR_ACCESS_DENIED (the
+# person may not change that path's entries, as security software or another owner can leave a
+# browser profile), and the sandbox user can open nothing at or under the path
+# anyway (ClosedAt). The deny stays wanted, so every later start tries it again and checks again.
+function Unneeded($edit, $refusal) {
+  $deny = ($edit.op -eq '${FolderAceOp.Own}') -and $edit.deny -and -not $edit.grant
+  $accessDenied = ($refusal -is [ComponentModel.Win32Exception]) -and $refusal.NativeErrorCode -eq $ACCESS_DENIED
+  if (-not ($deny -and $accessDenied)) { return $false }
+  try { return ClosedAt $edit.dir } catch { return $false }
+}
 # Whether the walk under the path can wait: the path passes no allow down to anyone the sandbox
 # user may be, before or after the edit, and nothing under it is open to them either
 # (ClosedBelow). The sandbox user can then open nothing under the path with or without the
 # walk, so the path alone is written now, which everything made in it later inherits.
 function WalkCanWait($dir, $before, $acl) {
   if ($before -or (PassesAllowDown $acl)) { return $false }
-  try { return ClosedBelow $dir } catch { return $false }
+  try { $script:closedBelow = ClosedBelow $dir } catch { $script:closedBelow = $false }
+  return $script:closedBelow
 }
 # The SID's denies (and, with allows set, its passed-down allows) made exactly the edit's: denies
 # first, then the allow after every explicit deny (the canonical order); the read-attributes
@@ -359,7 +400,7 @@ function Answer($json) {
 # A deny for the running user, or a group it is in, would lock the person out of their own files.
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $held = @($identity.User) + @($identity.Groups)
-# SYSTEM, the Administrators and the person running Genex: no allow of theirs reaches the sandbox user.
+# SYSTEM, the Administrators and the person running Genex: no allow of theirs reaches the sandbox user (Unreached).
 $UNREACHED = @((New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'), (New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'), $identity.User)
 foreach ($edit in @($request)) {
   if ($edit.op -eq '${FolderAceOp.Own}' -and ($held -contains (New-Object Security.Principal.SecurityIdentifier ([string]$edit.sid)))) {
@@ -370,12 +411,17 @@ foreach ($edit in @($request)) {
 $outcomes = foreach ($edit in @($request)) {
   $watch = [Diagnostics.Stopwatch]::StartNew()
   $script:deferred = $false
+  $script:closedBelow = $false
   try {
     Edit $edit
     # How long Windows took over an own edit, which may pass entries down a large folder.
     if ($script:deferred) { @{ ok = $true; ms = $watch.ElapsedMilliseconds; deferred = $true } }
     elseif ($edit.op -eq '${FolderAceOp.Own}') { @{ ok = $true; ms = $watch.ElapsedMilliseconds } } else { @{ ok = $true } }
-  } catch { @{ ok = $false; error = $_.Exception.Message } }
+  } catch {
+    $refusal = $_.Exception
+    if (Unneeded $edit $refusal) { @{ ok = $true; ms = $watch.ElapsedMilliseconds; refused = $refusal.Message } }
+    else { @{ ok = $false; error = $refusal.Message } }
+  }
 }
 Answer (ConvertTo-Json -InputObject @($outcomes) -Compress)
 `;
@@ -394,18 +440,20 @@ export function folderAceCommand(
   const loader = Buffer.from(SCRIPT_LOADER, "utf16le").toString("base64");
   const script = Buffer.from(FOLDER_ACE_SCRIPT, "utf8").toString("base64");
   const payload = Buffer.from(JSON.stringify(edits), "utf8").toString("base64");
+  const variables: NodeJS.ProcessEnv = { ...windowsPowerShellEnv(env), [SCRIPT_ENV]: script, [EDITS_ENV]: payload };
   return {
     file: windowsPowerShell(env),
     args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", loader],
-    env: { ...env, [SCRIPT_ENV]: script, [EDITS_ENV]: payload },
+    env: variables,
   };
 }
 
-/** An edit the script did: how long Windows took, and whether it left its walk for later. */
+/** An edit the script did: how long Windows took, whether it left its walk for later, and a refusal it did without. */
 function doneOutcome(answer: object): FolderAceOutcome {
   const ms = "ms" in answer && typeof answer.ms === "number" ? { ms: answer.ms } : {};
   const deferred = "deferred" in answer && answer.deferred === true ? { deferred: true as const } : {};
-  return { ok: true, ...ms, ...deferred };
+  const refused = "refused" in answer && typeof answer.refused === "string" ? { refused: answer.refused } : {};
+  return { ok: true, ...ms, ...deferred, ...refused };
 }
 
 /** The script's answer, when it is one outcome per edit; anything else is null. */

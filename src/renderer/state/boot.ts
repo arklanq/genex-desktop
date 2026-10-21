@@ -8,7 +8,9 @@
  *
  * A Windows window opens before the core: it says which step the start is on, asking again until
  * the start ends, and main opens the studio in a window of its own. A studio whose harness would
- * not start stays on its failure, with Try again, a report and Quit.
+ * not start stays on its failure, with Try again, a report and Quit. A launch that moves Genex's
+ * data shows how far the move is, asking again until main starts Genex anew; one whose data
+ * folder is not there names it, with Try again and Quit.
  *
  * Until the studio is up, the window also asks main whether a new version of the app downloaded
  * meanwhile (`watchUpdate`), so a start that fails or waits on Set up offers the relaunch into a
@@ -25,6 +27,7 @@ import {
   type StartStep,
   StudioPlatform,
 } from "../../shared/boot.ts";
+import type { DataMoveProgress } from "../../shared/data-folder.ts";
 import { type ReadyUpdate, UpdateAction } from "../../shared/app-update.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
@@ -47,6 +50,8 @@ export const BootView = {
   Studio: "studio",
   Starting: "starting",
   Failed: "failed",
+  Moving: "moving",
+  DataMissing: "data-missing",
 } as const;
 export type BootView = (typeof BootView)[keyof typeof BootView];
 
@@ -76,6 +81,10 @@ export interface BootStoreState {
   error: string | null;
   /** The report of the last failed Set up. */
   report: SetupReport;
+  /** How far a move of Genex's data is, while the phase is Moving. */
+  move: DataMoveProgress | null;
+  /** The data folder that is not there, while the phase is DataMissing. */
+  dataFolder: string | null;
   /** A new version of the app main downloaded (or, on Linux, found) while the studio is not up. */
   update: ReadyUpdate | null;
 }
@@ -90,6 +99,8 @@ export const initialBoot = (): BootStoreState => ({
   setupCancelled: false,
   error: null,
   report: SetupReport.Idle,
+  move: null,
+  dataFolder: null,
   update: null,
 });
 
@@ -104,8 +115,15 @@ export function bootAnswered(state: BootStoreState, boot: BootState): BootStoreS
     retrying: false,
     settingUp: false,
     setupCancelled: false,
-    error: boot.phase === BootPhase.Failed ? (boot.failure ?? null) : null,
+    error: showsError(boot) ? (boot.failure ?? null) : null,
+    move: boot.move ?? null,
+    dataFolder: boot.dataFolder ?? null,
   };
+}
+
+/** A phase whose screen shows why the last try failed: a failed start, a missing data folder, a stopped move. */
+function showsError(boot: BootState): boolean {
+  return boot.phase === BootPhase.Failed || boot.phase === BootPhase.DataMissing || boot.phase === BootPhase.Moving;
 }
 
 export function retryStarted(state: BootStoreState): BootStoreState {
@@ -151,6 +169,8 @@ export function bootView(state: BootStoreState): BootView {
   if (state.phase === BootPhase.SandboxSetup) return BootView.SandboxSetup;
   if (state.phase === BootPhase.Starting) return BootView.Starting;
   if (state.phase === BootPhase.Failed) return BootView.Failed;
+  if (state.phase === BootPhase.Moving) return BootView.Moving;
+  if (state.phase === BootPhase.DataMissing) return BootView.DataMissing;
   return BootView.Loading;
 }
 
@@ -184,6 +204,12 @@ export interface BootOptions {
   onReady(): void;
   /** Wait between questions while the core starts; a timer unless a test holds the clock. */
   wait?: (ms: number) => Promise<void>;
+}
+
+/** A start or a move main is working through, which the window follows by asking again; a stopped move is not. */
+function isUnderWay(boot: BootState): boolean {
+  if (boot.phase === BootPhase.Moving) return boot.failure === undefined;
+  return boot.phase === BootPhase.Starting;
 }
 
 /** The window's own clock: run `run` after `ms`. */
@@ -248,7 +274,7 @@ export function createBoot(
   // own, which replaces this one, so this window keeps saying it is starting and starts nothing.
   const followStart = async (first: BootState): Promise<BootState | null> => {
     let boot = first;
-    while (boot.phase === BootPhase.Starting) {
+    while (isUnderWay(boot)) {
       await wait(START_POLL_MS);
       boot = await read();
       if (boot.phase === BootPhase.Ready) return null;

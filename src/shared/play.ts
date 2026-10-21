@@ -218,6 +218,8 @@ export const PlayControl = {
   Maker: "maker",
   /** The game's native app: install it, or play it in its own window (the viewer gives way). */
   NativeApp: "native-app",
+  /** Full screen: the game's page takes the whole window, as its own full screen does; Esc brings the bar back. */
+  FullScreen: "full-screen",
 } as const;
 export type PlayControl = (typeof PlayControl)[keyof typeof PlayControl];
 
