@@ -10,6 +10,7 @@ import type { JSX } from "react";
 import { useEffect, useState } from "react";
 import { sizeWords } from "../../shared/byte-size.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { intlLocale, t } from "../../shared/i18n.ts";
 import { type PlayGameDetail, PlayNote, playPageUrl, PlayShelf } from "../../shared/play.ts";
 import {
   InstallFailure,
@@ -23,10 +24,11 @@ import { usePlay, usePlayWeb } from "../state/hooks.ts";
 import { FeedStatus } from "./play-model.ts";
 import { PlayPage, type PlayView } from "../state/play.ts";
 import { studio } from "../state/studio.ts";
+import { richText } from "../rich-text.tsx";
 import { ToastTone } from "../state/toasts.ts";
 import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
-import { NATIVE_WORDS, PLAY_CARD_MENU_WORDS, PLAY_WORDS } from "../words.ts";
+import { NATIVE_WORDS, nativeHereWords, notHereWords, PLAY_CARD_MENU_WORDS, PLAY_WORDS } from "../words.ts";
 import { formatCount } from "./play-model.ts";
 import { GamePhase, type GameStanding, gameStanding, installPercent, minutesSince } from "./native-model.ts";
 import { PlayPageFrame } from "./PlayPageFrame.tsx";
@@ -36,7 +38,7 @@ const WORDS = NATIVE_WORDS;
 /** How often the minutes played are counted again. */
 const PLAYED_TICK_MS = 30 * SECOND_MS;
 /** "2 days ago": how long ago a game changed, in the reader's own words. */
-const AGO = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+const AGO = new Intl.RelativeTimeFormat(intlLocale(), { numeric: "auto" });
 const AGO_STEPS: Array<[Intl.RelativeTimeFormatUnit, number]> = [
   ["year", 365 * 24 * 60],
   ["month", 30 * 24 * 60],
@@ -145,10 +147,11 @@ function Playing({ game, standing }: { game: PlayGameDetail; standing: GameStand
 function Failed({ game, standing }: { game: PlayGameDetail; standing: GameStanding }): JSX.Element {
   const failure = standing.failure;
   const needed = (standing.build?.sizeBytes ?? 0) + (standing.build?.installedBytes ?? 0);
+  const here = nativeHereWords(standing.here);
   const line = (() => {
-    if (!failure) return WORDS.installFailed[InstallFailure.Failed]();
-    if ("launch" in failure) return WORDS.launchFailed[failure.launch];
-    return WORDS.installFailed[failure.install](sizeWords(needed));
+    if (!failure) return WORDS.installFailed[InstallFailure.Failed]("", here);
+    if ("launch" in failure) return WORDS.launchFailed[failure.launch](here);
+    return WORDS.installFailed[failure.install](sizeWords(needed), here);
   })();
   const retry = () => {
     if (failure && "launch" in failure && standing.installed) void studio().play.launch(game.slug);
@@ -166,15 +169,12 @@ function Failed({ game, standing }: { game: PlayGameDetail; standing: GameStandi
   );
 }
 
-/** No build for this computer: where it plays instead. */
-function Elsewhere({ game }: { game: PlayGameDetail }): JSX.Element {
-  const platforms = platformsOf(game);
-  const mac = platforms.includes(NativePlatform.Mac);
-  const title = mac ? WORDS.notForThisMac : WORDS.onlyOnTitle(platformNames(platforms));
-  const minOs = game.native?.builds.find((build) => build.platform === NativePlatform.Mac)?.minOs;
-  const line = mac && minOs ? WORDS.needsMacOs(minOs) : WORDS.noVersionFor(WORDS.platform.mac);
+/** No build installs on this computer: in place of Install, why not, in one title and one line. */
+function Elsewhere({ game, standing }: { game: PlayGameDetail; standing: GameStanding }): JSX.Element | null {
+  if (!standing.notHere) return null;
+  const { title, line } = notHereWords(standing.notHere, platformsOf(game), standing.here);
   return (
-    <div className="game-elsewhere" data-game-note="elsewhere">
+    <div className="game-elsewhere" data-game-note="elsewhere" role="status">
       <span className="game-elsewhere-title">{title}</span>
       <span className="game-elsewhere-line">{line}</span>
     </div>
@@ -205,7 +205,7 @@ function PrimaryBlock({
     case GamePhase.Failed:
       return <Failed game={game} standing={standing} />;
     case GamePhase.Elsewhere:
-      return <Elsewhere game={game} />;
+      return <Elsewhere game={game} standing={standing} />;
     case GamePhase.Ready:
       return (
         <>
@@ -221,7 +221,7 @@ function PrimaryBlock({
           </Button>
           <p className="game-primary-note" data-game-note="ready">
             <Icon name="check" size={13} className="game-check" />
-            {WORDS.readyHere(sizeWords(installed?.bytes ?? 0))}
+            {nativeHereWords(standing.here).readyHere(sizeWords(installed?.bytes ?? 0))}
           </p>
         </>
       );
@@ -314,11 +314,24 @@ function Pills({ game }: { game: PlayGameDetail }): JSX.Element {
   );
 }
 
-/** One tile: its mark and one line, never a second. */
-function Tile({ mark, text, hook }: { mark: JSX.Element; text: string; hook: string }): JSX.Element {
+/** One tile: its mark and one line, never a second; `label` names a mark that says more than the line. */
+function Tile({
+  mark,
+  text,
+  hook,
+  label,
+}: {
+  mark: JSX.Element;
+  text: string;
+  hook: string;
+  label?: string;
+}): JSX.Element {
+  const named = label ? { role: "img", "aria-label": label } : {};
   return (
-    <div className="game-tile" data-game-tile={hook}>
-      <span className="game-tile-mark">{mark}</span>
+    <div className="game-tile" data-game-tile={hook} title={label}>
+      <span className="game-tile-mark" {...named}>
+        {mark}
+      </span>
       <span className="game-tile-text">{text}</span>
     </div>
   );
@@ -329,13 +342,15 @@ function Tiles({ game, standing }: { game: PlayGameDetail; standing: GameStandin
   const platforms = platformsOf(game);
   const bytes = standing.installed?.bytes ?? standing.build?.installedBytes ?? 0;
   const engine = game.native?.engine ?? null;
-  const armOnly = standing.build?.arch === NativeArch.Arm64 ? ` · ${WORDS.appleSiliconOnly}` : "";
+  const appleSilicon = standing.build?.platform === NativePlatform.Mac && standing.build.arch === NativeArch.Arm64;
+  const armOnly = appleSilicon ? ` · ${WORDS.appleSiliconOnly}` : "";
   return (
     <div className="game-tiles">
       <Tile
         hook="platforms"
         mark={<PlatformMarks platforms={platforms} />}
-        text={`${platformNames(platforms)}${armOnly}`}
+        text={WORDS.platformsTile}
+        label={`${platformNames(platforms)}${armOnly}`}
       />
       {bytes > 0 && <Tile hook="size" mark={<Icon name="drive" />} text={sizeWords(bytes)} />}
       <Tile
@@ -366,7 +381,7 @@ function Media({ game }: { game: PlayGameDetail }): JSX.Element {
               type="button"
               className="game-shot"
               aria-pressed={at === picked}
-              aria-label={`${game.title} ${at + 1}`}
+              aria-label={t("{game} {number}", { game: game.title, number: at + 1 })}
               onClick={() => setPicked(at)}
             >
               <img src={shot} alt="" draggable={false} />
@@ -384,6 +399,19 @@ function Media({ game }: { game: PlayGameDetail }): JSX.Element {
   );
 }
 
+/** "By" and the maker's name; with their account known, the name opens their profile. */
+function MadeBy({ name, authorId }: { name: string; authorId: string | null }): JSX.Element {
+  const maker = authorId ? (
+    <button type="button" className="game-by-link" onClick={() => studio().play.showProfile(authorId)}>
+      {name}
+    </button>
+  ) : (
+    name
+  );
+  // The name is someone else's words: the tag draws it from the game, never from the parsed sentence.
+  return <p className="game-by">{richText(t("By <maker>{name}</maker>"), { maker: () => maker })}</p>;
+}
+
 /** The right column: title, maker, facts, the primary block, the pills and the tiles. */
 function Side({ game }: { game: PlayGameDetail }): JSX.Element {
   const installs = usePlay((s) => s.installs);
@@ -399,24 +427,12 @@ function Side({ game }: { game: PlayGameDetail }): JSX.Element {
     }
     if (standing.phase === GamePhase.Failed) setPlayWhenReady(false);
   }, [playWhenReady, standing.phase, game.slug]);
-  const authorId = game.author.id;
   const stats = WORDS.stats(formatCount(game.plays), formatCount(game.likes), agoWords(game.updatedAt, Date.now()));
   return (
     <div className="game-side" data-game-phase={standing.phase}>
       <div className="game-head">
         <h1 className="game-title">{game.title}</h1>
-        {game.author.name && (
-          <p className="game-by">
-            {WORDS.by}{" "}
-            {authorId ? (
-              <button type="button" className="game-by-link" onClick={() => studio().play.showProfile(authorId)}>
-                {game.author.name}
-              </button>
-            ) : (
-              game.author.name
-            )}
-          </p>
-        )}
+        {game.author.name && <MadeBy name={game.author.name} authorId={game.author.id} />}
         <p className="game-stats">{stats}</p>
       </div>
       <div className="game-primary-block">

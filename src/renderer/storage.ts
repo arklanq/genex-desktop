@@ -25,6 +25,8 @@ export const STORAGE_KEYS = {
   /** The Live game's sound switch (`panels/stage/game-sound.ts` owns the values). */
   gameSound: "studio.gameSound",
   appearance: "studio.appearance.v1",
+  /** The app's language: a locale or "system" (`renderer/language.ts` owns the values). */
+  language: "studio.language",
   /** Home's background picture and effect (`home-backdrop/settings.ts` owns the format). */
   homeBackdrop: "studio.homeBackdrop.v1",
   /** Live backgrounds a model made for home (`home-backdrop/made-shaders.ts` owns the format). */

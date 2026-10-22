@@ -11,6 +11,7 @@
  * the folder being moved. Developer, test and installer launches never move or wait for the data:
  * they only follow a finished move, so they still know where the normal profile's data is.
  */
+import { t } from "../shared/i18n.ts";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { DATA_FOLDER_PROBLEMS, type DataFolderProblem, type DataMoveFailed } from "../shared/data-folder.ts";
@@ -222,8 +223,8 @@ export interface DataPathsHost {
 
 /** What a launch that cannot take its data says before it quits. */
 const MESSAGE = {
-  taken: "Genex is already open, or its data folder is locked.",
-  ok: "OK",
+  taken: () => t("Genex is already open, or its data folder is locked."),
+  ok: () => t("OK"),
 } as const;
 
 /** What quitting a launch whose data another Genex holds needs: Electron's readiness, a message box, the exit. */
@@ -241,7 +242,7 @@ export interface TakenLaunchHost {
  */
 export async function quitTakenLaunch(host: TakenLaunchHost): Promise<void> {
   await host.ready();
-  await host.tell(MESSAGE.taken, MESSAGE.ok);
+  await host.tell(MESSAGE.taken(), MESSAGE.ok());
   host.exit(0);
 }
 

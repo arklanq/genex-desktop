@@ -4,13 +4,14 @@ import { Button } from "../ui/Button.tsx";
 import { Icon } from "../ui/icons.tsx";
 import { problemWords } from "../words.ts";
 import { pathParts } from "../../shared/path-label.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** The section's own words. */
 const WORDS = {
-  title: "Default game folder",
-  hint: "New games are created here. Games you already have stay where they are.",
-  change: "Change…",
-  choosing: "Choosing…",
+  title: t("Default game folder"),
+  hint: t("New games are created here. Games you already have stay where they are."),
+  change: t("Change…"),
+  choosing: t("Choosing…"),
 } as const;
 
 export function GamesSection({

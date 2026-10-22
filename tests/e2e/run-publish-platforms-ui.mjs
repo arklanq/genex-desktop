@@ -1,6 +1,6 @@
 /**
  * The Publish dialog's platform rows, in a disposable Electron profile with a fake `window.studio`:
- * a game made in an engine lists the web, Mac and Windows above the presses, each detail on one
+ * a game made in an engine lists the web, Mac, Windows and Linux above the presses, each detail on one
  * line; a built Mac app says "Coming soon" and the line under the rows says its players get the
  * web version; Make with agent sends the ask to the game's chat and the row says it was asked; a
  * build older than the game's last change says so; once the CLI sends apps, the line says Publish
@@ -60,16 +60,17 @@ app.whenReady().then(async()=>{
  try {
   await wc.loadFile(${JSON.stringify(path.join(out, "publish-platforms.html"))});
   for (const theme of ['dark','light']) {
-   // A game made in Unity with a Mac app built: three rows above Publish, each detail on one line.
+   // A game made in Unity with a Mac app built: four rows above Publish, each detail on one line.
    const engine=await step(theme+'Engine','window.platformsRig.open({theme:"'+theme+'"})');
    assert.equal(engine.listed,true);
    assert.deepEqual(engine.rows.map((row)=>[row.target,row.name,row.detail,row.end]),[
     ['web','Web','Plays right away',null],
     ['mac','Mac app','Apple silicon and Intel · built 5 min ago','Coming soon'],
     ['windows','Windows app','Not made yet','Make with agent'],
+    ['linux','Linux app','Not made yet','Make with agent'],
    ]);
    assert.equal(engine.rows[1].size,'1.4 GB');
-   assert.equal(engine.reach,'Mac and Windows players get the web version.');
+   assert.equal(engine.reach,'Mac, Windows and Linux players get the web version.');
    assert.deepEqual(engine.order,['platforms','primary'],'the rows sit above the presses');
    assert.equal(engine.oneLine,true,'each detail is one line');
    assert.equal(engine.overflow,false);
@@ -81,6 +82,9 @@ app.whenReady().then(async()=>{
   assert.deepEqual(made.composed,[{project:'dust-runners',text:'Make a Windows app of Dust Runners so I can publish it for Windows players.',send:true}]);
   assert.equal(made.rows[2].end,'Asked the agent');
   report.asked=await capture('light-asked');
+  const madeLinux=await step('makeLinux','window.platformsRig.make("linux")');
+  assert.deepEqual(madeLinux.composed.at(-1),{project:'dust-runners',text:'Make a Linux app of Dust Runners so I can publish it for Linux players.',send:true});
+  assert.equal(madeLinux.rows[3].end,'Asked the agent');
   // A Mac app built before the game's last change says so.
   const stale=await step('stale','window.platformsRig.open({scene:"stale"})');
   assert.equal(stale.rows[1].detail,'Built before your last change');
@@ -89,13 +93,15 @@ app.whenReady().then(async()=>{
   report.stale=await capture('dark-stale');
   // Once the Genex CLI sends apps: Publish says it sends the Mac app, then how the send went.
   const apps=await step('apps','window.platformsRig.open({scene:"apps"})');
-  assert.equal(apps.reach,'Publish also sends the Mac app. Windows players get the web version.');
+  assert.equal(apps.reach,'Publish also sends the Mac and Linux apps. Windows players get the web version.');
   assert.equal(apps.rows[1].end,null,'nothing at the end before Publish');
+  assert.deepEqual([apps.rows[3].detail,apps.rows[3].size,apps.rows[3].end],['64-bit PCs · built 5 min ago','700 MB',null]);
   report.apps=await capture('dark-apps');
   const sending=await step('appsSending','window.platformsRig.open({scene:"appsSending"})');
   assert.equal(sending.rows[1].end,'Sending…');
   const sent=await step('appsSent','window.platformsRig.open({scene:"appsSent"})');
   assert.equal(sent.rows[1].end,'On Genex');
+  assert.equal(sent.rows[3].end,'On Genex','the Linux app too');
   report.appsSent=await capture('dark-apps-sent');
   const refused=await step('appsFailed','window.platformsRig.open({scene:"appsFailed"})');
   assert.equal(refused.rows[1].end,'Not sent');
@@ -107,7 +113,7 @@ app.whenReady().then(async()=>{
   assert.equal(only.primary,'Publish Mac app');
   assert.equal(only.reach,'Only Mac players can play it.');
   assert.deepEqual([only.rows[0].detail,only.rows[0].end],['Not made yet','Make with agent'],'the agent can make its web version');
-  assert.equal(only.hint,'People playing in the Genex app can install it.');
+  assert.equal(only.hint,null,'the line above the press says who plays it: no second line under it');
   report.appsOnly=await capture('dark-apps-only');
   const pressed=await step('appsOnlyPress','window.platformsRig.press()');
   assert.deepEqual(pressed.published,[{via:'apps',title:'Dust Runners'}],'the apps go, never a web copy');
@@ -118,8 +124,8 @@ app.whenReady().then(async()=>{
   const unity=await step('unityNoApp','window.platformsRig.open({scene:"unityNoApp"})');
   assert.equal(unity.listed,true);
   assert.equal(unity.primaryDisabled,true);
-  assert.equal(unity.reach,'Make a web version or a Mac or Windows app first, then publish it here.');
-  assert.deepEqual(unity.rows.map((row)=>row.end),['Make with agent','Make with agent','Make with agent']);
+  assert.equal(unity.reach,'Make a web version or a Mac, Windows or Linux app first, then publish it here.');
+  assert.deepEqual(unity.rows.map((row)=>row.end),['Make with agent','Make with agent','Make with agent','Make with agent']);
   report.unityNoApp=await capture('dark-unity-no-app');
   // Its web row asks the agent for a web version, as the app rows ask for apps.
   const webAsk=await step('makeWeb','window.platformsRig.make("web")');
@@ -132,7 +138,7 @@ app.whenReady().then(async()=>{
   const soon=await step('unitySoon','window.platformsRig.open({scene:"unitySoon"})');
   assert.equal(soon.primaryDisabled,true);
   assert.equal(soon.rows[1].end,'Coming soon');
-  assert.equal(soon.reach,'Publishing Mac and Windows apps comes with the next Genex update.');
+  assert.equal(soon.reach,'Publishing Mac, Windows and Linux apps comes with the next Genex update.');
   // An app Studio can send, through a Genex plugin from before apps: the line says to update it.
   const oldPlugin=await step('unityOldPlugin','window.platformsRig.open({scene:"unityOldPlugin"})');
   assert.equal(oldPlugin.primaryDisabled,true);
@@ -142,7 +148,7 @@ app.whenReady().then(async()=>{
   assert.equal(plain.listed,false);
   report.web=await capture('dark-web');
   assert.deepEqual(report.errors,[]);
-  console.log('PASS Publish platforms: engine game lists web, Mac and Windows; Make with agent sends the ask and keeps the dialog; apps go with Publish and say how they went; a game with only an app publishes it; a Unity game with nothing to send waits and says why, and asks the agent for a web version; an Unreal game says it has none; stale says so; web game unchanged');
+  console.log('PASS Publish platforms: engine game lists web, Mac, Windows and Linux; Make with agent sends the ask and keeps the dialog; apps go with Publish and say how they went; a game with only an app publishes it; a Unity game with nothing to send waits and says why, and asks the agent for a web version; an Unreal game says it has none; stale says so; web game unchanged');
  } catch(error) { report.failure=error.stack; console.error(error); await capture('failure').catch(()=>{}); }
  fs.writeFileSync(path.join(evidence,'report.json'),JSON.stringify(report,null,2));
  app.exit(report.failure?1:0);

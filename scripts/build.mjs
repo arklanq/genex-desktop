@@ -184,7 +184,11 @@ async function rendererContexts() {
       format: "esm",
       jsx: "automatic",
       entryPoints: [path.join(root, "src/renderer/play-bar.tsx")],
-      outfile: path.join(dist, "renderer/play-bar.js"),
+      // The language loads first and the bar after it, each a chunk beside the studio's.
+      outdir: path.join(dist, "renderer"),
+      entryNames: "play-bar",
+      chunkNames: "chunks/bar-[name]-[hash]",
+      splitting: true,
       loader: { ".css": "css" },
     }),
     await esbuild.context({

@@ -1,11 +1,11 @@
 /**
- * A publish's apps: the Mac and Windows builds in the game folder, sent with `genex native publish`
+ * A publish's apps: the Mac, Windows and Linux builds in the game folder, sent with `genex native publish`
  * once the web build is public. Each goes on its own, and one that fails is said on its row: it never
  * fails the publish, whose web build is already live. Studio's dialog names the builds by their place
  * in the game folder; that folder is written by agents, so each is resolved here by its real path and
  * sent only from inside the folder.
  */
-import { lstat, realpath } from "node:fs/promises";
+import { lstat, open, realpath } from "node:fs/promises";
 import path from "node:path";
 // Read at build time: the packaged app ships the CLI only inside the Genex plugin's payload, so a
 // look-up at run time from the app's own bundle finds nothing and no app would ever be sent.
@@ -16,11 +16,12 @@ import {
   type GenexNativeSent,
   GenexListingState,
 } from "../../shared/genex.ts";
+import { linuxBuildOf } from "../../shared/publish-platforms.ts";
 
 /** The first Genex CLI with `genex native`: an older pin sends no app. */
 const NATIVE_CLI = [1, 36, 11] as const;
-/** The most apps one publish sends: a Mac app and a Windows program, each at most twice over. */
-const NATIVE_UPLOADS_MAX = 4;
+/** The most apps one publish sends: a Mac app, a Windows program and a Linux one, each at most twice over. */
+const NATIVE_UPLOADS_MAX = 6;
 /** What a failure keeps of the CLI's words. */
 const FAILURE_CHARS = 400;
 
@@ -49,11 +50,26 @@ export function hasNativeCommand(version: string): boolean {
 /** Whether the CLI Studio ships, the version this build pins, can send apps. */
 export const pinnedCliSendsApps = (): boolean => hasNativeCommand(cliPackage.version);
 
-/** One app to send: what the CLI is handed (a `.app`, or a Windows program's folder) and its platform. */
+/**
+ * One app to send: what the CLI is handed (a `.app`, or a Windows or Linux program's folder), its
+ * platform and, for Linux, the program inside that folder (the CLI cannot tell it from the files).
+ */
 export interface NativeUpload {
   target: string;
-  platform: "mac" | "windows";
+  platform: "mac" | "windows" | "linux";
+  entry?: string;
 }
+
+/** The CLI's words for one upload: `genex native publish <target>`, and a Linux build's platform and program. */
+export const nativePublishArgs = (upload: NativeUpload): string[] => [
+  "native",
+  "publish",
+  upload.target,
+  ...(upload.platform === "linux" && upload.entry ? ["--platform", "linux", "--entry", upload.entry] : []),
+];
+
+/** A 64-bit ELF program's first bytes. */
+const ELF_MAGIC = "\x7fELF";
 
 /** Whether `entry` is a plain path inside a folder: relative, no `..`, no empty part. */
 const isPlainEntry = (entry: string): boolean =>
@@ -70,13 +86,34 @@ async function uploadOf(base: string, entry: string): Promise<NativeUpload | nul
   // A Windows program is sent with its folder: the game's data sits beside it.
   if (lower.endsWith(".exe") && info?.isFile() && path.dirname(real) !== base)
     return { target: path.dirname(real), platform: "windows" };
+  if (info?.isFile() && (await isElf(real))) return linuxUpload(base, real);
   return null;
+}
+
+/** Whether `file` starts as an ELF program does. */
+async function isElf(file: string): Promise<boolean> {
+  const handle = await open(file, "r").catch(() => null);
+  if (!handle) return false;
+  try {
+    const { buffer, bytesRead } = await handle.read(Buffer.alloc(4), 0, 4, 0);
+    return bytesRead === 4 && buffer.toString("latin1") === ELF_MAGIC;
+  } finally {
+    await handle.close();
+  }
+}
+
+/** A Linux program inside `base` as the CLI takes it: its build's folder, and the program inside that. */
+function linuxUpload(base: string, real: string): NativeUpload | null {
+  const build = linuxBuildOf(path.relative(base, real).split(path.sep).join("/"));
+  if (!build) return null;
+  return { target: path.join(base, ...build.folder.split("/")), platform: "linux", entry: build.entry };
 }
 
 /**
  * The apps among `entries` (the dialog's builds, relative to the game folder `directory`) that are
  * real builds inside it, each once. Anything else is dropped: a link out of the folder, a path with
  * `..`, a file that is not a program, a program at the folder's root (its folder would be the game).
+ * A Linux program is known by its ELF header, and goes with its build's folder (`linuxBuildOf`).
  */
 export async function nativeUploads(directory: string, entries: unknown): Promise<NativeUpload[]> {
   if (!Array.isArray(entries)) return [];
@@ -86,7 +123,8 @@ export async function nativeUploads(directory: string, entries: unknown): Promis
   for (const entry of entries.slice(0, NATIVE_UPLOADS_MAX)) {
     if (typeof entry !== "string") continue;
     const upload = await uploadOf(base, entry);
-    if (upload && !uploads.some((known) => known.target === upload.target)) uploads.push(upload);
+    const known = (sent: NativeUpload) => sent.target === upload?.target && sent.platform === upload.platform;
+    if (upload && !uploads.some(known)) uploads.push(upload);
   }
   return uploads;
 }

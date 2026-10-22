@@ -21,11 +21,17 @@ const ARCH_OF: Readonly<Record<string, NativeHost["arch"]>> = { arm64: NativeArc
 
 /** A system version as Electron reports it: dotted numbers. */
 const OS_VERSION = /^\d+(\.\d+)*$/;
+/** The dotted numbers a Linux kernel release starts with (`6.8.0` of `6.8.0-45-generic`). */
+const KERNEL_VERSION = /^\d+(\.\d+)*/;
+
+/** The system version as the contract spells it: on Linux, the kernel release's dotted numbers. */
+const versionOf = (platform: NativePlatform, osVersion: string): string =>
+  platform === NativePlatform.Linux ? (KERNEL_VERSION.exec(osVersion)?.[0] ?? "") : osVersion;
 
 /**
  * The computer `platform`, `arch` and `osVersion` describe (this one's by default: Electron's
- * `process.getSystemVersion()` is the macOS or Windows version, not the kernel's), or undefined
- * where the contract has no name for it.
+ * `process.getSystemVersion()` is the macOS or Windows version, and on Linux the kernel's release),
+ * or undefined where the contract has no name for it.
  */
 export function thisComputer(
   platform: string = process.platform,
@@ -36,7 +42,8 @@ export function thisComputer(
   const named = PLATFORM_OF[platform];
   const processor = ARCH_OF[arch];
   if (!named || !processor) return undefined;
-  if (!OS_VERSION.test(osVersion)) return undefined;
+  const version = versionOf(named, osVersion);
+  if (!OS_VERSION.test(version)) return undefined;
   const appleSilicon = named === NativePlatform.Mac && processor === NativeArch.Arm64;
-  return { platform: named, arch: processor, osVersion, ...(appleSilicon ? { rosetta: rosetta() } : {}) };
+  return { platform: named, arch: processor, osVersion: version, ...(appleSilicon ? { rosetta: rosetta() } : {}) };
 }

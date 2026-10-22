@@ -24,6 +24,7 @@ import {
   type ChatFileRef,
 } from "../shared/chat-files.ts";
 import { extensionOf, fileKind } from "../shared/game-file.ts";
+import { t } from "../shared/i18n.ts";
 import { credentialHomes } from "../substrate/credential-homes.ts";
 import { isInside } from "../substrate/paths.ts";
 import { hostGitConfig, hostGitEnv } from "../substrate/git-policy.ts";
@@ -32,8 +33,9 @@ const execFileAsync = promisify(execFile);
 
 /** Why a click on a file the chat names opens nothing. */
 const MESSAGE = {
-  gone: (name: string) => `${name || "That file"} isn’t on this computer any more.`,
-  notInBuild: "That file isn’t in the build any more.",
+  gone: (name: string) =>
+    name ? t("{name} isn’t on this computer any more.", { name }) : t("That file isn’t on this computer any more."),
+  notInBuild: () => t("That file isn’t in the build any more."),
 } as const;
 
 /** A build's file list is read in one go; a game's history stays well under this. */
@@ -415,7 +417,7 @@ export class ChatFileResolver {
 
   /** A read-only copy of the build's file, named as the file so its app recognizes it. */
   async #copyOut(scope: ChatFileScope, rel: string, blob: string): Promise<string> {
-    if (!scope.game || !/^[0-9a-f]{40,64}$/i.test(blob)) throw new Error(MESSAGE.notInBuild);
+    if (!scope.game || !/^[0-9a-f]{40,64}$/i.test(blob)) throw new Error(MESSAGE.notInBuild());
     const folder = path.join(scope.copies, blob.slice(0, 16));
     const file = path.join(folder, path.posix.basename(rel));
     if ((await stat(file).catch(() => null))?.isFile()) return file;
@@ -433,7 +435,7 @@ export class ChatFileResolver {
     });
     try {
       await pipeline(child.stdout, createWriteStream(partial));
-      if ((await exited) !== 0) throw new Error(MESSAGE.notInBuild);
+      if ((await exited) !== 0) throw new Error(MESSAGE.notInBuild());
       await chmod(partial, READ_ONLY);
       await rename(partial, file);
     } catch (error) {

@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import { useEffect, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
 import { openBeside } from "../open-beside.ts";
 
@@ -106,12 +107,12 @@ export function MessageImages({
           <button
             key={index}
             type="button"
-            aria-label={`Open ${image.label || "image"}`}
+            aria-label={image.label ? t("Open {name}", { name: image.label }) : t("Open image")}
             title={image.label}
             onClick={() =>
               openBeside({
                 kind: "image",
-                name: image.label || `Image ${index + 1}`,
+                name: image.label || t("Image {number}", { number: index + 1 }),
                 src: imageSrc(image),
               })
             }

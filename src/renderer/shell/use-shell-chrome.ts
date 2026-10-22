@@ -4,6 +4,7 @@
  */
 import type { RefObject } from "react";
 import { useCallback, useEffect, useMemo, useLayoutEffect, useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import type { AppDialogs as Dialogs } from "../panels/AppDialogs.tsx";
 import { chatWidthOf, sidebarToggled } from "../state/layout.ts";
 import type { Studio } from "../state/studio.ts";
@@ -11,12 +12,17 @@ import { OPEN_PLAY_EVENT } from "../play/open-play.ts";
 import { OPEN_PLUGINS_EVENT } from "../ui/ComposerAddMenu.tsx";
 
 const COMPACT = "(max-width: 900px)";
-/** The sidebar toggles' labels. Smoke runners and focus moves find the toggles by them. */
-export const SIDEBAR_TOGGLE = { Show: "Show sidebar", Hide: "Hide sidebar" } as const;
+/** The sidebar toggles' labels. */
+export const SIDEBAR_TOGGLE = { Show: t("Show sidebar"), Hide: t("Hide sidebar") } as const;
+/** What a sidebar toggle does, as its `data-sidebar-toggle`: focus moves find the toggles by it. */
+export const SidebarToggle = { Show: "show", Hide: "hide" } as const;
+export type SidebarToggle = (typeof SidebarToggle)[keyof typeof SidebarToggle];
 
-/** Focus the sidebar toggle with this label, once the toggle it replaced is gone. */
-function focusSidebarToggle(label: string): void {
-  requestAnimationFrame(() => (document.querySelector(`[aria-label="${label}"]`) as HTMLElement | null)?.focus());
+/** Focus the sidebar toggle that does `toggle`, once the toggle it replaced is gone. */
+function focusSidebarToggle(toggle: SidebarToggle): void {
+  requestAnimationFrame(() =>
+    (document.querySelector(`[data-sidebar-toggle="${toggle}"]`) as HTMLElement | null)?.focus(),
+  );
 }
 
 /** Whether the window is narrow (the sidebar is a drawer), and whether that drawer is open. */
@@ -106,13 +112,13 @@ export function useShellChrome(app: Studio, dialogs: Dialogs, sidebarOpen: boole
   const toggleSidebar = useCallback(() => {
     if (compactWindow) setDrawerOpen((open) => !open);
     else app.layout.setState((s) => sidebarToggled(s), true);
-    focusSidebarToggle(sidebarVisible ? SIDEBAR_TOGGLE.Show : SIDEBAR_TOGGLE.Hide);
+    focusSidebarToggle(sidebarVisible ? SidebarToggle.Show : SidebarToggle.Hide);
   }, [app, compactWindow, sidebarVisible, setDrawerOpen]);
   /** Escape in a compact window: close the drawer; false when it was not open. */
   const closeDrawer = useCallback((): boolean => {
     if (!compactWindow || !drawerOpen) return false;
     setDrawerOpen(false);
-    focusSidebarToggle(SIDEBAR_TOGGLE.Show);
+    focusSidebarToggle(SidebarToggle.Show);
     return true;
   }, [compactWindow, drawerOpen, setDrawerOpen]);
   const { pluginsOpen, setupPlugin, openPlugins } = plugins;

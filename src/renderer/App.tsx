@@ -15,6 +15,7 @@
  */
 import type { JSX } from "react";
 import { useEffect, useRef } from "react";
+import { t } from "../shared/i18n.ts";
 import { ColorTweakerHost } from "./appearance/tweaker/ColorTweakerHost.tsx";
 import { Onboarding } from "./onboarding/Onboarding.tsx";
 import { AppDialogs } from "./panels/AppDialogs.tsx";
@@ -93,7 +94,7 @@ export function App(): JSX.Element {
         <button
           type="button"
           className="studio-sidebar-backdrop"
-          aria-label="Close sidebar"
+          aria-label={t("Close sidebar")}
           onClick={chrome.toggleSidebar}
         />
       )}

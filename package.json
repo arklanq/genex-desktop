@@ -1,7 +1,7 @@
 {
   "name": "ai-game-studio",
   "productName": "Genex",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "private": true,
   "license": "MIT",
   "description": "Self-improving AI game studio for macOS on Apple Silicon",
@@ -24,10 +24,11 @@
     "format": "biome format --write .",
     "lint:changed": "node scripts/affected-tests.mjs --lint",
     "format:changed": "node scripts/affected-tests.mjs --format",
-    "check:static": "node scripts/check-node.mjs && npm run --silent verify:context && npm run --silent verify:architecture && node scripts/tsc.ts --noEmit --incremental --tsBuildInfoFile .studio-dev/tsc.tsbuildinfo && node scripts/affected-tests.mjs --check-syntax && node scripts/affected-tests.mjs --lint && node scripts/check-test-style.ts && node scripts/check-vocabulary.ts && node scripts/check-plugin-versions.ts && node scripts/evals/check-isolation.ts",
+    "check:static": "node scripts/check-node.mjs && npm run --silent verify:context && npm run --silent verify:architecture && node scripts/tsc.ts --noEmit --incremental --tsBuildInfoFile .studio-dev/tsc.tsbuildinfo && node scripts/affected-tests.mjs --check-syntax && node scripts/affected-tests.mjs --lint && node scripts/check-test-style.ts && node scripts/check-vocabulary.ts && node scripts/i18n-extract.ts --check && node scripts/check-plugin-versions.ts && node scripts/evals/check-isolation.ts",
     "check:isolation": "node scripts/check-node.mjs && node scripts/evals/check-isolation.ts",
     "check": "npm run --silent check:static && node scripts/affected-tests.mjs --tier L1 --run",
     "deps": "node scripts/worktree-deps.ts",
+    "i18n:extract": "node scripts/i18n-extract.ts",
     "test": "node scripts/test.mjs",
     "test:affected": "node scripts/affected-tests.mjs",
     "test:area": "node scripts/affected-tests.mjs --tier L1 --run --area",
@@ -76,7 +77,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.257",
     "@anthropic-ai/sandbox-runtime": "^0.0.73",
-    "@genex-ai/cli-demo": "1.36.11",
+    "@genex-ai/cli-demo": "1.36.13",
     "@modelcontextprotocol/sdk": "1.30.0",
     "node-pty": "1.1.0",
     "zod": "^4.4.3"

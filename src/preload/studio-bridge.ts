@@ -36,13 +36,18 @@ export interface BridgeFiles {
 const NO_FILES: BridgeFiles = { getPathForFile: () => "" };
 
 /** Calls the preload answers itself, asking main nothing. */
-export const PRELOAD_LOCAL_CALLS = ["pathOfFile"] as const;
+export const PRELOAD_LOCAL_CALLS = ["pathOfFile", "systemLanguages"] as const;
 
 /** A channel whose payload is `undefined` is called with no payload argument. */
 type PayloadArgs<C extends StudioInvokeChannel> =
   StudioInvokePayload<C> extends undefined ? [] : [payload: StudioInvokePayload<C>];
 
-export function createStudioBridge(ipc: BridgeIpc, files: BridgeFiles = NO_FILES): StudioApi {
+/** A bridge built with no languages (a test of its IPC) has System follow Chromium's list. */
+export function createStudioBridge(
+  ipc: BridgeIpc,
+  files: BridgeFiles = NO_FILES,
+  languages: readonly string[] = [],
+): StudioApi {
   async function invoke<C extends StudioInvokeChannel>(
     channel: C,
     ...args: PayloadArgs<C>
@@ -71,6 +76,7 @@ export function createStudioBridge(ipc: BridgeIpc, files: BridgeFiles = NO_FILES
         return "";
       }
     },
+    systemLanguages: () => [...languages],
     ...threadCalls(bridge),
     ...gameCalls(bridge),
     ...runCalls(bridge),
@@ -215,6 +221,7 @@ function playCalls(bridge: BridgeCalls) {
     playSearch: (query, shelf) => invoke("studio:play.search", { query, shelf }),
     playCatalog: () => invoke("studio:play.catalog"),
     playRemix: (slug) => invoke("studio:play.remix", { slug }),
+    playRemixReady: (slugs) => invoke("studio:play.remix-ready", { slugs }),
     playOnline: (slugs) => invoke("studio:play.online", { slugs }),
     playOpen: (slug, title) => invoke("studio:play.open", { slug, title }),
     playGame: (slug) => invoke("studio:play.game", { slug }),
@@ -332,8 +339,9 @@ function pluginCalls(bridge: BridgeCalls) {
     pluginChooseFile: (id, request) => invoke("studio:plugins.choose-file", { id, request }),
     genexPublishReview: (project) => invoke("studio:plugins.genex-publish-review", { project }),
     genexPublishPlatforms: (project) => invoke("studio:plugins.genex-publish-platforms", { project }),
-    genexPublish: (project, review, title) => invoke("studio:plugins.genex-publish", { project, review, title }),
-    genexPublishApps: (project, title) => invoke("studio:plugins.genex-publish-apps", { project, title }),
+    genexPublish: (project, review, title, remix) =>
+      invoke("studio:plugins.genex-publish", { project, review, title, remix }),
+    genexPublishApps: (project, title, remix) => invoke("studio:plugins.genex-publish-apps", { project, title, remix }),
     pluginsIndex: (refresh) => invoke("studio:plugins.index", { refresh }),
     pluginInstallGithub: (spec) => invoke("studio:plugins.install-github", { spec }),
     pluginLookupGithub: (link, version) => invoke("studio:plugins.lookup-github", { link, version }),
@@ -426,6 +434,7 @@ function previewCalls(bridge: BridgeCalls) {
   const { invoke } = bridge;
   return {
     loadPreview: (project) => invoke("studio:preview.load", { project }),
+    loadWebBuild: (project) => invoke("studio:preview.web-build", { project }),
     buildPreview: (request) => invoke("studio:build.preview", request),
     agentScreens: () => invoke("studio:preview.screens"),
     previewBounds: (bounds) => invoke("studio:preview.bounds", bounds),

@@ -6,6 +6,7 @@
  */
 import { LibraryKind } from "../../shared/asset-library.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import {
   isPlayCategory,
   isPlayShelf,
@@ -92,6 +93,8 @@ export const PlayRoute = {
   Corpus: "/api/gallery/search-corpus",
   Online: "/api/gallery/online",
   Ticket: "/api/embed/ticket",
+  /** A downloaded game's play, once its window is on screen (`native-plays.ts`). */
+  NativePlay: "/api/embed/native-play",
   Referral: "/api/referrals/me",
   world: (slug: string) => `/api/gallery/world/${encodeURIComponent(slug)}`,
   like: (id: string) => `/api/projects/${encodeURIComponent(id)}/like`,
@@ -100,10 +103,11 @@ export const PlayRoute = {
   assetManifest: (slug: string) => `/api/projects/asset-manifest/${encodeURIComponent(slug)}`,
 } as const;
 
+/** Why a call is refused: a malformed request stays English for its developer; SignIn reaches a person's toast. */
 const MESSAGE = {
   BadCategory: "Unknown Play category",
   BadSlug: "Not a game address",
-  SignIn: "Connect Genex to do this",
+  SignIn: () => t("Connect Genex to do this"),
 } as const;
 
 /** An answer from the API: its status and its parsed JSON body (null when it had none). */
@@ -145,7 +149,7 @@ export class GalleryError extends Error {
 /** The thrown answer when a write needs the Genex account and none is unlocked. */
 export class SignInNeeded extends Error {
   constructor() {
-    super(MESSAGE.SignIn);
+    super(MESSAGE.SignIn());
   }
 }
 
@@ -466,7 +470,7 @@ export async function readRoute(request: GalleryRequest, route: string, auth?: s
  * The whole search catalog, every shelf, read at most every few minutes (once, however many searches
  * wait on it); `forget` drops it, and a read under way then keeps nothing of what it read.
  */
-function corpusReads(deps: GalleryDeps) {
+function corpusReads(deps: GalleryDeps, note: (body: unknown) => void = () => {}) {
   const { request, now } = deps;
   const local = deps.localImages === true;
   let corpus: { at: number; entries: CorpusEntry[] } | null = null;
@@ -480,6 +484,7 @@ function corpusReads(deps: GalleryDeps) {
     const read = readRoute(request, PlayRoute.Corpus)
       .then((body) => {
         const items = isRecord(body) && Array.isArray(body.items) ? body.items : [];
+        note(body);
         const entries = items.flatMap((item) => {
           const game = toSearchGame(item, local);
           return game ? [{ shelf: itemShelf(item), game }] : [];
@@ -503,13 +508,28 @@ function corpusReads(deps: GalleryDeps) {
   return { catalog, forget };
 }
 
+/** The source address each item of a page or the catalog (`body`) names, by slug: the remixable ones only. */
+function sourcesIn(body: unknown): Array<[string, string]> {
+  const items: unknown[] = isRecord(body) && Array.isArray(body.items) ? body.items : [];
+  return items.flatMap((item): Array<[string, string]> => {
+    if (!isRecord(item) || !isPlaySlug(item.slug)) return [];
+    const url = cloneUrlOf(item);
+    return url ? [[item.slug, url]] : [];
+  });
+}
+
 /** The catalog's anonymous reads: tabs, their pages and search, each kept a while. */
 function catalogReads(deps: GalleryDeps) {
   const { request, now } = deps;
   const local = deps.localImages === true;
   let counts: { at: number; shelves: PlayShelves } | null = null;
   const firstPages = new Map<PlayCategory, { at: number; page: PlayFeedPage }>();
-  const corpus = corpusReads(deps);
+  /** Each game's source address as the catalog last named it, for Remix's look at it (`remix-ready.ts`). */
+  const sources = new Map<string, string>();
+  const noteSources = (body: unknown): void => {
+    for (const [slug, url] of sourcesIn(body)) sources.set(slug, url);
+  };
+  const corpus = corpusReads(deps, noteSources);
   const { catalog } = corpus;
   /** Bumped by `forget`: a read that started before it keeps nothing of what it read. */
   let generation = 0;
@@ -525,6 +545,7 @@ function catalogReads(deps: GalleryDeps) {
     if (isCursor(cursor)) query.set("cursor", cursor);
     const started = generation;
     const body = await readRoute(request, `${PlayRoute.Feed}?${query}`);
+    noteSources(body);
     const page = toFeedPage(body, local, shelfOf(category), deps.host);
     if (first && started === generation) firstPages.set(category, { at: now(), page });
     return page;
@@ -598,7 +619,10 @@ function catalogReads(deps: GalleryDeps) {
     return Object.fromEntries(read.flat());
   };
 
-  return { feed, shelves, search, mentionItems, assetManifest, online, forget };
+  /** The source address the catalog last named for `slug`, or null. */
+  const sourceOf = (slug: string): string | null => sources.get(slug) ?? null;
+
+  return { feed, shelves, search, mentionItems, assetManifest, online, sourceOf, forget };
 }
 
 /** When a game last changed: the API's own date, else its newest build's, else null. */

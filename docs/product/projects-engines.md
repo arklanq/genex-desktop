@@ -7,14 +7,14 @@ Blender assets or a plugin's kind. Facts suggest; the first message or you decid
 sidebar names a non-game's kind (**Unreal plugin**, **Blender assets**).
 
 New game makes an empty folder; the first message picks its kind. A vague ask builds a web game;
-with an engine plugin on, a game with no kind asks which engine. A port snapshots first, keeping
+with an engine plugin on, a kindless game asks which engine. A port snapshots first, keeping
 the web files as reference.
 
 ## Plugins on or off
 
-Engine buttons show only on their games. Asked for an engine whose plugin is off, chat shows its
-card (**Turn on Unity** or **Install…**; × hides it); your click turns it on, then the chat goes
-on. A missing engine gets a setup card. Told to, agents go on without: jobs, `app_look`, docs.
+Engine buttons show only on their games. Asking for an engine whose plugin is off, or opening its
+project, shows its card (**Turn on Unity** or **Install…**; × hides it); a click turns it on and
+chat goes on. A missing engine gets a setup card. Told to, agents go on without: jobs, `app_look`, docs.
 
 A plugin from a folder on this Mac starts off, runs with your access, and asks before each tool;
 Always allow lists it under **Runs without asking** until new code or turning it off; its steps at
@@ -38,13 +38,13 @@ is a host project with the plugin in `Plugins/`; its tools build, test and packa
 
 ## Godot, Roblox, Unity
 
-Godot 4.3+, Mac only (on Windows, Get Godot opens its download page): makes a **New Godot game**
+Godot 4.3+ (Mac, Windows; Do it for me installs it): makes a **New Godot game**
 (2D/3D, `godot/`), opens your editor (saving at save points, reloading after Rewind); **Change
 project** links one. **Multiplayer** joins web, native.
 
-**Roblox Studio** sets up your Studio; **New Roblox game** writes a Baseplate place, **Use in this
-game** links one per game. Unity sets up and opens its project; agents add packages,
-**Multiplayer**, build, play (keys, mouse: Input System). Publish lists Web, Mac and Windows builds.
+**Set it up for me** readies Roblox Studio and a new place (you sign in); **Use in this
+game** links yours. Unity sets up and opens its project; agents add packages,
+**Multiplayer**, build, play (keys, mouse: Input System). Publish lists Web, Mac, Windows and Linux builds.
 
 ## Live's views
 

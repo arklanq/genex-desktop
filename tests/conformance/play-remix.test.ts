@@ -6,7 +6,7 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PlayWorld } from "../../src/main/play/gallery.ts";
 import {
@@ -14,14 +14,16 @@ import {
   cloneArgs,
   isRemixSource,
   DOWNLOAD_STALL_MS,
+  holdsGame,
   lfsRoutedFiles,
   type RemixDeps,
+  RemixRefusedError,
   remixGame,
   type StallClock,
   stallGuard,
   tracksLfs,
 } from "../../src/main/play/remix.ts";
-import { type RemixProgress, RemixStep } from "../../src/shared/play.ts";
+import { PlayRemixRefusal, type RemixProgress, RemixStep } from "../../src/shared/play.ts";
 import { gitFile } from "../helpers/git.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -74,6 +76,7 @@ const quiet = (root: string, overrides: Partial<RemixDeps> = {}): RemixDeps => (
   gamesRoot: () => root,
   clone: async (_url, dest) => {
     await mkdir(dest, { recursive: true });
+    await writeFile(path.join(dest, "index.html"), "<canvas></canvas>");
   },
   install: async () => {},
   adopt: async () => "adopted",
@@ -198,6 +201,46 @@ describe("Play remix", () => {
     assert.deepEqual(await readdir(dest), ["index.html"]);
   });
 
+  it("lists the copy under the remix's own title, keeping what kind of game the author's record says it is", async () => {
+    const root = await tmpDir("play-remix-record");
+    const record = {
+      name: "lost-cathedral",
+      title: "Lost Cathedral",
+      createdAt: "2026-09-18T10:00:00.000Z",
+      scaffold: { plugin: "unity", id: "game", label: "Unity game", facts: [] },
+    };
+    await remixGame(
+      WORLD,
+      quiet(root, {
+        clone: async (_url, dest) => {
+          await mkdir(dest, { recursive: true });
+          await writeFile(path.join(dest, "studio.json"), JSON.stringify(record));
+        },
+      }),
+    );
+    const own = JSON.parse(await readFile(path.join(root, "lost-cathedral-remix", "studio.json"), "utf8"));
+    assert.equal(own.title, "Lost Cathedral remix");
+    assert.deepEqual(own.scaffold, record.scaffold);
+    assert.equal(own.name, undefined, "the author's name for it goes");
+    assert.notEqual(own.createdAt, record.createdAt);
+    const odd = await tmpDir("play-remix-odd-record");
+    await remixGame(
+      WORLD,
+      quiet(odd, {
+        clone: async (_url, dest) => {
+          await mkdir(dest, { recursive: true });
+          await writeFile(path.join(dest, "index.html"), "<canvas></canvas>");
+          await writeFile(path.join(dest, "studio.json"), "[1, 2]");
+        },
+      }),
+    );
+    assert.equal(
+      await readFile(path.join(odd, "lost-cathedral-remix", "studio.json"), "utf8"),
+      "[1, 2]",
+      "not an object: left as it is",
+    );
+  });
+
   it("leaves nothing behind when the copy fails", async () => {
     const root = await tmpDir("play-remix-fail");
     await assert.rejects(
@@ -234,6 +277,67 @@ describe("Play remix", () => {
     assert.deepEqual(logged, [], "a remix that worked logs nothing");
   });
 
+  it("makes nothing of a source with no game in it, and says so by its code", async () => {
+    const noGame: Array<[string, Record<string, string>]> = [
+      ["a README alone, as a game whose apps alone went to Genex has", { "README.md": "# megastructure" }],
+      [
+        "a publish's bookkeeping, as a game Studio published before its project could go has",
+        {
+          "package.json": '{"name":"game-","private":true,"dependencies":{"@genex-ai/embed-sdk":"0.33.0"}}',
+          "publish.json": "{}",
+          "src/genex.config.ts": "export {}",
+          "CLAUDE.md": "notes",
+          ".gitignore": "home/",
+        },
+      ],
+      ["an engine's mark too deep to be the game's project", { "a/b/c/ProjectSettings/ProjectVersion.txt": "6000.2" }],
+    ];
+    for (const [why, files] of noGame) {
+      const root = await tmpDir("play-remix-no-game");
+      const logged: string[] = [];
+      const deps = quiet(root, {
+        clone: async (_url, dest) => {
+          for (const [file, text] of Object.entries(files)) {
+            await mkdir(path.dirname(path.join(dest, file)), { recursive: true });
+            await writeFile(path.join(dest, file), text);
+          }
+        },
+        log: (line) => logged.push(line),
+      });
+      await assert.rejects(
+        remixGame(WORLD, deps),
+        (error: unknown) => error instanceof RemixRefusedError && error.code === PlayRemixRefusal.NoProject,
+        why,
+      );
+      assert.deepEqual(await readdir(root), [], `${why}: nothing is left behind`);
+      assert.equal(logged.length, 1, `${why}: the log says why`);
+    }
+  });
+
+  it("knows a game by its record, its page, the packages that build it, or an engine's project", async () => {
+    const games: Array<[string, Record<string, string>]> = [
+      ["a Genex game's record", { "studio.json": "{}" }],
+      ["a page at its root", { "index.html": "<canvas></canvas>" }],
+      ["packages that build it", { "package.json": '{"scripts":{"build":"vite build"}}' }],
+      ["a Unity project", { "unity/ProjectSettings/ProjectVersion.txt": "m_EditorVersion: 6000.2" }],
+      ["a Godot project", { "godot/project.godot": "[application]" }],
+      ["an Unreal project", { "Arena/Arena.uproject": "{}" }],
+    ];
+    for (const [why, files] of games) {
+      const dir = await tmpDir("play-remix-game");
+      for (const [file, text] of Object.entries(files)) {
+        await mkdir(path.dirname(path.join(dir, file)), { recursive: true });
+        await writeFile(path.join(dir, file), text);
+      }
+      assert.equal(await holdsGame(dir), true, why);
+    }
+    const linked = await tmpDir("play-remix-linked");
+    const elsewhere = await tmpDir("play-remix-elsewhere");
+    await writeFile(path.join(elsewhere, "index.html"), "<canvas></canvas>");
+    await symlink(path.join(elsewhere, "index.html"), path.join(linked, "index.html"));
+    assert.equal(await holdsGame(linked), false, "a link to a page elsewhere is no game");
+  });
+
   it("refuses a game that may not be remixed before touching the disk", async () => {
     const root = await tmpDir("play-remix-refused");
     let cloned = 0;
@@ -260,6 +364,7 @@ describe("Play remix", () => {
       quiet(root, {
         clone: async (_url, dest, models) => {
           await mkdir(path.join(dest, ".git"), { recursive: true });
+          await writeFile(path.join(dest, "studio.json"), "{}");
           seen.push("clone");
           models(0, 2_000);
           models(2_000, 2_000);
@@ -371,6 +476,7 @@ describe("Play remix", () => {
       quiet(root, {
         clone: async (_url, dest) => {
           await mkdir(dest, { recursive: true });
+          await writeFile(path.join(dest, "index.html"), "<canvas></canvas>");
           started();
           await cloning;
         },

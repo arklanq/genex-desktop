@@ -34,6 +34,8 @@ export const SandboxLaunchCode = {
   NotGranted: "not-granted",
   /** Windows: every port of srt-win's proxy range is reserved by Windows or held by another program. */
   ProxyPortsRefused: "proxy-ports-refused",
+  /** Windows: Windows kept refusing to start srt-win as the sandbox user, after Genex tried again. */
+  SandboxUserRefused: "sandbox-user-refused",
 } as const;
 export type SandboxLaunchCode = (typeof SandboxLaunchCode)[keyof typeof SandboxLaunchCode];
 
@@ -65,6 +67,8 @@ const MESSAGE = {
     [SandboxLaunchCode.NotGranted]:
       "This folder is not open to sandboxed commands yet. It opens once the running commands finish; try again then.",
     [SandboxLaunchCode.ProxyPortsRefused]: `Windows did not let Genex's sandbox use its network ports (${SRT_PROXY_PORTS}). Hyper-V, WSL or Docker often reserve them. Restart the PC, or run "net stop winnat" and then "net start winnat" in a terminal opened as administrator, and try again.`,
+    [SandboxLaunchCode.SandboxUserRefused]:
+      "Windows would not start Genex's sandbox user. Restart the PC, then try again.",
   } satisfies Record<SandboxLaunchCode, string>,
 } as const;
 

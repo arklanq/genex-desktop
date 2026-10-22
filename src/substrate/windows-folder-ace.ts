@@ -115,12 +115,22 @@ export type FolderAceOutcome =
 export type FolderAceEditor = (edits: readonly FolderAceEdit[]) => Promise<FolderAceOutcome[]>;
 /** {@link FolderAceEditor} for process exit, when nothing asynchronous runs any more. */
 export type FolderAceEditorSync = (edits: readonly FolderAceEdit[]) => FolderAceOutcome[];
+/** How one batch runs: how long it may (default {@link OWN_TIMEOUT_MS} for own edits), and what stops it early. */
+export interface FolderOwnRun {
+  timeoutMs?: number;
+  /** Stops the batch, leaving each edit it had not finished undone (Genex quitting during a walk). */
+  signal?: AbortSignal;
+}
 /**
  * Applies own edits in order and answers one outcome per edit, or null when PowerShell could not
  * apply the batch here (locked down, no answer, or a SID the running user holds); never throws. A
- * batch that ran out of time answers every edit as refused with `timedOut`.
+ * batch that ran out of time keeps the outcomes of the edits it finished and answers the rest as
+ * refused with `timedOut`, the first of them the edit Windows was still on.
  */
-export type FolderOwnEditor = (edits: readonly FolderOwnEdit[]) => Promise<FolderAceOutcome[] | null>;
+export type FolderOwnEditor = (
+  edits: readonly FolderOwnEdit[],
+  run?: FolderOwnRun,
+) => Promise<FolderAceOutcome[] | null>;
 /** {@link FolderOwnEditor} for process exit. */
 export type FolderOwnEditorSync = (edits: readonly FolderOwnEdit[]) => FolderAceOutcome[] | null;
 
@@ -128,6 +138,7 @@ const MESSAGE = {
   /** A refusal the script gave no words for. */
   Refused: "refused",
   TimedOut: (ms: number) => `Windows was still passing the entries down after ${Math.round(ms / SECOND_MS)} s`,
+  NotReached: (ms: number) => `not reached: the batch ran out of time after ${Math.round(ms / SECOND_MS)} s`,
 } as const;
 
 /** How long one PowerShell batch or one `icacls` call may take. */
@@ -139,7 +150,7 @@ const TOOL_TIMEOUT_MS = 15 * SECOND_MS;
  * stay between launches, so that walk happens once per folder, and later launches only check
  * them; a batch that still runs out of time keeps what it set, and the next try goes on from there.
  */
-const OWN_TIMEOUT_MS = 10 * MINUTE_MS;
+export const OWN_TIMEOUT_MS = 10 * MINUTE_MS;
 /** The variable that hands a batch to the script: base64 of its UTF-8 JSON, so no console code page touches a path. */
 const EDITS_ENV = "GENEX_FOLDER_ACES";
 /**
@@ -155,8 +166,8 @@ const SCRIPT_LOADER = `$ErrorActionPreference = 'Stop'; Invoke-Expression ([Text
  * only. The DACL is edited as raw entries, never through .NET's canonicalizing ACL classes, so an
  * order srt-win or anyone else chose survives. A deny edit that changes an inheritable entry is
  * written by name instead (SetNamedSecurityInfoW), which passes it down through everything under
- * that path, as srt-win's own stamp does. Writes one JSON outcome per edit, as UTF-8 bytes; a batch
- * that would deny a SID the running user holds is refused whole, with no outcomes.
+ * that path, as srt-win's own stamp does. Writes one JSON outcome line per edit as it finishes, as
+ * UTF-8 bytes; a batch that would deny a SID the running user holds is refused whole, with no outcomes.
  */
 export const FOLDER_ACE_SCRIPT = `
 $ErrorActionPreference = 'Stop'
@@ -408,22 +419,24 @@ foreach ($edit in @($request)) {
     exit
   }
 }
-$outcomes = foreach ($edit in @($request)) {
+# One answer line per edit, written as soon as it is done: a batch stopped at its deadline still
+# says which edits it finished, and the first one without a line is the one Windows was still on.
+foreach ($edit in @($request)) {
   $watch = [Diagnostics.Stopwatch]::StartNew()
   $script:deferred = $false
   $script:closedBelow = $false
   try {
-    Edit $edit
+    $null = Edit $edit
     # How long Windows took over an own edit, which may pass entries down a large folder.
-    if ($script:deferred) { @{ ok = $true; ms = $watch.ElapsedMilliseconds; deferred = $true } }
-    elseif ($edit.op -eq '${FolderAceOp.Own}') { @{ ok = $true; ms = $watch.ElapsedMilliseconds } } else { @{ ok = $true } }
+    if ($script:deferred) { $outcome = @{ ok = $true; ms = $watch.ElapsedMilliseconds; deferred = $true } }
+    elseif ($edit.op -eq '${FolderAceOp.Own}') { $outcome = @{ ok = $true; ms = $watch.ElapsedMilliseconds } } else { $outcome = @{ ok = $true } }
   } catch {
     $refusal = $_.Exception
-    if (Unneeded $edit $refusal) { @{ ok = $true; ms = $watch.ElapsedMilliseconds; refused = $refusal.Message } }
-    else { @{ ok = $false; error = $refusal.Message } }
+    if (Unneeded $edit $refusal) { $outcome = @{ ok = $true; ms = $watch.ElapsedMilliseconds; refused = $refusal.Message } }
+    else { $outcome = @{ ok = $false; error = $refusal.Message } }
   }
+  Answer ((ConvertTo-Json -InputObject $outcome -Compress) + [char]10)
 }
-Answer (ConvertTo-Json -InputObject @($outcomes) -Compress)
 `;
 
 /** Windows PowerShell by its full path: a folder on PATH must not stand in for it. */
@@ -456,19 +469,38 @@ function doneOutcome(answer: object): FolderAceOutcome {
   return { ok: true, ...ms, ...deferred, ...refused };
 }
 
-/** The script's answer, when it is one outcome per edit; anything else is null. */
-export function folderAceOutcomes(stdout: string, count: number): FolderAceOutcome[] | null {
+/** One answer line as an outcome; null when it is not one. */
+function outcomeOf(line: string): FolderAceOutcome | null {
   try {
-    const parsed: unknown = JSON.parse(stdout);
-    if (!Array.isArray(parsed) || parsed.length !== count) return null;
-    return parsed.map((item: unknown): FolderAceOutcome => {
-      const answer = typeof item === "object" && item !== null ? item : {};
-      if ("ok" in answer && answer.ok === true) return doneOutcome(answer);
-      return { ok: false, error: "error" in answer ? String(answer.error) : MESSAGE.Refused };
-    });
+    const answer: unknown = JSON.parse(line);
+    if (typeof answer !== "object" || answer === null || Array.isArray(answer) || !("ok" in answer)) return null;
+    if (answer.ok === true) return doneOutcome(answer);
+    return { ok: false, error: "error" in answer ? String(answer.error) : MESSAGE.Refused };
   } catch {
     return null;
   }
+}
+
+/**
+ * The outcomes the script finished, in the order of the batch: one per answer line, the text after
+ * the last line break left out (a batch stopped mid-line). Null for anything else, a batch refused
+ * whole among it.
+ */
+export function folderAceProgress(stdout: string): FolderAceOutcome[] | null {
+  const outcomes: FolderAceOutcome[] = [];
+  for (const line of stdout.split("\n").slice(0, -1)) {
+    if (!line.trim()) continue;
+    const outcome = outcomeOf(line);
+    if (!outcome) return null;
+    outcomes.push(outcome);
+  }
+  return outcomes;
+}
+
+/** The script's answer, when it is one outcome per edit; anything else is null. */
+export function folderAceOutcomes(stdout: string, count: number): FolderAceOutcome[] | null {
+  const outcomes = folderAceProgress(stdout);
+  return outcomes?.length === count ? outcomes : null;
 }
 
 /** The `icacls` arguments that make the same change, walking everything under the folder. */
@@ -487,8 +519,11 @@ function icaclsFailure(error: unknown): string {
 /** What an editor runs; each default is the real program, with `env` (default: this process's). */
 export interface FolderAceTools {
   env?: NodeJS.ProcessEnv;
-  /** Runs PowerShell and answers what it wrote; rejects when it fails or does not finish. */
-  powershell?: (file: string, args: string[], env: NodeJS.ProcessEnv) => Promise<string>;
+  /**
+   * Runs PowerShell, stopped as `run` says, and answers what it wrote; rejects when it fails or does
+   * not finish, with what it wrote by then as the error's `stdout`.
+   */
+  powershell?: (file: string, args: string[], env: NodeJS.ProcessEnv, run?: FolderOwnRun) => Promise<string>;
   /** Runs `icacls`; rejects with its output when it fails. */
   icacls?: (args: string[]) => Promise<void>;
 }
@@ -497,9 +532,10 @@ async function runPowerShell(
   file: string,
   args: string[],
   env: NodeJS.ProcessEnv,
-  timeoutMs: number = TOOL_TIMEOUT_MS,
+  { timeoutMs = TOOL_TIMEOUT_MS, signal }: FolderOwnRun = {},
 ): Promise<string> {
-  const running = run(file, args, { env, timeout: timeoutMs, windowsHide: true, encoding: "utf8" });
+  const stop = signal ? { signal } : {};
+  const running = run(file, args, { env, timeout: timeoutMs, windowsHide: true, encoding: "utf8", ...stop });
   // PowerShell may wait for its input to end before it exits; it reads none.
   running.child.stdin?.end();
   return (await running).stdout;
@@ -579,21 +615,42 @@ function ranOutOfTime(error: unknown): boolean {
   return typeof error === "object" && error !== null && "killed" in error && error.killed === true;
 }
 
+/** What a stopped run wrote before it was stopped. */
+function writtenBefore(error: unknown): string {
+  return typeof error === "object" && error !== null && "stdout" in error ? String(error.stdout) : "";
+}
+
+/**
+ * Every edit of a batch stopped after `ms`: the outcomes it finished, then the edit Windows was
+ * still on and those it never reached, refused as `timedOut`.
+ */
+function stoppedOutcomes(edits: readonly FolderOwnEdit[], finished: readonly FolderAceOutcome[], ms: number) {
+  return edits.map((_, i): FolderAceOutcome => {
+    const outcome = finished[i];
+    if (outcome) return outcome;
+    const error = i === finished.length ? MESSAGE.TimedOut(ms) : MESSAGE.NotReached(ms);
+    return { ok: false, error, timedOut: true };
+  });
+}
+
 /**
  * An editor for Genex's own entries: one PowerShell batch, with no `icacls` to fall back to (it
  * would walk everything under each denied path's parent); null where PowerShell cannot apply the
- * batch, and every edit refused as `timedOut` when it ran past {@link OWN_TIMEOUT_MS}.
+ * batch or the run's signal stopped it. A batch that runs past its deadline ({@link OWN_TIMEOUT_MS}
+ * unless the run says) keeps what it finished, and the rest are refused as `timedOut`.
  */
 export function folderOwnEditor(tools: Pick<FolderAceTools, "env" | "powershell"> = {}): FolderOwnEditor {
-  const powershellRun = tools.powershell ?? ((file, args, env) => runPowerShell(file, args, env, OWN_TIMEOUT_MS));
-  return async (edits) => {
+  const powershellRun = tools.powershell ?? runPowerShell;
+  return async (edits, run = {}) => {
     if (edits.length === 0) return [];
+    const timeoutMs = run.timeoutMs ?? OWN_TIMEOUT_MS;
     const command = folderAceCommand(edits, tools.env);
     try {
-      return folderAceOutcomes(await powershellRun(command.file, command.args, command.env), edits.length);
+      const stdout = await powershellRun(command.file, command.args, command.env, { ...run, timeoutMs });
+      return folderAceOutcomes(stdout, edits.length);
     } catch (error) {
       if (!ranOutOfTime(error)) return null;
-      return edits.map(() => ({ ok: false, error: MESSAGE.TimedOut(OWN_TIMEOUT_MS), timedOut: true }) as const);
+      return stoppedOutcomes(edits, folderAceProgress(writtenBefore(error)) ?? [], timeoutMs);
     }
   };
 }

@@ -24,6 +24,7 @@ import {
 } from "../shared/custom-events.ts";
 import { DAY_MS, MINUTE_MS } from "../shared/duration.ts";
 import { EventKind } from "../shared/event-log.ts";
+import { t } from "../shared/i18n.ts";
 import { ExecutionStatus, executionStep } from "../shared/run-state.ts";
 import { LoopProfile } from "../shared/project-facts.ts";
 import { contractorIdentity } from "./chat-labels.ts";
@@ -33,6 +34,7 @@ import type { EventEnvelope } from "./types.ts";
 import {
   A_PLUGIN,
   NATIVE_WORDS,
+  nativeHereWords,
   NOTICE_WORDS,
   permissionTitleWords,
   permissionWords,
@@ -380,7 +382,10 @@ function onSignedOut(feed: FeedDraft, event: EventEnvelope): void {
 
 /** What a Play install's row says: ready, why it failed, or a new version waiting. */
 function playInstallText(event: EventEnvelope, kind: PlayInstallEvent): Pick<Notice, "text" | "tone"> {
-  if (kind === CustomEvent.PlayInstallFinished) return { text: NOTICE_WORDS.readyToPlay, tone: NoticeTone.Done };
+  if (kind === CustomEvent.PlayInstallFinished) {
+    const { platform } = payloadOf(event, CustomEvent.PlayInstallFinished);
+    return { text: nativeHereWords(String(platform)).readyToPlay, tone: NoticeTone.Done };
+  }
   if (kind === CustomEvent.PlayUpdateAvailable) {
     const size = payloadOf(event, CustomEvent.PlayUpdateAvailable).sizeBytes;
     return { text: NOTICE_WORDS.newVersion(sizeWords(typeof size === "number" ? size : 0)) };
@@ -388,7 +393,8 @@ function playInstallText(event: EventEnvelope, kind: PlayInstallEvent): Pick<Not
   const failed = payloadOf(event, CustomEvent.PlayInstallFailed);
   const failure = isInstallFailure(failed.failure) ? failed.failure : InstallFailure.Failed;
   const needed = typeof failed.neededBytes === "number" ? failed.neededBytes : 0;
-  return { text: NATIVE_WORDS.installFailed[failure](sizeWords(needed)), tone: NoticeTone.Failed };
+  const here = nativeHereWords(String(failed.platform));
+  return { text: NATIVE_WORDS.installFailed[failure](sizeWords(needed), here), tone: NoticeTone.Failed };
 }
 
 /** The Play install events a row is raised for. */
@@ -436,9 +442,9 @@ export type DayGroup = (typeof DayGroup)[keyof typeof DayGroup];
 
 /** The notifications menu's heading for each day. */
 const DAY_HEADINGS = {
-  [DayGroup.Today]: "Today",
-  [DayGroup.Yesterday]: "Yesterday",
-  [DayGroup.Earlier]: "Earlier",
+  [DayGroup.Today]: t("Today"),
+  [DayGroup.Yesterday]: t("Yesterday"),
+  [DayGroup.Earlier]: t("Earlier"),
 } as const satisfies Record<DayGroup, string>;
 
 /** Which day `iso` falls on, seen from `now`: today, yesterday or earlier. */

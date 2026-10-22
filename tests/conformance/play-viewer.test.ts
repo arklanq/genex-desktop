@@ -83,6 +83,13 @@ describe("Play viewer", () => {
     assert.equal(viewer.showing(), "lost-cathedral");
   });
 
+  it("loads the bar's page again when the app's language changes, so it speaks the new one", async () => {
+    const { viewer, log } = rig();
+    viewer.warm();
+    viewer.languageChanged();
+    assert.deepEqual(log, ["bar.warm", "bar.reload"]);
+  });
+
   it("plays as a guest when no ticket can be minted", async () => {
     for (const ticket of [SIGNED_OUT, NOT_MINTED]) {
       const { viewer, opened } = rig({ ticket: async () => ticket });

@@ -243,8 +243,11 @@ conflict, base and facet builders, the Unreal lead's typed workers; `loop/worker
 classic Autopilot's builders keep their own brief. A folder with no
 kind yet is told to start web with `start_web_game` or find a plugin with `plugins_find` (a folder of
 notes is told to read them first); with an engine plugin's kind on offer (`plugins.tools`'s
-`kinds`) every fresh brief until it has a kind asks with the question card, and a brief without the
-card (a local turn's too) names each kind's tool for a request that names that engine. A folder of its own files of a kind no
+`kinds`) every fresh brief until it has a kind asks with the question card (a request naming an
+engine none of its options covers goes to `plugins_find` instead), a resumed session keeps the card
+while the folder has no kind, and a brief without the card (a local turn's too) names each kind's
+tool for a request that names that engine. The web starter's rules reach such a brief as the web
+answer's only. A folder of its own files of a kind no
 rule knows is told to look through them first. Each kind gets its own rules, named by folder when
 there are several. A kind no plugin that is on covers (Unity, Blender, an Unreal plugin, a Godot or
 Unreal project with its plugin off, an unknown one) calls `plugins_find` first, shows the card with
@@ -357,6 +360,10 @@ outlives its session's turn and a harness restart, and stops when its run settle
 `run.settled`), when its worker's chat turn returns, or when Genex quits. The harness neither starts
 one nor writes its `job_started` / `job_ended` records; a start follows the chat's mode at the call
 ([tool permissions](tool-permissions.md#jobs)).
+Job output pauses both pipes when the log writer is full, resumes when it drains, and keeps
+draining without retaining output after the size cap. A normal exit waits for buffered output
+before closing the log; the orphan-pipe deadline still ends an idle or already-capped pipe.
+A failed writer reports its error and releases its pipes rather than leaving a paused job behind.
 So is `app_look`, look-only and in every mode, which a seated reader worker gets as its one host
 tool ([looking at apps](tool-permissions.md#looking-at-apps)).
 
@@ -1250,6 +1257,14 @@ wrap-up invites no claim). `finish user_asked=` still stops everything at once. 
 `wrap_up` too, and starts no worker once anybody asked to finish; its wrap-up starts when the turn
 that recorded the ask ends.
 
+An ask to stop and start a new Loop is `wrap_up` with `next_goal` (and `next_hours` when named):
+the new Loop rides on the same `run_control` record (`next-loop-record.ts`), and once the run has
+closed `handleRunStart` starts it on the same game with the run's engine, model and roles, as a
+launch from the chat would (`next-loop.ts`); a Stop pressed since starts nothing. Outside a run, the
+chat's own turn always holds the Loop's start for one asked in words (`delegated-turn.ts`
+`autoLaunchFor`), with the Loop switch on or off and after a run it led, finished or paused: the
+hours named win, else the switch's, else until done.
+
 The art director is the one absolute judge (`loop/ship-review.ts`, rubric `judge/ship-review.md`):
 one build, every frame the evidence pass took of a registered camera, the player's eyes and each
 demo's end, then the first, middle and last motion frames and the reference (at most 14), captured
@@ -1412,7 +1427,9 @@ command (`engines/claude-code.ts` `studioShell`, `engines/session-commands.ts`).
 Claude Code's would have been: the worker's roots (in Bypass the home folder too), the sign-in homes
 and the never-touch list denied, no network. The host reads the tool as `Bash` (its question card,
 the never-touch screen, the log). Its commands run under Git Bash, one at a time, nothing in the
-background, and a saved "always allow" rule for `Bash` does not cover them. Where a CLI still refuses
+background, and a saved "always allow" rule for `Bash` does not cover them. A chat's session runs
+its commands in Bash on a turn the person answers and through `run_command` on an unattended one, so
+a resumed session is told which shell this turn has (`SHELL_THIS_TURN`). Where a CLI still refuses
 its box, it refuses the session before the model says anything, and the engine reports it
 as `StopReason.SandboxUnavailable` with the CLI's own words (`engines/claude-code.ts`
 `sandboxRefusal`); a session that already replied keeps its ordinary failure. The refusal holds that

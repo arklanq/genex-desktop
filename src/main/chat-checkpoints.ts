@@ -25,6 +25,7 @@ import { ignoreLine, type PlacedRule, ruleGlob, ruleMatches } from "../shared/pr
 import { ensureFactIgnoreRules } from "../substrate/nested-repos.ts";
 import { REWIND_REFS } from "../shared/game-history.ts";
 import { isRewindId, UndoRewindRefusal, undoRewindRefusalWords } from "../shared/chat-rewind.ts";
+import { t } from "../shared/i18n.ts";
 
 /** Files the rewind never puts back: the game's shape and consent belong to now, not then. */
 const KEPT_PATHS = new Set(["studio.json"]);
@@ -63,13 +64,14 @@ export const CheckpointPhase = {
 } as const;
 export type CheckpointPhase = (typeof CheckpointPhase)[keyof typeof CheckpointPhase];
 
-/** Why a restore is refused. */
+/** Why a restore is refused, as the rewind's error says it. */
 const MESSAGE = {
-  HistoryChanged:
-    "The game files changed through a commit or a landed build since this message, so they stay as they are.",
-  NoCheckpoint: "There is no saved copy of the game files from before this message.",
-  NotSaved: "The game files could not be saved before rewinding.",
-  OutsideFolder: (relative: string) => `Refusing to remove a path outside the game folder: ${relative}`,
+  HistoryChanged: () =>
+    t("The game files changed through a commit or a landed build since this message, so they stay as they are."),
+  NoCheckpoint: () => t("There is no saved copy of the game files from before this message."),
+  NotSaved: () => t("The game files could not be saved before rewinding."),
+  OutsideFolder: (relative: string) =>
+    t("Refusing to remove a path outside the game folder: {path}", { path: relative }),
 } as const;
 
 /** The mode git records a nested repository's link with; its files are not the folder's. */
@@ -499,7 +501,7 @@ export class ChatCheckpoints {
     return this.#serial(dir, async () => {
       const found = await this.#checkpoint(dir, threadId, messageId);
       if ("reason" in found) {
-        throw new Error(found.reason === "history-changed" ? MESSAGE.HistoryChanged : MESSAGE.NoCheckpoint);
+        throw new Error(found.reason === "history-changed" ? MESSAGE.HistoryChanged() : MESSAGE.NoCheckpoint());
       }
       return this.#restoreFrom(dir, threadId, found.commit, `studio: game files before rewinding to ${messageId}`);
     });
@@ -525,7 +527,7 @@ export class ChatCheckpoints {
   async #restoreFrom(dir: string, threadId: string, target: string, text: string): Promise<RestoredCheckpoint> {
     const rewindId = newRewindId();
     const taken = await this.#take(dir, rewoundRef(threadId, rewindId), text);
-    if (!taken) throw new Error(MESSAGE.NotSaved);
+    if (!taken) throw new Error(MESSAGE.NotSaved());
     const saved = taken.commit;
     await this.#prune(dir, `${refRoot(threadId)}/rewound/`, REWOUND_KEPT);
     try {

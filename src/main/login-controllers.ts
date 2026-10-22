@@ -18,6 +18,7 @@ import { EngineId } from "../shared/providers.ts";
 import { TerminalKind } from "../shared/terminal.ts";
 import type { EngineStatus } from "../shared/engine-descriptor.ts";
 import type { SubscriptionAccounts } from "../substrate/engines/subscription-accounts.ts";
+import { t } from "../shared/i18n.ts";
 
 /**
  * Both subscriptions answer the same three questions — which login would I use, sign me in,
@@ -119,7 +120,7 @@ export function createLoginControllers({
         args: ["auth", "login"],
         cwd: options.configDir ?? os.tmpdir(),
         env: options.env,
-        title: "Claude Code sign-in",
+        title: t("Claude Code sign-in"),
         kind: TerminalKind.ClaudeLogin,
         onUrl: options.onUrl,
         onExit: options.onExit,
@@ -146,7 +147,7 @@ export function createLoginControllers({
         // provider list comes from the catalog it already has: a refresh can stall for minutes
         // before the first question, and the engine refreshes the models itself after.
         env: childEnv(cli.env, { base: "contractor", vendor: "opencode", set: { OPENCODE_DISABLE_MODELS_FETCH: "1" } }),
-        title: "OpenCode sign-in",
+        title: t("OpenCode sign-in"),
         kind: TerminalKind.OpenCodeLogin,
         onExit: () => {
           void onOpenCodeSignedIn?.()?.catch(() => {});

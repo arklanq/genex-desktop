@@ -4,9 +4,11 @@
  * Unity SDK it runs on asked for in `Packages/manifest.json` at the commit the Genex SDK is tested
  * with (Unity fetches it from Colyseus's own repository; Studio ships none of it), and the game's
  * Genex project in `Assets/Resources/GenexSettings.json`, which the game reads with
- * `Resources.Load`. A WebGL build signs in through the published page's own embed SDK
- * (`window.genexEmbed`, which Studio's connect module exposes); a native one through
- * `GenexNativeIdentity` (Play's gateway and ticket, or a guest). Every file is the person's: nothing
+ * `Resources.Load`, and Genex's `GenexGame` beside it in `Assets/Genex/`, which also takes the
+ * game's project from Play (`GENEX_GAME`) or its published page (`window.__GENEX__.slug`), so a
+ * build made before the first publish joins its rooms once published. A WebGL build signs in through
+ * the published page's own embed SDK (`window.genexEmbed`, which Studio's connect module exposes); a
+ * native one through `GenexNativeIdentity` (Play's gateway and ticket, or a guest). Every file is the person's: nothing
  * is written through a link, and a Genex file the person changed is kept beside the new one as
  * `<name>.mine~` (a name Unity never imports).
  */
@@ -42,6 +44,16 @@ const LINK_XML = [
   "</linker>",
   "",
 ].join("\n");
+/**
+ * Genex's own files a game gets beside the package, by where they go in the project and their name in
+ * `genex-game/` beside the shipped package: `GenexGame.Slug`, the game's project wherever it runs.
+ */
+export const GAME_FILES = {
+  "Assets/Genex/GenexGame.cs": "GenexGame.cs",
+  "Assets/Genex/GenexGame.jslib": "GenexGame.jslib",
+} as const;
+/** The folder beside the shipped package that holds {@link GAME_FILES}. */
+const GAME_FILES_FOLDER = "genex-game";
 /** Unity never imports a name that ends so: a changed Genex file kept beside the new one. */
 const MINE_SUFFIX = ".mine~";
 
@@ -160,22 +172,32 @@ async function writeSettings(root: string, slug: string | undefined): Promise<vo
   await writeFileNoFollow(file, `${JSON.stringify(next, null, 2)}\n`);
 }
 
-/** Genex's `link.xml`, as it ships; a file the person changed is kept beside it as `.mine~`. Answers whether it was kept. */
-async function writeLinkFile(root: string): Promise<boolean> {
-  const file = path.join(root, ...LINK_FILE.split("/"));
+/** One of Genex's files under `Assets/Genex/`, as it ships; a file the person changed is kept beside it as `.mine~`. Answers whether it was kept. */
+async function writeGenexFile(root: string, name: string, shipped: Buffer): Promise<boolean> {
+  const file = path.join(root, ...name.split("/"));
   for (const folder of [path.join(root, "Assets"), path.dirname(file)]) await assertNoLink(folder);
   await mkdir(path.dirname(file), { recursive: true });
   await assertNoLink(file);
-  const now = await readFile(file, "utf8").catch(() => null);
-  if (now === LINK_XML) return false;
+  const now = await bytesOf(file);
+  if (now?.equals(shipped)) return false;
   if (now !== null) await writeFileNoFollow(`${file}${MINE_SUFFIX}`, now);
-  await writeFileNoFollow(file, LINK_XML);
+  await writeFileNoFollow(file, shipped);
   return now !== null;
+}
+
+/** Genex's `link.xml` and {@link GAME_FILES}, as they ship. Answers the ones the person had changed, kept as `.mine~`. */
+async function writeGenexFiles(root: string, source: string): Promise<string[]> {
+  const files: Array<[string, Buffer]> = [[LINK_FILE, Buffer.from(LINK_XML)]];
+  for (const [name, shipped] of Object.entries(GAME_FILES))
+    files.push([name, await readFile(path.join(path.dirname(source), GAME_FILES_FOLDER, shipped))]);
+  const kept: string[] = [];
+  for (const [name, shipped] of files) if (await writeGenexFile(root, name, shipped)) kept.push(name);
+  return kept;
 }
 
 /**
  * Genex multiplayer into the Unity project at `root`: the package embedded, Colyseus asked for, the
- * assemblies kept from stripping and the game's Genex project written. Answers what changed: the package files kept as `.mine~`, and
+ * assemblies kept from stripping, `GenexGame` beside them and the game's Genex project written. Answers what changed: the package files kept as `.mine~`, and
  * whether the manifest changed (Unity resolves it when its editor next comes forward).
  */
 export async function installUnityMultiplayer(
@@ -185,7 +207,7 @@ export async function installUnityMultiplayer(
 ): Promise<{ kept: string[]; manifestChanged: boolean }> {
   const kept = await embedPackage(root, source);
   const manifestChanged = await askForColyseus(root);
-  if (await writeLinkFile(root)) kept.push(LINK_FILE);
+  kept.push(...(await writeGenexFiles(root, source)));
   await writeSettings(root, options.slug);
   return { kept, manifestChanged };
 }

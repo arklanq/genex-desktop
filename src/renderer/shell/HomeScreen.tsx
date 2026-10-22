@@ -10,6 +10,7 @@
 import type { JSX } from "react";
 import { useEffect, useRef, useState } from "react";
 import type { GameLocation } from "../../shared/game-project.ts";
+import { t } from "../../shared/i18n.ts";
 import { UserMessage } from "../chat/UserMessage.tsx";
 import { chatPlaceholder, HOME_PLACEHOLDER } from "../composer-placeholder.ts";
 import { ShowSidebarButton } from "../panels/ChatHeader.tsx";
@@ -38,11 +39,12 @@ import { StatusOrb } from "../ui/StatusOrb.tsx";
 
 /** Home's words. */
 const MESSAGE = {
-  title: "Everything you need to ship a game",
-  naming: "Naming…",
-  namingStatus: "Naming your game…",
-  openingStatus: "Opening your game…",
-  suggest: "Suggest prompt",
+  title: t("Everything you need to ship a game"),
+  naming: t("Naming…"),
+  namingStatus: t("Naming your game…"),
+  openingStatus: t("Opening your game…"),
+  suggest: t("Suggest prompt"),
+  home: t("Home"),
 } as const;
 
 /** Home's fade over the game it launched takes 250ms (`--duration-fast`); past this it is done anyway. */
@@ -156,7 +158,7 @@ function HomeScreen({
       />
     );
   return (
-    <section data-home="" data-file-drop-zone aria-label="Home" className="home-layer">
+    <section data-home="" data-file-drop-zone aria-label={MESSAGE.home} className="home-layer">
       {/* Only home at rest has it: the first message's transition fades it out with the rest. */}
       <HomeBackground covered={chrome.workspaceCovered} />
       <div className="home-header titlebar-drag window-controls-end">

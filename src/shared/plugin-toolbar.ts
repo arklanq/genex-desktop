@@ -40,12 +40,6 @@ export function toolbarItems(
   return entries;
 }
 
-/** A button's glyph: its own icon, else, folded into an icon, its label's first letter, so no folded button is blank. */
-export function toolbarGlyph(item: Pick<PluginToolbarItem, "icon" | "label">, folded: boolean): string | undefined {
-  if (item.icon) return item.icon;
-  return folded ? [...item.label.trim()][0]?.toUpperCase() : undefined;
-}
-
 /** The buttons the strip draws: every one in scope, and one out of scope only while its status says `shown`. */
 export function visibleToolbarEntries(
   entries: readonly PluginToolbarEntry[],

@@ -17,6 +17,9 @@ Call `unity__multiplayer` once. It adds:
 - The Colyseus Unity SDK it runs on, in `Packages/manifest.json`. Unity fetches it from Colyseus's
   repository when its editor next comes forward, which needs git on this Mac.
 - `Assets/Genex/link.xml`, which keeps IL2CPP builds from stripping what the relay's messages use.
+- `Assets/Genex/GenexGame.cs` (and its `.jslib`): `GenexGame.Slug`, the game's Genex project
+  wherever the build runs, and `GenexGame.ApiUrl`. Keep the game's online code in the default
+  assembly (no `.asmdef` of its own) so it can use them.
 - `Assets/Resources/GenexSettings.json`: the game's Genex project (`slug`) and API (`apiUrl`).
 - The matchmaking you pass, in the game's `genex.json` (Genex reads it when the game is published).
 
@@ -28,8 +31,12 @@ Pass `matchmaking` when the game matches players into rooms:
   `highScoreInTime` or `firstToFinish`.
 - `private` gives invite-code lobbies.
 
-Pass `slug` once the game has a Genex project: after its first publish, `genex__publish-status`
-names it. Then build again, so every build knows which game to join. Calling the tool again is safe.
+A game has no Genex project until its first publish, and its builds don't need one:
+`GenexGame.Slug` takes the project from Genex's Play (`GENEX_GAME`) when Play starts a Mac or
+Windows build, and from the published web page. So the builds a publish sends join their rooms with
+no second build and no second publish. Only the editor and a build you start yourself read
+`GenexSettings.json`: to test online there, publish first, then call `unity__multiplayer` again with
+`slug` (`genex__publish-status` names it). Calling the tool again is safe.
 
 After it, bring Unity forward so it resolves the packages, then check that the project compiles
 (the unity-editor tools' console).
@@ -44,18 +51,15 @@ using Genex.Multiplayer;
 using Genex.Multiplayer.Unity;
 using UnityEngine;
 
-[Serializable] public sealed class GenexSettings { public string slug; public string apiUrl; }
-
 public sealed class Online : MonoBehaviour
 {
     public GenexSession Session { get; private set; }
 
     public async Task<bool> Join(string playerName)
     {
-        var file = Resources.Load<TextAsset>("GenexSettings");
-        var settings = file ? JsonUtility.FromJson<GenexSettings>(file.text) : null;
-        if (settings == null || string.IsNullOrEmpty(settings.slug)) return false;   // not published yet: stay offline
-        var options = new GenexConnectOptions { GameId = settings.slug, Name = playerName };
+        var slug = GenexGame.Slug;                       // Play's, the published page's, or GenexSettings.json's
+        if (slug == null) return false;                  // not published yet: say so on screen and stay offline
+        var options = new GenexConnectOptions { GameId = slug, Name = playerName };
         try
         {
             if (GenexWebGL.Available)
@@ -66,7 +70,7 @@ public sealed class Online : MonoBehaviour
             }
             else
             {
-                var identity = new GenexNativeIdentity(settings.apiUrl, settings.slug);
+                var identity = new GenexNativeIdentity(GenexGame.ApiUrl, slug);
                 var ticket = GenexNativeIdentity.TakeLaunchTicket();   // Genex's Play passed one: a signed-in player
                 if (ticket != null) await identity.RedeemTicket(ticket);
                 else await identity.SignInAsGuest();
@@ -87,6 +91,8 @@ public sealed class Online : MonoBehaviour
 }
 ```
 
+- Read the project only through `GenexGame.Slug`. A game that reads `GenexSettings.json` itself
+  stays offline in every copy it publishes before the slug is written.
 - `GenexPump.Register` ticks the session every frame and keeps its timers running, even in a hidden
   browser tab.
 - When Genex's Play starts a native build, it passes its own API address (`GENEX_API_URL`) and a
@@ -134,4 +140,10 @@ the damage to its own state.
   players.
 - **Native builds** (Mac, Windows) join only the *published* game: as a guest, or as the signed-in
   player when Genex's Play starts them.
+- **Testing two players on this Mac:** once the game is published, start two copies of the Mac
+  build from the terminal with the project in their environment, for example
+  `GENEX_GAME=<slug> "unity/Builds/Mac/<Game>.app/Contents/MacOS/<Game>" &` twice, and play both
+  until each sees the other. No rebuild is needed for this.
 - The WebGL and native builds of the same published game meet in the same rooms.
+- Until two players have met in one room, say so plainly: never tell the person online play works
+  when it has only compiled.

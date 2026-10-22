@@ -4,6 +4,7 @@
  */
 import fs from "node:fs/promises";
 import { UiEvent } from "../../shared/ui-events.ts";
+import { t } from "../../shared/i18n.ts";
 import { runCommand } from "../../substrate/engines/claude-cli.ts";
 import { CODEX_STUDIO_AUTH_ARGS, codexSubscriptionEnv } from "../../substrate/engines/codex-cli.ts";
 import { requireCodingCli } from "../../substrate/engines/external-cli.ts";
@@ -20,16 +21,20 @@ import { AccountId } from "../../substrate/engines/subscription-accounts.ts";
 /** How long `codex logout` may take before forgetting the studio's sign-in gives up. */
 const CODEX_LOGOUT_TIMEOUT_MS = 8 * SECOND_MS;
 
-/** Why a sign-in or connection change from the renderer is refused. */
+/**
+ * Why a sign-in or connection change from the renderer is refused. The functions are words the
+ * person reads on the sign-in card; `unknownEngine` and `unknownMethod` answer only a malformed call
+ * from our own renderer.
+ */
 const MESSAGE = {
-  busy: "Finish or stop the active work before changing the ChatGPT connection.",
-  changeInProgress: "A ChatGPT connection change is already in progress.",
+  busy: () => t("Finish or stop the active work before changing the ChatGPT connection."),
+  changeInProgress: () => t("A ChatGPT connection change is already in progress."),
   unknownEngine: (id: string) => `unknown subscription engine: ${id}`,
   unknownMethod: "Unknown sign-in method",
-  codexUnavailable: "Codex is unavailable",
-  disconnectFailed: "Codex could not disconnect. Please try again.",
-  unknownAccount: "Unknown account",
-  terminalSignOut: "Sign out of the Terminal login in Terminal.",
+  codexUnavailable: () => t("Codex is unavailable"),
+  disconnectFailed: () => t("Codex could not disconnect. Please try again."),
+  unknownAccount: () => t("Unknown account"),
+  terminalSignOut: () => t("Sign out of the Terminal login in Terminal."),
 } as const;
 
 export interface LoginIpcDeps {
@@ -60,9 +65,9 @@ export function registerLoginIpc(
   let changingCodexAccount = false;
   async function changeCodexAccount<T>(change: () => Promise<T>): Promise<T> {
     if (busy()) {
-      throw new Error(MESSAGE.busy);
+      throw new Error(MESSAGE.busy());
     }
-    if (changingCodexAccount) throw new Error(MESSAGE.changeInProgress);
+    if (changingCodexAccount) throw new Error(MESSAGE.changeInProgress());
     changingCodexAccount = true;
     try {
       return await change();
@@ -126,7 +131,7 @@ export function registerLoginIpc(
     return changeCodexAccount(async () => {
       await codexLogin.cancel();
       const engine = subscription(EngineId.Codex);
-      if (!engine) throw new Error(MESSAGE.codexUnavailable);
+      if (!engine) throw new Error(MESSAGE.codexUnavailable());
       return codexLogin.start(await codexSignInHome(engine, undefined), method);
     });
   });
@@ -205,9 +210,9 @@ function registerAccountIpc(
     const engine = subscription(engineId);
     if (!engine) return true;
     const account = payload?.account ?? AccountId.Studio;
-    if (account === AccountId.Terminal) throw new Error(MESSAGE.terminalSignOut);
+    if (account === AccountId.Terminal) throw new Error(MESSAGE.terminalSignOut());
     const home = engine.accounts.homeFor(account);
-    if (!home) throw new Error(MESSAGE.unknownAccount);
+    if (!home) throw new Error(MESSAGE.unknownAccount());
     if (payload?.engine === EngineId.Codex) {
       return changeCodexAccount(async () => {
         await codexLogin.dismiss();
@@ -217,7 +222,7 @@ function registerAccountIpc(
           env: codexSubscriptionEnv({ ...installation.env, CODEX_HOME: home }),
           timeoutMs: CODEX_LOGOUT_TIMEOUT_MS,
         });
-        if (result.code !== 0) throw new Error(MESSAGE.disconnectFailed);
+        if (result.code !== 0) throw new Error(MESSAGE.disconnectFailed());
         // Studio's first profile keeps its folder and native session history: deleting a directory
         // does not remove keychain credentials. An added account goes whole.
         if (account !== AccountId.Studio) await fs.rm(home, { recursive: true, force: true });
@@ -263,7 +268,7 @@ function registerAccountIpc(
 async function accountSignInHome(engine: SubscriptionEngine, account: string): Promise<string> {
   if (account === NEW_ACCOUNT) return (await engine.accounts.newAccount()).home;
   const home = engine.accounts.homeFor(account);
-  if (!home) throw new Error(MESSAGE.unknownAccount);
+  if (!home) throw new Error(MESSAGE.unknownAccount());
   return home;
 }
 

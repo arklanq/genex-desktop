@@ -63,7 +63,7 @@ export interface PlatformRow {
   end: PlatformEnd;
 }
 
-type NativeTarget = typeof PublishTarget.Mac | typeof PublishTarget.Windows;
+type NativeTarget = Exclude<PublishTarget, typeof PublishTarget.Web>;
 
 const isNative = (row: PublishPlatform): row is PublishPlatform & { target: NativeTarget } =>
   row.target !== PublishTarget.Web;
@@ -144,7 +144,7 @@ export function platformRows(
 export const listsPlatforms = (platforms: readonly PublishPlatform[], engineGame: boolean): boolean =>
   engineGame || platforms.some((row) => isNative(row) && row.state !== PublishPlatformState.Missing);
 
-/** The players of the apps Publish sends: "Mac", "Windows". */
+/** The players of the apps Publish sends: "Mac", "Windows", "Linux". */
 const sendingPlayers = (platforms: readonly PublishPlatform[]): string[] =>
   platforms.filter((row) => isNative(row) && row.uploads).map((row) => playersOf(row.target));
 
@@ -160,7 +160,7 @@ const APP_ENGINE_FACTS: ReadonlySet<string> = new Set([
   CoreFact.UnrealProject,
 ]);
 
-/** Whether a game is made in an engine that builds Mac and Windows apps (it gets Publish for them). */
+/** Whether a game is made in an engine that builds Mac, Windows and Linux apps (it gets Publish for them). */
 export const makesApps = (facts: readonly FactRef[]): boolean => facts.some((fact) => APP_ENGINE_FACTS.has(fact.id));
 
 /** The main press of a game with only apps: "Publish Mac app", "Publish Mac and Windows apps". */
@@ -238,7 +238,7 @@ export function failureLines(platforms: readonly PublishPlatform[], native: Gene
     });
 }
 
-/** The players a native row is for: "Mac", "Windows". */
+/** The players a native row is for: "Mac", "Windows", "Linux". */
 const playersOf = (target: PublishTarget): string => (target === PublishTarget.Web ? "" : WORDS.players[target]);
 
 /** What "Make with agent" sends through the game's chat for a platform. */

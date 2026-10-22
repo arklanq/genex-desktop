@@ -1,6 +1,6 @@
 /**
  * Test-owned production Publish dialog over a fake `window.studio`, for its platform rows: a game
- * made in an engine lists the web, Mac and Windows, each with what its build runs on, when it was
+ * made in an engine lists the web, Mac, Windows and Linux, each with what its build runs on, when it was
  * built and its size; a built app says "Coming soon" and a missing one offers "Make with agent",
  * which sends the ask to the game's chat and keeps the dialog open. A web game with no app shows no
  * rows.
@@ -64,28 +64,40 @@ const windows: PublishPlatform = {
   builtAt: null,
   uploads: false,
 };
-const sendingApps = () => [web(true), mac(PublishPlatformState.Ready, true), windows];
+/** A Linux app: not made, or built five minutes ago and going with Publish. */
+const linux = (made = false): PublishPlatform => ({
+  target: PublishTarget.Linux,
+  state: made ? PublishPlatformState.Ready : PublishPlatformState.Missing,
+  arch: made ? NativeArch.X64 : null,
+  bytes: made ? 700 * 1024 ** 2 : 0,
+  builtAt: made ? new Date(Date.now() - 5 * MINUTE).toISOString() : null,
+  uploads: made,
+});
+const sendingApps = () => [web(true), mac(PublishPlatformState.Ready, true), windows, linux(true)];
 const SCENES: Record<Scene, () => PublishPlatform[]> = {
-  engine: () => [web(true), mac(PublishPlatformState.Ready), windows],
-  stale: () => [web(true), mac(PublishPlatformState.Stale), windows],
-  web: () => [web(true), mac(PublishPlatformState.Missing), windows],
+  engine: () => [web(true), mac(PublishPlatformState.Ready), windows, linux()],
+  stale: () => [web(true), mac(PublishPlatformState.Stale), windows, linux()],
+  web: () => [web(true), mac(PublishPlatformState.Missing), windows, linux()],
   apps: sendingApps,
   appsSending: sendingApps,
   appsSent: sendingApps,
   appsFailed: sendingApps,
-  appsOnly: () => [web(false), mac(PublishPlatformState.Ready, true), windows],
-  appsHeld: () => [web(false), mac(PublishPlatformState.Ready, true), windows],
-  unityNoApp: () => [web(false), mac(PublishPlatformState.Missing), windows],
-  unitySoon: () => [web(false), mac(PublishPlatformState.Ready), windows],
-  unityOldPlugin: () => [web(false), mac(PublishPlatformState.Ready, true), windows],
-  unreal: () => [web(false), mac(PublishPlatformState.Missing), windows],
+  appsOnly: () => [web(false), mac(PublishPlatformState.Ready, true), windows, linux()],
+  appsHeld: () => [web(false), mac(PublishPlatformState.Ready, true), windows, linux()],
+  unityNoApp: () => [web(false), mac(PublishPlatformState.Missing), windows, linux()],
+  unitySoon: () => [web(false), mac(PublishPlatformState.Ready), windows, linux()],
+  unityOldPlugin: () => [web(false), mac(PublishPlatformState.Ready, true), windows, linux()],
+  unreal: () => [web(false), mac(PublishPlatformState.Missing), windows, linux()],
 };
 
 /** The publish record's apps in each scene: none sent yet, going now, on Genex, or refused. */
 function appsOf(of: Scene): GenexNativeRecord {
   const record: GenexNativeRecord = { supported: true, sending: of === "appsSending", sent: [], failed: [] };
   const at = new Date().toISOString();
-  if (of === "appsSent") record.sent.push({ platform: "mac", arch: "universal", version: "1.0+3f2a9c1d0e4b", sizeBytes: 1, publishedAt: at });
+  if (of === "appsSent") {
+    record.sent.push({ platform: "mac", arch: "universal", version: "1.0+3f2a9c1d0e4b", sizeBytes: 1, publishedAt: at });
+    record.sent.push({ platform: "linux", arch: "x64", version: "1.0+9b1e44c2d0a7", sizeBytes: 1, publishedAt: at });
+  }
   if (of === "appsFailed")
     record.failed.push({ platform: "mac", arch: "", error: "Couldn't get an upload token (HTTP 413)." });
   if (of === "appsHeld") {

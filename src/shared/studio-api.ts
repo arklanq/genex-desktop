@@ -5,6 +5,7 @@ import type {
   PlayGame,
   PlayGameDetail,
   PlayPoint,
+  PlayRemixAnswer,
   PlayShelf,
   PlayShelves,
 } from "./play.ts";
@@ -12,6 +13,7 @@ import type { PlayChangeResult, PlayCoverResult, PlayCoverType, PlayGameChange }
 import type { NativeInstalls, NativeSession, SessionAction } from "./play-native.ts";
 import type { PublishPlatform } from "./publish-platforms.ts";
 import type { GenexCatalogItem } from "./mention-corpus.ts";
+import type { LanguageChoice } from "./locale.ts";
 import type { MentionRef, MentionRetry } from "./prompt-mention.ts";
 import type {
   AvatarStyle,
@@ -74,7 +76,7 @@ import type { ProviderUsageReport } from "./provider-usage.ts";
 import type { BootState, SandboxSetupResult } from "./boot.ts";
 import type { AppAbout, ReadyUpdate, UpdateCheckResult } from "./app-update.ts";
 import type { PermissionMode, PermissionSettingsView, ToolPermissionAnswer } from "./permissions.ts";
-import type { LiveBehindEvent } from "./live-behind.ts";
+import type { LiveBehindEvent, WebBuildLoad } from "./live-behind.ts";
 import type { FieldRow, RunSharingDeleteResult, RunSharingStatus } from "./run-sharing.ts";
 
 export type { ProjectAsset, ProjectAssets };
@@ -215,19 +217,20 @@ export interface StudioApi {
   pluginChooseFile(id: string, request: PluginFileRequest): Promise<string | null>;
   /** The files Publish would put online for a game, for Studio's Publish dialog to show. Uploads nothing. */
   genexPublishReview(project: string): Promise<ExportReview>;
-  /** The web, Mac and Windows rows of Studio's Publish dialog for a game, from what its folder holds. */
+  /** The web, Mac, Windows and Linux rows of Studio's Publish dialog for a game, from what its folder holds. */
   genexPublishPlatforms(project: string): Promise<PublishPlatform[]>;
   /**
    * Publish the game to the Genex gallery from Studio's Publish dialog: its Publish press approved
-   * the files in `review`; `title` is the name players see.
+   * the files in `review`; `title` is the name players see; `remix` is its Allow remixing, whether the
+   * game's project goes with it so others can remix it.
    */
-  genexPublish(project: string, review: ExportReview, title?: string): Promise<void>;
+  genexPublish(project: string, review: ExportReview, title?: string, remix?: boolean): Promise<void>;
   /**
    * Publish a game that has only apps (no web build) from Studio's Publish dialog: its ready Mac and
    * Windows apps go to Genex and the game is listed under `title`. The press, under the rows it names,
-   * is the consent.
+   * is the consent; `remix` is its Allow remixing, whether the game's project goes once they are live.
    */
-  genexPublishApps(project: string, title?: string): Promise<void>;
+  genexPublishApps(project: string, title?: string, remix?: boolean): Promise<void>;
   pluginsIndex(refresh?: boolean): Promise<PluginIndexView>;
   pluginInstallGithub(spec: string): Promise<void>;
   /** What a pasted GitHub link leads to, pinned to one exact commit; nothing is installed. */
@@ -417,6 +420,7 @@ export interface StudioApi {
     blender?: boolean;
     autoResume?: boolean;
     computerControl?: boolean;
+    language?: LanguageChoice;
   }): Promise<StudioSettingsView>;
   /** Settings → Copy diagnostics: versions, provider status and the recent log, already redacted. */
   diagnostics(): Promise<string>;
@@ -513,8 +517,13 @@ export interface StudioApi {
   playSearch(query: string, shelf: PlayShelf): Promise<PlayGame[]>;
   /** The whole catalog for the composer's @ picker: every shelf, who made each, whether it may be taken. */
   playCatalog(): Promise<GenexCatalogItem[]>;
-  /** Play: copy a game's public source into a new game of the person's own; answers its library name. */
-  playRemix(slug: string): Promise<string>;
+  /**
+   * Play: copy a game's public source into a new game of the person's own; answers its library name,
+   * or why nothing was made (a source with no game in it).
+   */
+  playRemix(slug: string): Promise<PlayRemixAnswer>;
+  /** Play: whether each named game's source holds a game, so its card offers Remix. */
+  playRemixReady(slugs: string[]): Promise<Record<string, boolean>>;
   /** Play: players in each named game now; a game nobody counts is left out. */
   playOnline(slugs: string[]): Promise<Record<string, number>>;
   /** Play: open a game full screen in the viewer, its bar showing `title`; how it goes arrives as `UiEvent.PlayViewer`. */
@@ -615,6 +624,12 @@ export interface StudioApi {
   /** Take back one learned change, leaving every later change and the game lessons in place. */
   undoChange(snapshotId: string): Promise<{ file: string }>;
   loadPreview(project: string): Promise<string>;
+  /**
+   * Live loads the game's finished web build in a folder (a Godot or Unity export in web/) when it
+   * runs the game's folder without it, as when the game was opened before its export existed; never
+   * a build the person chose to view or a stopped game. A build still being written is `Unfinished`.
+   */
+  loadWebBuild(project: string): Promise<WebBuildLoad>;
   buildPreview(
     request: import("./build-preview.ts").BuildPreviewRequest,
   ): Promise<import("./build-preview.ts").BuildPreviewFrame | null>;
@@ -776,6 +791,11 @@ export interface StudioApi {
    */
   pathOfFile(file: File): string;
   /**
+   * The computer's languages in order, as main reads them, so the window's System is the menus'.
+   * Answered by the preload from the page's arguments (`shared/locale.ts`), never by main.
+   */
+  systemLanguages(): readonly string[];
+  /**
    * The native folder dialog. It answers *which folder* only — nothing is written by picking, and
    * the answer goes straight back to `inspectFolder`/`adoptFolder`; the renderer shows the folder
    * as `pathLabel`, never as the path it holds here.
@@ -818,6 +838,8 @@ export interface StudioSettingsView {
   autoResume?: boolean;
   /** Let agents control your computer (Settings → Permissions, macOS and Windows); off by default. */
   computerControl?: boolean;
+  /** The app's language for main's menus, dialogs and notifications; System by default. */
+  language?: LanguageChoice;
 }
 
 declare global {

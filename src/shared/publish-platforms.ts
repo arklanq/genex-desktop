@@ -1,14 +1,14 @@
 /**
  * The platforms a game can be published for, as the Publish dialog lists them (canvas board
- * "Publish"): the web, Mac and Windows, always all three. What was built is what is published: a
- * row's state comes from the build in the game folder, never from the author's words. Until
- * genex.games takes native builds, a built Mac or Windows app shows its state and publishes nothing
+ * "Publish"): the web, Mac, Windows and Linux, always all four. What was built is what is published:
+ * a row's state comes from the build in the game folder, never from the author's words. While the
+ * Genex CLI cannot send native builds, a built app shows its state and publishes nothing
  * (`uploads: false`, "Coming soon").
  */
 import type { NativeArch, NativePlatform } from "./play-native.ts";
 
 /** A row's platform. Wire values: never rename one. */
-export const PublishTarget = { Web: "web", Mac: "mac", Windows: "windows" } as const;
+export const PublishTarget = { Web: "web", Mac: "mac", Windows: "windows", Linux: "linux" } as const;
 export type PublishTarget = (typeof PublishTarget)[keyof typeof PublishTarget];
 
 /** The rows in the order the dialog lists them. */
@@ -42,3 +42,21 @@ export interface PublishPlatform {
 /** A row's platform as the builds' contract names it, or null for the web. */
 export const nativePlatformOf = (target: PublishTarget): NativePlatform | null =>
   target === PublishTarget.Web ? null : target;
+
+/** The Unreal folder a Linux game's program sits in: `<Game>/Binaries/Linux/<program>`. */
+const UNREAL_LINUX_BINARIES = new Set(["Linux", "LinuxArm64"]);
+
+/**
+ * What a Linux build found at `entry` (its program, `/`-separated, relative to the game folder) ships
+ * as: the folder sent, and the program inside it. A Unity or Godot program sits beside its data, so
+ * its own folder is the build; an Unreal one sits in `<Game>/Binaries/Linux/` under the package,
+ * whose root (with its Engine folder and `.sh` starter) is the build. Null for a program with no
+ * folder of its own (one at the game folder's root).
+ */
+export function linuxBuildOf(entry: string): { folder: string; entry: string } | null {
+  const parts = entry.split("/");
+  const unreal = parts.length >= 5 && parts.at(-3) === "Binaries" && UNREAL_LINUX_BINARIES.has(parts.at(-2) ?? "");
+  const inside = unreal ? 4 : 1;
+  if (parts.length <= inside) return null;
+  return { folder: parts.slice(0, -inside).join("/"), entry: parts.slice(-inside).join("/") };
+}

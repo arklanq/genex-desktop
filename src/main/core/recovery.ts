@@ -36,6 +36,7 @@ import { type InboxState, foldInbox, inboxOf } from "./inbox.ts";
 import type { EventData, EventEnvelope } from "../../substrate/types.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { CustomEvent, customEventData, customRecord } from "../../shared/custom-events.ts";
 import { EventKind, SnapshotScope } from "../../shared/event-log.ts";
 import { type BootNotice, BootReason, DispatchActionType } from "../../shared/protocol.ts";
@@ -47,7 +48,10 @@ import { releaseHarnessDesktops } from "../harness-rpc/desktop.ts";
 import { forgetHarnessComputers } from "../harness-rpc/preview.ts";
 import { RetainedState } from "../../substrate/game-candidate.ts";
 
-/** Words the recovery writes into the logs the user reads, and the errors it throws at them. */
+/**
+ * Words the recovery writes into the logs the user reads (English, as the log keeps them), and the
+ * errors it throws at them (the functions, in the person's language).
+ */
 const MESSAGE = {
   replyInterrupted: "This response was interrupted by a restart. Send a message to continue.",
   runInterrupted: "interrupted by restart",
@@ -55,8 +59,8 @@ const MESSAGE = {
   optimizationNotApplied: "Optimization interrupted; unverified candidate changes were not applied",
   adoptionRecovered: "Verified optimization kept; adoption recovered after restart",
   liveFilesChanged: "Live files changed after the saved adoption intent; they were preserved",
-  snapshotGone: "Studio no longer has that saved version.",
-  buildInFlight: "Studio is building right now. Rewind when the build finishes.",
+  snapshotGone: () => t("Studio no longer has that saved version."),
+  buildInFlight: () => t("Studio is building right now. Rewind when the build finishes."),
   rolledBackByUser: "rolled back by the user",
   rewindFailed: (failed: string) => `rewind failed: ${failed}`,
   reseedFailedToo: (failed: string, last: string) => `${failed}; reseeding failed too: ${last}`,
@@ -835,8 +839,8 @@ export class RecoveryService {
    */
   async rollbackTo(snapshotId: string): Promise<void> {
     const record = this.#core.snapshotIndex.get(snapshotId);
-    if (!record) throw new Error(MESSAGE.snapshotGone);
-    if (this.#x.selfImprovement.workInFlight()) throw new Error(MESSAGE.buildInFlight);
+    if (!record) throw new Error(MESSAGE.snapshotGone());
+    if (this.#x.selfImprovement.workInFlight()) throw new Error(MESSAGE.buildInFlight());
     const rescue = await this.keepingGameLessons(() => this.#core.snapshots.restore(record));
     // A manual rollback rewinds the harness exactly like the watchdog does — skipping the
     // reconcile here would pin every rewound seed file as an agent edit at the next boot.

@@ -28,6 +28,7 @@ import type { PluginInfo } from "../../../../shared/plugins.ts";
 import type { FactRef, FolderHolds, GameKind } from "../../../../shared/project-facts.ts";
 import { publishesAsWebGame } from "../../../../shared/project-workspace.ts";
 import { MINUTE_MS } from "../../../../shared/duration.ts";
+import { t } from "../../../../shared/i18n.ts";
 import { FEEDBACK_TEXT_MAX_CHARS, type FeedbackDraft, FeedbackScreen } from "../../../../shared/feedback.ts";
 import { relativeTime } from "../../../chat-labels.ts";
 import { type StepState, stepStateAt } from "../../../ui/step-bar.ts";
@@ -191,7 +192,7 @@ function againButton(job: GenexPublishJob | undefined, unresolved: boolean): Pub
     label: WORDS.publishAgain,
     action: GenexAction.PublishAllowUpload,
     args: { jobId: job.id },
-    ariaLabel: "Publish again without waiting for the last upload",
+    ariaLabel: t("Publish again without waiting for the last upload"),
   };
 }
 
@@ -258,7 +259,7 @@ export function publishView(state: GenexPublishState, now = Date.now()): Publish
     primary: {
       label: (failed && WORDS.tryAgain) || (listed && WORDS.updatePublic) || WORDS.publishToWeb,
       action: GenexAction.PublishGallery,
-      ariaLabel: "Publish this game on Genex",
+      ariaLabel: t("Publish this game on Genex"),
     },
     again: againButton(job, unresolved),
     terms:

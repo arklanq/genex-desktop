@@ -32,15 +32,40 @@ import {
   GenexListingState,
   type GenexNativeRecord,
   type GenexPublishJob,
+  GenexRemixProblem,
+  type GenexRemixRecord,
   type GenexPublishState,
   type GenexRequest,
   type GenexStatus,
 } from "../../shared/genex.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { PluginStillProblemCode } from "../../shared/plugins.ts";
 import { GenexCliStopped, runGenexCli, genexCliPath } from "./cli.ts";
-import { appClipCommit, listingOf, type NativeUpload, pinnedCliSendsApps, sendNativeBuild } from "./native-publish.ts";
+import {
+  appClipCommit,
+  listingOf,
+  type NativeUpload,
+  nativePublishArgs,
+  pinnedCliSendsApps,
+  sendNativeBuild,
+} from "./native-publish.ts";
+import {
+  dropStaged,
+  keptBackRecord,
+  pinnedCliSendsSource,
+  REMIX_FILE,
+  SOURCE_FOLDER,
+  type RemixSaved,
+  readRemixSaved,
+  remixAllowed,
+  saveRemix,
+  sentProject,
+  sourceArgs,
+  type StagedProject,
+  stageProject,
+} from "./remix-publish.ts";
 import {
   adviceLines,
   type CoverAnswer,
@@ -230,20 +255,25 @@ type RemoteRead = (typeof RemoteRead)[keyof typeof RemoteRead];
 
 const DEVICE_ENDED = new Set<string>([DeviceStatus.Denied, DeviceStatus.Expired]);
 
+/**
+ * The adapter's words. The agent reads its tool answers and refusals in English; what a person
+ * reads (the account card, the toolbar badge, an action's refusal) is a function, translated when said.
+ */
 const MESSAGE = {
-  SignInCanceled: "Sign-in was canceled",
-  UnexpectedAuthorization: "Unexpected authorization URL",
-  ConnectBadge: "Connect Genex to use assets",
-  SignInExpired: "Genex sign-in expired. Reconnect your account.",
+  SignInCanceled: () => t("Sign-in was canceled"),
+  UnexpectedAuthorization: () => t("Unexpected authorization URL"),
+  ConnectBadgeWord: () => t("Connect"),
+  ConnectBadge: () => t("Connect Genex to use assets"),
+  SignInExpired: () => t("Genex sign-in expired. Reconnect your account."),
   StoppedBeforeSubmission: "Stopped before Genex submission",
   ConnectToGenerate: "Connect Genex to generate assets.",
   InspectWithStudioId: "Use the delivered Studio job id for an asset inspection",
   NotThisProject: "Asset job does not belong to this project",
   ApprovalNeedsSource: "Approval requires an existing concept or preview generation",
   ApprovalViewsMissing: "Approval cannot proceed: required candidate/preview views are unavailable",
-  InvalidApproval: "Invalid approval",
-  ApprovalNotPending: "Approval is no longer pending",
-  ChooseCandidate: "Choose candidate 1, 2, or 3",
+  InvalidApproval: () => t("Invalid approval"),
+  ApprovalNotPending: () => t("Approval is no longer pending"),
+  ChooseCandidate: () => t("Choose candidate 1, 2, or 3"),
   CredentialsUninitialized: "Genex credentials are not initialized",
   NoTimeToSubmit:
     "Waiting for Genex's terms used up this call, so nothing was submitted or charged. Make this request again now that they are accepted.",
@@ -304,7 +334,7 @@ function markSignedOut(result: GenexStatus): void {
   result.connected = false;
   result.enabled = false;
   result.accountVerified = false;
-  result.error = MESSAGE.SignInExpired;
+  result.error = MESSAGE.SignInExpired();
 }
 
 /** Whether a controller registered for `scope` belongs to the project and thread being cancelled. */
@@ -378,6 +408,14 @@ interface PublishRun {
   job: GenexPublishJob;
   signal: AbortSignal;
   attempt: PublishAttempt;
+  /** The game's project staged for remixers, which the upload pushes as its source; null when it does not go. */
+  staged: StagedProject | null;
+}
+
+/** A publish's remixing: the person's choice in the dialog (absent when no one chose) and the game's folder. */
+export interface RemixChoice {
+  allowed?: boolean;
+  gameDir?: string;
 }
 
 interface PendingAuthorization {
@@ -436,6 +474,10 @@ export class GenexTools {
   #nativeSteps = new Map<string, NativeStep>();
   /** Whether this CLI has `genex native`; tests say so of their stand-in. */
   readonly #sendsApps: boolean;
+  /** Whether this CLI pushes a game's source from another folder (`--source`); tests say so of their stand-in. */
+  readonly #sendsSource: boolean;
+  /** The games whose project Allow remixing is sending now. */
+  #remixSends = new Set<string>();
   /** When Studio last took each game's cover on its own (`coverAuto`). */
   #coverAutoAt = new Map<string, number>();
   /** The last write to a game's kept shot, or a send's read of it: each waits for the one before. */
@@ -469,6 +511,8 @@ export class GenexTools {
       termsWait?: { waitMs: number; pollMs: number };
       /** Whether the CLI sends apps (`genex native`); else read from the pinned CLI's version. */
       sendsApps?: boolean;
+      /** Whether the CLI sends a game's project (`--source`); else read from the pinned CLI's version. */
+      sendsSource?: boolean;
     } = {},
   ) {
     this.root = root;
@@ -487,6 +531,7 @@ export class GenexTools {
     this.#deliver = options.deliver ?? deliverGenexFiles;
     this.#preload = options.preload ?? fileURLToPath(new URL("../../genex-host/preload.mjs", import.meta.url));
     this.#sendsApps = options.sendsApps ?? pinnedCliSendsApps();
+    this.#sendsSource = options.sendsSource ?? pinnedCliSendsSource();
   }
   async init() {
     this.#initialized ??= (async () => {
@@ -535,8 +580,8 @@ export class GenexTools {
       method: "POST",
       body: JSON.stringify({ label: DEVICE_LABEL }),
     });
-    if (epoch !== this.#authEpoch) throw new Error(MESSAGE.SignInCanceled);
-    if (!isGenexAuthorizationUrl(new URL(d.verifyUrl))) throw new Error(MESSAGE.UnexpectedAuthorization);
+    if (epoch !== this.#authEpoch) throw new Error(MESSAGE.SignInCanceled());
+    if (!isGenexAuthorizationUrl(new URL(d.verifyUrl))) throw new Error(MESSAGE.UnexpectedAuthorization());
     this.#auth = {
       deviceCode: d.deviceCode,
       userCode: d.userCode,
@@ -569,7 +614,8 @@ export class GenexTools {
     });
   }
   async setupBadge() {
-    if (!(await this.#token())) return { badge: "Connect", tone: "warn", title: MESSAGE.ConnectBadge };
+    if (!(await this.#token()))
+      return { badge: MESSAGE.ConnectBadgeWord(), tone: "warn", title: MESSAGE.ConnectBadge() };
     return {};
   }
   /**
@@ -600,8 +646,9 @@ export class GenexTools {
     const dir = this.#publishDir(project);
     await mkdir(path.join(dir, "home"), { recursive: true, mode: 0o700 });
     await mkdir(path.join(dir, "dist"), { recursive: true, mode: 0o700 });
-    // The CLI pushes this folder as the game's source; Studio's private HOME is not part of it.
-    await writeFile(path.join(dir, ".gitignore"), "home/\n");
+    // The CLI pushes this folder as the game's source when no project goes with a publish: Studio's
+    // private HOME, a project staged for remixers and the record of it are never part of it.
+    await writeFile(path.join(dir, ".gitignore"), `home/\n${SOURCE_FOLDER}/\n${REMIX_FILE}\n`);
     return dir;
   }
   async #publishState(project: string): Promise<GenexPublishState> {
@@ -642,8 +689,8 @@ export class GenexTools {
    * git-lfs is missing, so a machine without it is refused here, before the CLI is ever spawned.
    */
   async #gitReady(dir: string, home: string): Promise<void> {
-    if (!(await this.#run("git", ["--version"], dir, home))) throw new Error(PUBLISH_MESSAGE.NeedsGit);
-    if (!(await this.#run("git", ["lfs", "version"], dir, home))) throw new Error(PUBLISH_MESSAGE.NeedsGitLfs);
+    if (!(await this.#run("git", ["--version"], dir, home))) throw new Error(PUBLISH_MESSAGE.NeedsGit());
+    if (!(await this.#run("git", ["lfs", "version"], dir, home))) throw new Error(PUBLISH_MESSAGE.NeedsGitLfs());
   }
   /** What Studio knows about this game's pages. Read-only: it never starts or resumes an upload. */
   async publishStatus(project: string, force = false): Promise<GenexPublishState> {
@@ -743,9 +790,9 @@ export class GenexTools {
    */
   async publishAllowNewUpload(project: string, jobId: string): Promise<GenexPublishState> {
     return this.#account(async () => {
-      if (this.#publishJobs.has(project)) throw new Error(PUBLISH_MESSAGE.StillRunning);
+      if (this.#publishJobs.has(project)) throw new Error(PUBLISH_MESSAGE.StillRunning());
       const state = await this.publishStatus(project);
-      if (!state.job || state.job.id !== jobId) throw new Error(PUBLISH_MESSAGE.NotCurrent);
+      if (!state.job || state.job.id !== jobId) throw new Error(PUBLISH_MESSAGE.NotCurrent());
       if (state.job.state !== GenexPublishJobState.Unresolved) return state;
       finishJob(state.job, GenexPublishJobState.Failed, new Date().toISOString());
       state.job.error = PUBLISH_MESSAGE.AllowedNewUpload;
@@ -775,7 +822,7 @@ export class GenexTools {
    * the public version, creating the hosted project and the gallery listing the first time. `title`
    * is the name it is listed under: the last one Studio listed, else its folder name, as words.
    * `camera` shoots the genex-cover demo again; that frame is sent once the publish is recorded.
-   * `apps` are the game's Mac and Windows builds, sent once its web build is public.
+   * `apps` are the game's Mac, Windows and Linux builds, sent once its web build is public.
    */
   async publishGallery(
     project: string,
@@ -783,12 +830,14 @@ export class GenexTools {
     title?: unknown,
     camera?: CoverCamera,
     apps: readonly NativeUpload[] = [],
+    remix: RemixChoice = {},
   ): Promise<GenexPublishState> {
     return this.#account(() =>
       this.#startPublish(project, GenexPublishKind.Gallery, {
         exportStage,
         title,
         apps,
+        remix,
         ...(camera ? { camera } : {}),
       }),
     );
@@ -805,11 +854,12 @@ export class GenexTools {
     apps: readonly NativeUpload[],
     title?: unknown,
     camera?: CoverCamera,
+    remix: RemixChoice = {},
   ): Promise<GenexPublishState> {
     return this.#account(async () => {
-      if (!this.#sendsApps || apps.length === 0) throw new Error(PUBLISH_MESSAGE.NoApps);
+      if (!this.#sendsApps || apps.length === 0) throw new Error(PUBLISH_MESSAGE.NoAppsRefusal());
       const state = await this.publishStatus(project);
-      if (!state.connected) throw new Error(PUBLISH_MESSAGE.ConnectFirst);
+      if (!state.connected) throw new Error(PUBLISH_MESSAGE.ConnectFirstRefusal());
       if (!(await this.#termsAccepted(project, state))) return state;
       const busy =
         state.job?.state === GenexPublishJobState.Running || state.job?.state === GenexPublishJobState.Unresolved;
@@ -833,7 +883,7 @@ export class GenexTools {
       if (shotLines.length) state.warnings = shotLines;
       delete state.lastError;
       await this.#savePublishState(project, state);
-      const done = this.#runAppsJob(project, job, apps);
+      const done = this.#runAppsJob(project, job, apps, remix);
       this.#publishJobs.set(project, { job, done });
       void done.finally(() => {
         if (this.#publishJobs.get(project)?.job === job) this.#publishJobs.delete(project);
@@ -842,7 +892,12 @@ export class GenexTools {
     });
   }
   /** The apps-only publish itself, detached from the press: hosted project, apps, listing, record. */
-  async #runAppsJob(project: string, job: GenexPublishJob, apps: readonly NativeUpload[]): Promise<void> {
+  async #runAppsJob(
+    project: string,
+    job: GenexPublishJob,
+    apps: readonly NativeUpload[],
+    remix: RemixChoice,
+  ): Promise<void> {
     const dir = this.#publishDir(project);
     const controller = new AbortController();
     this.#controllers.set(controller, { project });
@@ -856,7 +911,11 @@ export class GenexTools {
       this.#nativeSteps.set(project, step);
       await this.#recordApps(project, job, meta, await sending);
       // The cover goes once the game is on Genex, as a gallery publish's does: never instead of an app.
-      if (job.state === GenexPublishJobState.Done) this.#startCoverStep(project, job.id);
+      if (job.state === GenexPublishJobState.Done) {
+        // Apps carry no source: the project goes on its own once the game is on Genex.
+        await this.#sendProjectAfterApps(project, meta, remix, controller.signal);
+        this.#startCoverStep(project, job.id);
+      }
     } catch (error) {
       finishJob(job, GenexPublishJobState.Failed, new Date().toISOString());
       job.error = errorMessage(error).slice(-PUBLISH_ERROR_TAIL_CHARS);
@@ -900,7 +959,7 @@ export class GenexTools {
     const legal = await this.#fetch(GenexRoute.LegalStatus).catch((error) => {
       const status = statusOf(error);
       if (status === HTTP_UNAUTHORIZED || status === HTTP_FORBIDDEN)
-        throw new Error(PUBLISH_MESSAGE.AuthorizationExpired);
+        throw new Error(PUBLISH_MESSAGE.AuthorizationExpired());
       throw error;
     });
     if (typeof legal?.accepted === "boolean") state.terms = { accepted: legal.accepted, acceptUrl: ACCEPT_URL };
@@ -916,10 +975,17 @@ export class GenexTools {
       title,
       camera,
       apps = [],
-    }: { exportStage?: () => Promise<unknown>; title?: unknown; camera?: CoverCamera; apps?: readonly NativeUpload[] },
+      remix = {},
+    }: {
+      exportStage?: () => Promise<unknown>;
+      title?: unknown;
+      camera?: CoverCamera;
+      apps?: readonly NativeUpload[];
+      remix?: RemixChoice;
+    },
   ): Promise<GenexPublishState> {
     const state = await this.publishStatus(project);
-    if (!state.connected) throw new Error(PUBLISH_MESSAGE.ConnectFirst);
+    if (!state.connected) throw new Error(PUBLISH_MESSAGE.ConnectFirstRefusal());
     if (!(await this.#termsAccepted(project, state))) return state;
     const busy =
       state.job?.state === GenexPublishJobState.Running || state.job?.state === GenexPublishJobState.Unresolved;
@@ -948,7 +1014,7 @@ export class GenexTools {
     if (shotLines.length) state.warnings = shotLines;
     delete state.lastError;
     await this.#savePublishState(project, state);
-    const done = this.#runPublishJob(project, kind, job, { cover, connect, apps });
+    const done = this.#runPublishJob(project, kind, job, { cover, connect, apps, remix });
     this.#publishJobs.set(project, { job, done });
     this.#exporting.delete(project);
     void done.finally(() => {
@@ -1036,22 +1102,41 @@ export class GenexTools {
     project: string,
     kind: GenexPublishKind,
     job: GenexPublishJob,
-    { cover, connect, apps }: { cover: boolean; connect: boolean; apps: readonly NativeUpload[] },
+    {
+      cover,
+      connect,
+      apps,
+      remix,
+    }: { cover: boolean; connect: boolean; apps: readonly NativeUpload[]; remix: RemixChoice },
   ): Promise<void> {
     const dir = this.#publishDir(project);
     const home = path.join(dir, "home");
     const controller = new AbortController();
     this.#controllers.set(controller, { project });
-    const run: PublishRun = { project, dir, home, job, signal: controller.signal, attempt: { submitted: false } };
+    const run: PublishRun = {
+      project,
+      dir,
+      home,
+      job,
+      signal: controller.signal,
+      attempt: { submitted: false },
+      staged: null,
+    };
     try {
       const meta = await this.#ensureHostedProject(project, dir, home, job, controller.signal);
       run.attempt.slug = meta.slug;
       if (connect) await this.#connectCopy(run, meta);
+      const allowed = remixAllowed(remix.allowed, await this.#remixSaved(project));
+      // Only a publish opens the game to remixers: a draft carries no project.
+      const staging = allowed && kind === GenexPublishKind.Gallery;
+      const problem = staging ? await this.#stageForUpload(run, remix.gameDir) : undefined;
       const outs = kind === GenexPublishKind.Draft ? [await this.#uploadDraft(run)] : await this.#uploadTested(run);
       if (!outs) return;
       const relist = needsRelisting(meta, (await this.#publishState(project)).title, job.title);
       const listing = { title: job.title };
       for (const phase of publicSteps(meta, kind, relist)) outs.push(await this.#runStep(run, phase, listing));
+      // Remixing is settled before the publish is recorded done, so its record never lags the dialog.
+      if (kind === GenexPublishKind.Gallery) await this.#settleRemixing(project, meta, allowed, run.staged, problem);
       await this.#recordUpload(project, dir, kind, job, meta, outs);
       if (cover && coverRides(kind, await this.#pages(project))) this.#startCoverStep(project, job.id);
       // The apps go once the web build is public: a draft is not for players, and apps are live at once.
@@ -1060,6 +1145,7 @@ export class GenexTools {
       await this.#failPublishJob(project, job, run.attempt, error);
     } finally {
       this.#controllers.delete(controller);
+      await dropStaged(dir);
     }
   }
   /** One CLI phase, persisted first, with Genex's record read just before anything is uploaded. */
@@ -1075,7 +1161,9 @@ export class GenexTools {
     run.attempt.before =
       phase === GenexPublishPhase.Promoting ? undefined : await this.#hostedStaging(run.attempt.slug);
     run.attempt.submitted = true;
-    return (await this.#cliText(run.dir, publishArgs(phase, listing), run.signal, run.home)).out;
+    // Only an upload pushes the game's source; the other steps ship nothing new.
+    const source = phase === GenexPublishPhase.Uploading ? sourceArgs(run.staged) : [];
+    return (await this.#cliText(run.dir, [...publishArgs(phase, listing), ...source], run.signal, run.home)).out;
   }
   /**
    * Upload the build to the draft page. A CLI that failed while Genex's record shows nothing
@@ -1317,10 +1405,10 @@ export class GenexTools {
     const state = await this.publishStatus(project);
     const wanted = linkTarget(target);
     if (wanted === PublishLinkTarget.Gallery && state.status !== GenexHostedStatus.Published)
-      throw new Error(PUBLISH_MESSAGE.NotInGallery);
+      throw new Error(PUBLISH_MESSAGE.NotInGallery());
     const url = linkFor(state, wanted);
-    if (!url) throw new Error(PUBLISH_MESSAGE.NothingOnline);
-    if (!isGenexLink(url)) throw new Error(PUBLISH_MESSAGE.UnrecognizedLink);
+    if (!url) throw new Error(PUBLISH_MESSAGE.NothingOnline());
+    if (!isGenexLink(url)) throw new Error(PUBLISH_MESSAGE.UnrecognizedLink());
     return { target: wanted, verifyUrl: url };
   }
   // ── the game's Genex cover ───────────────────────────────────────────────────────────────
@@ -1334,6 +1422,81 @@ export class GenexTools {
     const state = await this.#publishState(project);
     mergeMeta(state, await readJsonOr<HostedMeta>(metaFile(this.#publishDir(project))));
     return state;
+  }
+  /** What `remix.json` keeps for `project`. */
+  async #remixSaved(project: string): Promise<RemixSaved> {
+    return readRemixSaved(await readJsonOr(path.join(this.#publishDir(project), REMIX_FILE)));
+  }
+  /** The game's project as remixers get it, answered beside the publish record. */
+  async #remixRecord(project: string): Promise<GenexRemixRecord> {
+    return { supported: this.#sendsSource, sending: false, ...(await this.#remixSaved(project)) };
+  }
+  /**
+   * Stage the game's project for an upload to push. Answers why it could not go, when it could not;
+   * nothing is staged while this CLI cannot send a project.
+   */
+  async #stageForUpload(run: PublishRun, gameDir: string | undefined): Promise<GenexRemixProblem | undefined> {
+    if (!this.#sendsSource) return undefined;
+    if (!gameDir) return GenexRemixProblem.Failed;
+    const staged = await stageProject(run.dir, gameDir);
+    if ("problem" in staged) return staged.problem;
+    run.staged = staged;
+    return undefined;
+  }
+  /**
+   * Once a publish is public: remixing stays open on Genex only when the game's project went with it,
+   * and is turned off otherwise, so no one remixes a game without its project. Nothing changes while
+   * this CLI cannot send a project. A refused change is kept as the record's problem: the publish
+   * itself is already live.
+   */
+  async #settleRemixing(
+    project: string,
+    meta: HostedMeta,
+    allowed: boolean,
+    staged: StagedProject | null,
+    problem: GenexRemixProblem | undefined,
+  ): Promise<void> {
+    if (!this.#sendsSource) return;
+    const saved = staged ? sentProject(staged, new Date(this.#now())) : keptBackRecord(allowed, problem);
+    const changed = await this.#setRemixing(meta, staged !== null);
+    await saveRemix(this.#publishDir(project), changed ? saved : { ...saved, problem: GenexRemixProblem.Failed });
+  }
+  /** Open the game to remixers on Genex, or close it; false when Genex refused or could not be asked. */
+  async #setRemixing(meta: HostedMeta, open: boolean): Promise<boolean> {
+    if (typeof meta.id !== "string" || !meta.id) return false;
+    const body = JSON.stringify({ private: !open });
+    return this.#fetch(GenexRoute.visibility(meta.id), { method: "PATCH", body }).then(
+      () => true,
+      () => false,
+    );
+  }
+  /**
+   * After a game with only apps went live: send its project with `genex make-remixable --source`,
+   * which also opens it to remixers, when remixing is allowed; else turn remixing off. Nothing changes
+   * while this CLI cannot send a project.
+   */
+  async #sendProjectAfterApps(project: string, meta: HostedMeta, remix: RemixChoice, signal: AbortSignal) {
+    if (!this.#sendsSource) return;
+    const dir = this.#publishDir(project);
+    const allowed = remixAllowed(remix.allowed, await this.#remixSaved(project));
+    if (!allowed) return this.#settleRemixing(project, meta, false, null, undefined);
+    if (!remix.gameDir) return this.#settleRemixing(project, meta, true, null, GenexRemixProblem.Failed);
+    const staged = await stageProject(dir, remix.gameDir);
+    if ("problem" in staged) return this.#settleRemixing(project, meta, true, null, staged.problem);
+    this.#remixSends.add(project);
+    try {
+      await this.#spawnCli(dir, ["make-remixable", ...sourceArgs(staged)], signal, {
+        timeoutMs: NATIVE_PUBLISH_TIMEOUT_MS,
+        parse: false,
+        home: path.join(dir, "home"),
+      });
+      await saveRemix(dir, sentProject(staged, new Date(this.#now())));
+    } catch {
+      await this.#settleRemixing(project, meta, true, null, GenexRemixProblem.Failed);
+    } finally {
+      this.#remixSends.delete(project);
+      await dropStaged(dir);
+    }
   }
   /** A publish state with the game's cover, and the cover lines of its own job among its warnings. */
   async #withCover(project: string, state: GenexPublishState): Promise<GenexPublishState> {
@@ -1350,7 +1513,8 @@ export class GenexTools {
     const warnings = [...(state.warnings ?? []), ...(own ? (last.lines ?? []) : [])];
     const cover = { shot, last, sending: this.#coverSteps.has(project), candidates, clip, clipLast, agentTook };
     const native = await this.#nativeRecord(project);
-    return { ...state, ...(warnings.length ? { warnings } : {}), cover, native };
+    const remix = { ...(await this.#remixRecord(project)), sending: this.#remixSends.has(project) };
+    return { ...state, ...(warnings.length ? { warnings } : {}), cover, native, remix };
   }
   /**
    * genex__cover shoot: photograph the game's genex-cover demo now and keep it as its shot. A
@@ -1475,7 +1639,7 @@ export class GenexTools {
   async coverPick(project: string, sha: unknown): Promise<GenexPublishState> {
     const dir = this.#coverDir(project);
     const picked = await this.#coverWrite(project, () => pickCandidate(dir, sha));
-    if (!picked) throw new Error(COVER_MESSAGE.NoSuchCandidate);
+    if (!picked) throw new Error(COVER_MESSAGE.NoSuchCandidate());
     return this.#withCover(project, await this.publishStatus(project));
   }
   /**
@@ -1629,8 +1793,8 @@ export class GenexTools {
     await atomicWriteJson(file, record);
     for (const app of apps) {
       const listing = gallery && !record.listing ? ["--gallery", "--title", gallery.title] : [];
-      const outcome = await sendNativeBuild(app, (target) =>
-        this.#spawnCli(dir, ["native", "publish", target, ...listing], signal, {
+      const outcome = await sendNativeBuild(app, () =>
+        this.#spawnCli(dir, [...nativePublishArgs(app), ...listing], signal, {
           timeoutMs: NATIVE_PUBLISH_TIMEOUT_MS,
           parse: true,
           home: path.join(dir, "home"),
@@ -2174,17 +2338,17 @@ export class GenexTools {
     throw new Error(deliveredElsewhereMessage(job, sibling));
   }
   async approve(project: string, id: string, candidate?: number) {
-    if (!JOB_ID.test(id)) throw new Error(MESSAGE.InvalidApproval);
+    if (!JOB_ID.test(id)) throw new Error(MESSAGE.InvalidApproval());
     const data = await this.#account(async () => {
       const dir = path.join(await this.#workspace(project), "jobs", id);
       const job = await readJsonOr<GenexJob>(path.join(dir, "job.json"));
       if (job?.status !== GenexJobStatus.ApprovalRequired || !job.approval?.images?.length)
-        throw new Error(MESSAGE.ApprovalNotPending);
+        throw new Error(MESSAGE.ApprovalNotPending());
       const pending = await readJsonOr<{ root: string; request: GenexRequest }>(path.join(dir, "request.json"));
-      if (!pending) throw new Error(MESSAGE.ApprovalNotPending);
+      if (!pending) throw new Error(MESSAGE.ApprovalNotPending());
       if (pending.request.operation === GenexOperation.CharacterPreview) {
         if (candidate === undefined || !PREVIEW_CANDIDATES.includes(candidate))
-          throw new Error(MESSAGE.ChooseCandidate);
+          throw new Error(MESSAGE.ChooseCandidate());
         pending.request.options = { ...pending.request.options, candidate };
       }
       job.status = GenexJobStatus.Approved;

@@ -15,12 +15,15 @@ import { UnityTool } from "../../src/plugins/unity/backend.ts";
 import {
   COLYSEUS_PACKAGE,
   COLYSEUS_PACKAGE_URL,
+  GAME_FILES,
   LINK_FILE,
   SETTINGS_FILE,
 } from "../../src/plugins/unity/multiplayer.ts";
 import { backendOn, MULTIPLAYER_PACKAGE_SOURCE, manifestOf, realTmp, withProject } from "../helpers/unity-backend.ts";
 
 const UNITY_6 = "6000.0.30f1";
+/** The Genex files a game gets beside the package, as the plugin ships them. */
+const GAME_FILES_SOURCE = path.resolve("src/plugins/unity/multiplayer/genex-game");
 const exists = async (file: string) => (await lstat(file).catch(() => null)) !== null;
 
 /** A game with a Unity project in unity/, and the tool as the agent calls it. */
@@ -75,6 +78,24 @@ describe("Genex multiplayer in a Unity game", () => {
     const settings = JSON.parse(await readFile(path.join(game.root, SETTINGS_FILE), "utf8"));
     assert.deepEqual(settings, { slug: "tank-arena", apiUrl: "https://api.genex.games" });
     assert.deepEqual(JSON.parse(await readFile(path.join(game.game, "genex.json"), "utf8")), { matchmaking });
+    for (const [file, shipped] of Object.entries(GAME_FILES))
+      assert.deepEqual(
+        await readFile(path.join(game.root, file)),
+        await readFile(path.join(GAME_FILES_SOURCE, shipped)),
+        `${file}: the game's name wherever it runs`,
+      );
+  });
+
+  it("before the first publish, says the published copies learn the game's name from Genex, so a publish needs no rebuild", async () => {
+    const game = await unityGame();
+    const answer = await game.call();
+    assert.match(answer, /no Genex project yet/);
+    assert.match(answer, /GenexGame\.Slug/);
+    assert.doesNotMatch(answer, /then build again/, "a publish needs no second build");
+    for (const file of Object.keys(GAME_FILES)) assert.ok(await exists(path.join(game.root, file)), file);
+    assert.deepEqual(JSON.parse(await readFile(path.join(game.root, SETTINGS_FILE), "utf8")), {
+      apiUrl: "https://api.genex.games",
+    });
   });
 
   it("is the same the second time, keeps a Colyseus version the person chose, and keeps their changed files as .mine~", async () => {
@@ -87,13 +108,16 @@ describe("Genex multiplayer in a Unity game", () => {
     const pump = path.join(game.root, "Packages/com.genex.multiplayer/Runtime/Unity/GenexPump.cs");
     await writeFile(pump, "// my own pump\n");
     await writeFile(path.join(game.root, LINK_FILE), "<linker />\n");
+    const gameFile = path.join(game.root, "Assets/Genex/GenexGame.cs");
+    await writeFile(gameFile, "// my own name\n");
     const settings = path.join(game.root, SETTINGS_FILE);
     await writeFile(settings, JSON.stringify({ slug: "tank-arena", apiUrl: "https://api-dev.genex.games", mine: 1 }));
     const answer = await game.call();
     assert.match(
       answer,
-      /Kept your changed Runtime\/Unity\/GenexPump\.cs, Assets\/Genex\/link\.xml beside the new ones as \.mine~/,
+      /Kept your changed Runtime\/Unity\/GenexPump\.cs, Assets\/Genex\/link\.xml, Assets\/Genex\/GenexGame\.cs beside the new ones as \.mine~/,
     );
+    assert.equal(await readFile(`${gameFile}.mine~`, "utf8"), "// my own name\n");
     assert.equal(await readFile(`${pump}.mine~`, "utf8"), "// my own pump\n");
     assert.deepEqual(
       JSON.parse(await readFile(settings, "utf8")),
@@ -128,7 +152,7 @@ describe("Genex multiplayer in a Unity game", () => {
   });
 
   it("writes nothing through a link", async () => {
-    for (const at of ["Packages/com.genex.multiplayer", "Assets", "Assets/Resources"]) {
+    for (const at of ["Packages/com.genex.multiplayer", "Assets", "Assets/Resources", "Assets/Genex"]) {
       const game = await unityGame();
       const outside = await realTmp("unity-outside-");
       await mkdir(path.dirname(path.join(game.root, at)), { recursive: true });

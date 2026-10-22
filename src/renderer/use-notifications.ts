@@ -26,11 +26,12 @@ import { threadMeta } from "./state/threads.ts";
 import { safeStorage } from "./storage.ts";
 import { ThreadKind } from "../shared/event-log.ts";
 import { UiEvent } from "../shared/ui-events.ts";
+import { t } from "../shared/i18n.ts";
 
 const NOTICE_SUBTITLES: Partial<Record<NoticeKind, string>> = {
-  [NoticeKind.Question]: "Waiting for your answer",
-  [NoticeKind.Plan]: "Plan ready for review",
-  [NoticeKind.Permission]: "Permission needed",
+  [NoticeKind.Question]: t("Waiting for your answer"),
+  [NoticeKind.Plan]: t("Plan ready for review"),
+  [NoticeKind.Permission]: t("Permission needed"),
 };
 
 /** A sign-in or Play notice belongs to no chat: it always shows. Any other shows while its chat is open and its game is here. */
@@ -175,7 +176,14 @@ function sendSystemNotices(arrived: Notice[], threads: ConversationRecord[], gam
   };
   const notes =
     arrived.length > 3
-      ? [{ title: "Genex", body: `${arrived.length} updates from your games` }]
+      ? [
+          {
+            title: "Genex",
+            body: t("{count, plural, one {# update from your games} other {# updates from your games}}", {
+              count: arrived.length,
+            }),
+          },
+        ]
       : arrived.map((notice) => ({
           id: notice.id,
           title: source(notice),

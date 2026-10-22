@@ -11,7 +11,7 @@ import { usePlay } from "../state/hooks.ts";
 import { studio } from "../state/studio.ts";
 import { ToastTone } from "../state/toasts.ts";
 import { Button } from "../ui/Button.tsx";
-import { INSTALLED_GAMES_WORDS, NATIVE_WORDS } from "../words.ts";
+import { INSTALLED_GAMES_WORDS, NATIVE_WORDS, nativeHereWords } from "../words.ts";
 
 const WORDS = INSTALLED_GAMES_WORDS;
 
@@ -49,7 +49,7 @@ function InstalledRow({ game, now }: { game: InstalledGame; now: number }): JSX.
     setRemoving(true);
     try {
       await studio().play.uninstall(game.slug);
-      studio().notify(NATIVE_WORDS.removed(game.title), ToastTone.Ok);
+      studio().notify(nativeHereWords(game.platform).removed(game.title), ToastTone.Ok);
     } catch {
       studio().notify(NATIVE_WORDS.removeFailed, ToastTone.Error);
       setRemoving(false);

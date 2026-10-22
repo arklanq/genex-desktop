@@ -86,6 +86,9 @@ import { SessionCredentials } from "../session-credentials.ts";
 import { PluginCallCutOff, type PluginInvocation, PluginProcess } from "./process.ts";
 import { MAX_ARTIFACT_BYTES, packageCopyFilter, unpackEnvelope } from "./pack.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { currentLocale, t } from "../../shared/i18n.ts";
+import type { Locale } from "../../shared/locale.ts";
+import { ManifestWords } from "./manifest-words.ts";
 
 interface Installed {
   rememberAccount?: boolean;
@@ -182,36 +185,55 @@ const DEFAULT_ACCOUNT_ACTIONS: NonNullable<PluginManifest["account"]> = {
 type AccountActions = NonNullable<PluginManifest["account"]>;
 const accountActionsOf = (manifest: PluginManifest): AccountActions => manifest.account ?? DEFAULT_ACCOUNT_ACTIONS;
 
+/**
+ * What a plugin's lifecycle and calls say. The words that are functions are the person's, in their
+ * language: refusals of what they did in Plugins (install, update, reload, watch, remove) and the
+ * question a local plugin's tool asks them. The plain strings stay English: a tool call's refusal
+ * is the model's to read, a service's is the plugin backend's, and an unknown id is a caller's bug.
+ */
 const MESSAGE = {
   IdentityMismatch: "Plugin identity mismatch",
   OutsideStorage: "Plugin directory is outside Studio storage",
-  PackageMissing: "This plugin's package is missing; remove the plugin and install it again",
+  PackageMissing: () => t("This plugin's package is missing; remove the plugin and install it again"),
   InvalidProject: "Invalid project",
   Unavailable: (id: string) => `Plugin ${id} is unavailable`,
-  InstallFirst: "Install the plugin first",
+  InstallFirst: () => t("Install the plugin first"),
   UnknownPlugin: "Unknown plugin",
-  FolderGone: "The folder this plugin was loaded from is gone; load it again",
-  OriginUnknown: "Studio does not know where this plugin came from; load it again",
-  NeedsMarketplace: "Reinstalling this plugin needs the marketplace, which is unavailable in this session",
-  NotReinstalled: "The plugin was not reinstalled",
+  FolderGone: () => t("The folder this plugin was loaded from is gone; load it again"),
+  OriginUnknown: () => t("Studio does not know where this plugin came from; load it again"),
+  NeedsMarketplace: () => t("Reinstalling this plugin needs the marketplace, which is unavailable in this session"),
+  NotReinstalled: () => t("The plugin was not reinstalled"),
   ConfirmReplacement: (next: PluginManifest, previous: PluginManifest) =>
-    `${next.name} by ${next.publisher} would replace ${previous.name} by ${previous.publisher}, erasing its saved account and data; confirm "Replace and erase data" first`,
-  PermissionExpansion: "Permission expansion requires confirmation",
-  ServersChanged: "MCP servers changed; load the folder again to review",
-  StepsChanged:
-    "Its steps at Genex's moments changed (hooks, observers, locks, folders or harness tools), so it wasn't reloaded: load it again with Load local plugin… to review them",
-  WatchAgentFolder:
-    "Watch folder is off for a plugin in a folder agents write in (a game's folder, a worker's copy): load it again with Load local plugin… after each change instead",
+    t(
+      '{name} by {publisher} would replace {previousName} by {previousPublisher}, erasing its saved account and data; confirm "Replace and erase data" first',
+      {
+        name: next.name,
+        publisher: next.publisher,
+        previousName: previous.name,
+        previousPublisher: previous.publisher,
+      },
+    ),
+  PermissionExpansion: () => t("Permission expansion requires confirmation"),
+  ServersChanged: () => t("MCP servers changed; load the folder again to review"),
+  StepsChanged: () =>
+    t(
+      "Its steps at Genex's moments changed (hooks, observers, locks, folders or harness tools), so it wasn't reloaded: load it again with Load local plugin… to review them",
+    ),
+  WatchAgentFolder: () =>
+    t(
+      "Watch folder is off for a plugin in a folder agents write in (a game's folder, a worker's copy): load it again with Load local plugin… after each change instead",
+    ),
   NoHostServices: "Host services unavailable during installation",
-  NotInCatalog: "Plugin is not in the curated catalog",
-  InvalidCatalogArtifact: "Invalid catalog artifact",
-  DownloadFailed: (status: number) => `Plugin download failed (${status})`,
-  ArtifactTooLarge: "Plugin artifact exceeds 256 MiB",
-  DigestMismatch: "Plugin artifact digest mismatch",
-  CatalogMismatch: "Catalog manifest mismatch",
-  EnableFirst: "Enable the plugin first",
-  AccountPlugin: (name: string) => `${name} holds your account, so it can't be removed: turn it off instead`,
-  OnlyLocalWatch: "Only plugins loaded from a local folder can be watched",
+  NotInCatalog: () => t("Plugin is not in the curated catalog"),
+  InvalidCatalogArtifact: () => t("Invalid catalog artifact"),
+  DownloadFailed: (status: number) => t("Plugin download failed ({status})", { status }),
+  ArtifactTooLarge: () => t("Plugin artifact exceeds 256 MiB"),
+  DigestMismatch: () => t("Plugin artifact digest mismatch"),
+  CatalogMismatch: () => t("Catalog manifest mismatch"),
+  EnableFirst: () => t("Enable the plugin first"),
+  AccountPlugin: (name: string) =>
+    t("{name} holds your account, so it can't be removed: turn it off instead", { name }),
+  OnlyLocalWatch: () => t("Only plugins loaded from a local folder can be watched"),
   UnlockRequired: "Explicit account unlock required",
   ConnectionRequired: "Explicit account connection required",
   DisconnectRequired: "Explicit disconnect required",
@@ -228,14 +250,17 @@ const MESSAGE = {
   ConsentUnavailable: "This tool requires user consent, which is unavailable in this session",
   AskAgain: (plugin: string) =>
     `${plugin} was loaded again or turned off while you were asked, so the tool didn't run. Call it again to be asked about the plugin as it is now.`,
-  LocalAccess: (plugin: string) => `${plugin} was loaded from a folder on this Mac and runs with your access.`,
+  LocalAccess: (plugin: string, question: string) =>
+    t("{plugin} was loaded from a folder on this Mac and runs with your access. {question}", { plugin, question }),
   LocalTool: (plugin: string, tool: string) =>
-    `${plugin} was loaded from a folder on this Mac and runs with your access. Let it run ${tool}?`,
+    t("{plugin} was loaded from a folder on this Mac and runs with your access. Let it run {tool}?", { plugin, tool }),
   UnknownAction: "Unknown plugin action",
   UnknownPanel: "Unknown panel",
   InvalidSetting: "Invalid plugin setting",
   BundledId: (id: string, fromLocal: boolean) =>
-    `"${id}" is a plugin that ships with Studio; a package from ${fromLocal ? "a local folder" : "GitHub"} cannot use its id`,
+    fromLocal
+      ? t('"{id}" is a plugin that ships with Studio; a package from a local folder cannot use its id', { id })
+      : t('"{id}" is a plugin that ships with Studio; a package from GitHub cannot use its id', { id }),
 } as const;
 
 /** One call's card, as `#askFirst` asks it. */
@@ -487,7 +512,7 @@ async function downloadArtifact(url: string): Promise<Buffer> {
     size += value.length;
     if (size > MAX_ARTIFACT_BYTES) {
       await reader.cancel();
-      throw new Error(MESSAGE.ArtifactTooLarge);
+      throw new Error(MESSAGE.ArtifactTooLarge());
     }
     chunks.push(value);
   }
@@ -515,18 +540,18 @@ function assertUpdateReviewed(
   approved: string[] | undefined,
   reason: PluginChange["reason"] | undefined,
 ) {
-  if (expandsCapabilities(next, current, approved)) throw new Error(MESSAGE.PermissionExpansion);
+  if (expandsCapabilities(next, current, approved)) throw new Error(MESSAGE.PermissionExpansion());
   // An MCP server is native code with an environment of its own: changing what one runs, where
   // it runs or what it is handed is an expansion of the same kind a new capability is, and an
   // update that was never shown to anybody must not quietly acquire it.
-  if (approved === undefined && !sameServers(next, current)) throw new Error(MESSAGE.PermissionExpansion);
+  if (approved === undefined && !sameServers(next, current)) throw new Error(MESSAGE.PermissionExpansion());
   // A hot reload carries the capabilities the user approved, not a review of new servers or hosts.
   if (reason === PluginChangeReason.Reloaded && reviewedLaunch(next) !== reviewedLaunch(current))
-    throw new Error(MESSAGE.ServersChanged);
+    throw new Error(MESSAGE.ServersChanged());
   // Nor of the steps Genex runs on its own, with no card: a hook, an observer, a lock's person-first
   // probe, a folder workers may write in, a harness tool or a readiness check.
   if (reason === PluginChangeReason.Reloaded && harnessSteps(next) !== harnessSteps(current))
-    throw new Error(MESSAGE.StepsChanged);
+    throw new Error(MESSAGE.StepsChanged());
 }
 
 /** What of a plugin Genex runs or widens on its own, without asking, in one comparable form. */
@@ -657,6 +682,8 @@ export class PluginRegistry {
   #installed = new Map<string, Installed>();
   #seedManifests = new Map<string, PluginManifest>();
   #unlisted = new Map<string, Unlisted>();
+  /** Each package's manifest words in Genex's language, from its own `locales/` (`manifest-words.ts`). */
+  #words = new ManifestWords();
   /** Where each bundled seed lives, by plugin id: its picture outlives an installed copy made before it had one. */
   #seedDirectories = new Map<string, string>();
   #processes = new Map<string, PluginProcess>();
@@ -890,6 +917,8 @@ export class PluginRegistry {
     return next;
   }
   #fire(change: PluginChange) {
+    // Its package may be another copy now, or gone: its words are read again when next shown.
+    this.#words.forget();
     try {
       this.onChange?.(change);
     } catch {}
@@ -942,7 +971,7 @@ export class PluginRegistry {
         if (!this.#owned(record.directory)) throw new Error(MESSAGE.OutsideStorage);
         if (!(await isDirectory(record.directory))) {
           // Older builds refused such a record, then swept the copy it named; a seed can be copied again.
-          if (record.source !== PluginSourceKind.Bundled) throw new Error(MESSAGE.PackageMissing);
+          if (record.source !== PluginSourceKind.Bundled) throw new Error(MESSAGE.PackageMissing());
           this.#lostSeedCopies.set(id, record);
           return;
         }
@@ -986,7 +1015,7 @@ export class PluginRegistry {
       });
     }
     // A lost copy of a plugin Studio no longer ships has nothing to be copied from.
-    for (const [id, p] of this.#lostSeedCopies) this.#refuse(id, p, new Error(MESSAGE.PackageMissing));
+    for (const [id, p] of this.#lostSeedCopies) this.#refuse(id, p, new Error(MESSAGE.PackageMissing()));
     this.#lostSeedCopies.clear();
   }
   /**
@@ -1177,6 +1206,24 @@ export class PluginRegistry {
       }),
     );
     return [...installed, ...unlisted];
+  }
+  /**
+   * The plugins as {@link list} gives them, each manifest's texts a person reads in `locale` (the
+   * app's language by default) from the plugin's own catalog: what the window shows. Every other
+   * field, of the manifest too, is the one `list` gives; the manifests the registry runs on stay English.
+   */
+  async displayList(locale: Locale = currentLocale()): Promise<PluginInfo[]> {
+    return Promise.all(
+      this.list().map(async (info) => {
+        const found = info.unlisted ? this.#unlisted.get(info.manifest.id) : this.#installed.get(info.manifest.id);
+        return found ? { ...info, manifest: await this.#words.manifest(info.manifest, found.directory, locale) } : info;
+      }),
+    );
+  }
+  /** Plugin `id`'s manifest with its texts a person reads in `locale` (the app's by default); undefined for no plugin. */
+  async displayManifest(id: string, locale: Locale = currentLocale()): Promise<PluginManifest | undefined> {
+    const found = this.#installed.get(id) ?? this.#unlisted.get(id);
+    return found ? this.#words.manifest(found.manifest, found.directory, locale) : undefined;
   }
   /** Publish every enabled plugin's servers once, after the host has set `mcpHost`. */
   async syncMcpServers() {
@@ -1434,13 +1481,15 @@ export class PluginRegistry {
   }
   /**
    * The longest one call of a plugin tool (by agent name) may run in its backend: the host's
-   * ceiling, or its plugin's longest native job and a margin. The ceiling for an unknown name.
+   * ceiling, the tool's own (`timeoutMs`), or its plugin's longest native job and a margin. The
+   * ceiling for an unknown name.
    */
   callCeilingOf(agentName: string): number {
-    const [id = ""] = agentName.split("__");
+    const [id = "", tool = ""] = agentName.split("__");
     const p = this.#installed.get(id);
     const nativeJobTimeouts = (p?.manifest.nativeJobs ?? []).map((j) => j.timeoutMs + NATIVE_JOB_MARGIN_MS);
-    return Math.max(PLUGIN_CALL_TIMEOUT_MS, ...nativeJobTimeouts);
+    const declared = p?.manifest.tools.find((t) => t.name === tool)?.timeoutMs ?? 0;
+    return Math.max(PLUGIN_CALL_TIMEOUT_MS, declared, ...nativeJobTimeouts);
   }
   /**
    * The `project` locks of the enabled plugins that one of their agent tools or connectors reaching
@@ -1543,7 +1592,7 @@ export class PluginRegistry {
   async setEnabled(id: string, enabled: boolean) {
     return this.#serial(async () => {
       const p = this.#installed.get(id);
-      if (!p || p.removed) throw new Error(MESSAGE.InstallFirst);
+      if (!p || p.removed) throw new Error(MESSAGE.InstallFirst());
       const wasEnabled = p.enabled;
       // A local plugin loaded off ran none of its code: its backend is proven as the person turns it on.
       if (enabled && !wasEnabled && p.source === PluginSourceKind.Local) await this.#probe(p.directory, p.manifest);
@@ -1621,16 +1670,16 @@ export class PluginRegistry {
         p?.scan,
       );
     if (origin?.kind === PluginSourceKind.Local) {
-      if (!origin.directory || !(await isDirectory(origin.directory))) throw new Error(MESSAGE.FolderGone);
+      if (!origin.directory || !(await isDirectory(origin.directory))) throw new Error(MESSAGE.FolderGone());
       // No `scan` argument: the folder is read again, so the verdict is recomputed rather than inherited.
       return this.installLocal(origin.directory, PluginSourceKind.Local, p?.manifest.capabilities, origin);
     }
-    if (!origin) throw new Error(MESSAGE.OriginUnknown);
+    if (!origin) throw new Error(MESSAGE.OriginUnknown());
     const info = this.list().find((x) => x.manifest.id === id);
-    if (!this.reacquire || !info) throw new Error(MESSAGE.NeedsMarketplace);
+    if (!this.reacquire || !info) throw new Error(MESSAGE.NeedsMarketplace());
     await this.reacquire(info);
     const after = this.#installed.get(id);
-    if (!after || after.removed) throw new Error(MESSAGE.NotReinstalled);
+    if (!after || after.removed) throw new Error(MESSAGE.NotReinstalled());
     return after.manifest;
   }
   async installLocal(
@@ -1774,18 +1823,19 @@ export class PluginRegistry {
   }
   async installCatalog(id: string, approvedCapabilities: string[]) {
     const entry = (await this.catalog()).find((p) => p.manifest.id === id);
-    if (!entry) throw new Error(MESSAGE.NotInCatalog);
+    if (!entry) throw new Error(MESSAGE.NotInCatalog());
     if (!entry.url.startsWith("https://") || !SHA256_HEX.test(entry.sha256))
-      throw new Error(MESSAGE.InvalidCatalogArtifact);
+      throw new Error(MESSAGE.InvalidCatalogArtifact());
     const bytes = await downloadArtifact(entry.url);
-    if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256) throw new Error(MESSAGE.DigestMismatch);
+    if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256) throw new Error(MESSAGE.DigestMismatch());
     return this.installEnvelope(
       bytes,
       PluginSourceKind.Catalog,
       approvedCapabilities,
       { kind: PluginSourceKind.Catalog, url: entry.url, sha256: entry.sha256 },
       async (manifest) => {
-        if (canonicalManifest(manifest) !== canonicalManifest(entry.manifest)) throw new Error(MESSAGE.CatalogMismatch);
+        if (canonicalManifest(manifest) !== canonicalManifest(entry.manifest))
+          throw new Error(MESSAGE.CatalogMismatch());
         return undefined;
       },
     );
@@ -1832,12 +1882,12 @@ export class PluginRegistry {
     this.#unwatch(id);
     if (!enabled) return;
     const p = this.#installed.get(id);
-    if (!p || !isLive(p)) throw new Error(MESSAGE.EnableFirst);
+    if (!p || !isLive(p)) throw new Error(MESSAGE.EnableFirst());
     const directory = p.origin?.kind === PluginSourceKind.Local ? p.origin.directory : undefined;
-    if (!directory) throw new Error(MESSAGE.OnlyLocalWatch);
-    if (!(await isDirectory(directory))) throw new Error(MESSAGE.FolderGone);
+    if (!directory) throw new Error(MESSAGE.OnlyLocalWatch());
+    if (!(await isDirectory(directory))) throw new Error(MESSAGE.FolderGone());
     // An agent's edit there would run as soon as it reloads, with no card: such a folder is loaded again by hand.
-    if (await this.agentWritable(directory)) throw new Error(MESSAGE.WatchAgentFolder);
+    if (await this.agentWritable(directory)) throw new Error(MESSAGE.WatchAgentFolder());
     const entry: { watcher: { close(): void }; timer: ReturnType<typeof setTimeout> | undefined } = {
       watcher: this.watchFolder(directory, () => {
         if (this.#watchers.get(id) !== entry) return;
@@ -2030,7 +2080,7 @@ export class PluginRegistry {
         return this.#runHostTool(id, host, args, binding, signal);
       };
     const nativeJobTimeouts = (p.manifest.nativeJobs ?? []).map((j) => j.timeoutMs + NATIVE_JOB_MARGIN_MS);
-    const ceiling = Math.max(PLUGIN_CALL_TIMEOUT_MS, timeoutMs, ...nativeJobTimeouts);
+    const ceiling = Math.max(PLUGIN_CALL_TIMEOUT_MS, timeoutMs, declaration.timeoutMs ?? 0, ...nativeJobTimeouts);
     // The person's edit on the card (`confirmationInput`) is the call's value for that parameter.
     const parameter = declaration.confirmationInput?.parameter;
     const callArgs = parameter && input !== undefined ? { ...args, [parameter]: input } : args;
@@ -2091,7 +2141,7 @@ export class PluginRegistry {
     if (!this.consent) throw new Error(MESSAGE.ConsentUnavailable);
     const own = declaration.confirmation;
     const confirmation = own
-      ? `${MESSAGE.LocalAccess(p.manifest.name)} ${own}`
+      ? MESSAGE.LocalAccess(p.manifest.name, own)
       : MESSAGE.LocalTool(p.manifest.name, declaration.name);
     const asking = { ...declaration, confirmation };
     const options = own ? {} : { offerAlways: true };
@@ -2358,7 +2408,9 @@ export class PluginRegistry {
     const p = this.#active(id),
       panel = p.manifest.panels.find((x) => x.id === panelId);
     if (!panel) throw new Error(MESSAGE.UnknownPanel);
-    return { title: panel.title, html: await readFile(await containedReal(p.directory, panel.file), "utf8") };
+    // The title as the plugin list shows it, so the page knows which panel is open.
+    const say = await this.#words.say(p.directory, currentLocale());
+    return { title: say(panel.title), html: await readFile(await containedReal(p.directory, panel.file), "utf8") };
   }
   /**
    * The declared settings, each the stored value when it still has the declared type, otherwise

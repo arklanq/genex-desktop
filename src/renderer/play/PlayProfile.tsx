@@ -8,6 +8,7 @@
  */
 import type { JSX } from "react";
 import { useEffect } from "react";
+import { intlLocale } from "../../shared/i18n.ts";
 import {
   FriendStatus,
   type PlayMe,
@@ -40,7 +41,7 @@ const HEADER_AVATAR = 123;
 /** A friend's avatar on the profile's row, with room for gear. */
 const FRIEND_TILE_AVATAR = 66;
 /** "Mar 2026": when two people became friends, as a tile says it. */
-const SINCE_FORMAT = new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" });
+const SINCE_FORMAT = new Intl.DateTimeFormat(intlLocale(), { month: "short", year: "numeric" });
 
 /** A number on a chip, then its noun. */
 function Chip({ value, noun, hook }: { value: number; noun: string; hook: string }): JSX.Element {
@@ -123,6 +124,7 @@ function ProfileFriends({ friends, name }: { friends: PlayProfileFriend[]; name:
       title={WORDS.friends}
       note={String(friends.length)}
       label={name ? WORDS.friendsOf(name) : WORDS.friends}
+      arrows={WORDS.friendsArrows(name)}
       hook={{ "data-profile-friends": "" }}
     >
       {friends.map((friend) => {

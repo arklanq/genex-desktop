@@ -156,6 +156,7 @@ describe("Play card menu: the store's manage", () => {
         playOpen: async () => {},
         playClose: async () => {},
         playRemix: async (slug) => slug,
+        playRemixReady: async (slugs) => Object.fromEntries(slugs.map((slug) => [slug, true])),
         assetLibrary: async () => ({ assets: [], nextCursor: null }),
         playCatalog: async () => [],
         playGame: async () => {

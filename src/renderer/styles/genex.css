@@ -258,10 +258,6 @@
     padding: 4px 20px 20px;
   }
 }
-.genex-checking {
-  font-size: 14px;
-  line-height: 22px;
-}
 .genex-off {
   margin-block-start: 28px;
   color: var(--ink-3);
@@ -1159,6 +1155,101 @@ button.genex-publish-banner-name:hover {
   text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
   text-underline-offset: 3px;
 }
+/* Allow remixing under the press: one quiet centred line, and why the last project didn't go. */
+.genex-remix-choice {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  color: var(--ink-3);
+  font-size: 13px;
+  line-height: 20px;
+}
+.genex-remix-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.genex-remix-line label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+.genex-remix-line input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--accent-fill);
+  cursor: pointer;
+}
+.genex-remix-line .genex-publish-text-button,
+.genex-remix-terms {
+  font-family: inherit;
+  color: var(--ink);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, currentColor 40%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.genex-remix-problem {
+  color: var(--orange);
+  text-align: center;
+}
+/* What remixers can do: the dialog turned to a page of its own, with the way back. */
+.genex-remix-rights {
+  display: grid;
+  gap: 18px;
+  padding: 22px;
+}
+.genex-remix-rights-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.genex-remix-rights-head h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.genex-remix-back {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: var(--secondary);
+  color: var(--ink);
+  cursor: pointer;
+}
+.genex-remix-rights section {
+  display: grid;
+  gap: 8px;
+}
+.genex-remix-rights h3 {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 400;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+.genex-remix-rights p {
+  margin: 0;
+  font-size: 15px;
+  line-height: 22px;
+  color: var(--ink);
+}
+.genex-remix-rights .genex-remix-terms {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  justify-self: start;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  color: var(--ink);
+}
 /* The platforms a game with an app is built for: one framed list, a hairline between rows. */
 .genex-publish-platforms {
   display: grid;
@@ -1256,6 +1347,7 @@ button.genex-publish-banner-name:hover {
   color: var(--ink-3);
   font-size: 13px;
   line-height: 19px;
+  text-align: center;
 }
 /* The busy button: the step at work, then its clock. */
 .genex-publish-clock {

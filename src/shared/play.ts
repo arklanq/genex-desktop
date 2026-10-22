@@ -310,6 +310,16 @@ export const remixTitle = (title: string): string => `${title} remix`;
 export const RemixStep = { Copy: "copy", Models: "models", Packages: "packages", Build: "build" } as const;
 export type RemixStep = (typeof RemixStep)[keyof typeof RemixStep];
 
+/** Why Remix made nothing, by code: the renderer says each in its own words. Wire values: never rename one. */
+export const PlayRemixRefusal = {
+  /** The game's source on Genex holds no game: its creator never shared its project. */
+  NoProject: "no-project",
+} as const;
+export type PlayRemixRefusal = (typeof PlayRemixRefusal)[keyof typeof PlayRemixRefusal];
+
+/** What a Remix press answers: the new game's library name, or why nothing was made. */
+export type PlayRemixAnswer = string | { refused: PlayRemixRefusal };
+
 /** How far a remix has come (`UiEvent.PlayRemix`): the step it is on, and its bytes when it has any. */
 export interface RemixProgress {
   slug: string;

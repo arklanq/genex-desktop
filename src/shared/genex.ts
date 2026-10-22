@@ -598,10 +598,15 @@ export interface GenexPublishState {
    */
   cover?: GenexCoverRecord;
   /**
-   * The game's Mac and Windows apps as its last publish sent them, answered beside the record like
+   * The game's Mac, Windows and Linux apps as its last publish sent them, answered beside the record like
    * the cover. Absent from a Genex plugin older than native builds.
    */
   native?: GenexNativeRecord;
+  /**
+   * The game's project as remixers get it, answered beside the record like the cover. Absent from a
+   * Genex plugin older than remixing from the app.
+   */
+  remix?: GenexRemixRecord;
 }
 
 /** One app a publish sent: live for desktop players under `version`. */
@@ -637,6 +642,40 @@ export interface GenexNativeListing {
  * and an app that fails never fails the publish. `supported` is false while Studio's pinned CLI is
  * older than native builds: the dialog then says they are coming soon and nothing is sent.
  */
+/** Why a game's project did not go for remixing, by code. Wire values: never rename one. */
+export const GenexRemixProblem = {
+  /** The game folder has no git repository, so which files are its own is unknown. */
+  NoRepository: "no-repository",
+  /** Nothing of the game's own is left once caches, secrets and links are taken out. */
+  Empty: "empty",
+  /** More than Genex keeps of a game's source. */
+  TooBig: "too-big",
+  /** The CLI could not send it. */
+  Failed: "failed",
+} as const;
+export type GenexRemixProblem = (typeof GenexRemixProblem)[keyof typeof GenexRemixProblem];
+
+/**
+ * The game's project as remixers get it, answered beside the publish record like the cover. Remixing
+ * is allowed only with the project: a publish whose project could not go turns remixing off on Genex,
+ * so no one remixes a game without its project. `supported` is false while Studio's pinned CLI cannot
+ * send a game's project: the dialog then offers no choice and nothing changes on Genex.
+ */
+export interface GenexRemixRecord {
+  supported: boolean;
+  /** The project is being sent now (Allow remixing on a game already published). */
+  sending: boolean;
+  /** Whether the person last chose to allow remixing; absent before any choice. */
+  allowed?: boolean;
+  /** When the project last went to Genex; absent while remixers would get nothing of the game. */
+  sentAt?: string;
+  /** How big the project that went was. */
+  files?: number;
+  bytes?: number;
+  /** Why the last try did not send it. */
+  problem?: GenexRemixProblem;
+}
+
 export interface GenexNativeRecord {
   supported: boolean;
   /** Apps are being sent now. */

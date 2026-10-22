@@ -1041,15 +1041,16 @@ export type Billing = "local" | "subscription" | "metered";
 
 /** What the sign-in card and the Models room say for a subscription. */
 export interface SignInCopy {
-  /** "your Claude subscription": the thing the user already pays for. */
-  readonly product: string;
   readonly card: string;
   readonly account: string;
   readonly install: string;
   /** The vendor's own install page for the CLI. */
   readonly installUrl: string;
   readonly get: string;
-  readonly who: string;
+  /** The flat sign-in card's line: the thing the user already pays for, put to work. */
+  readonly useLine: string;
+  /** The sign-in card's line while the subscription is not signed in: why, and who handles the password. */
+  readonly signInLine: string;
 }
 // ↑ src/shared/providers.ts
 
@@ -1119,6 +1120,13 @@ export interface EngineDescriptor {
 }
 // ↑ src/shared/engine-descriptor.ts
 
+export type Locale = 'en' | 'ru' | 'es' | 'pt-BR' | 'de' | 'fr' | 'ja' | 'ko' | 'zh-Hans';
+// ↑ src/shared/locale.ts
+
+/** What Settings remembers: a language, or the computer's. */
+export type LanguageChoice = Locale | "system";
+// ↑ src/shared/locale.ts
+
 export interface StudioSettingsView {
   /** Self-improvement: off, Studio learns nothing new and changes nothing about itself. */
   learning: boolean;
@@ -1134,6 +1142,8 @@ export interface StudioSettingsView {
   autoResume?: boolean;
   /** Let agents control your computer (Settings → Permissions, macOS and Windows); off by default. */
   computerControl?: boolean;
+  /** The app's language for main's menus, dialogs and notifications; System by default. */
+  language?: LanguageChoice;
 }
 // ↑ src/shared/studio-api.ts
 
@@ -1177,6 +1187,10 @@ export interface StudioActivityItem {
   runId?: string;
   snapshotId?: string;
   undone?: boolean;
+  /** A learned change the person took back themselves (Undo), not one a later restore took back. */
+  undoneByUser?: true;
+  /** A restart of Studio that failed: the one recovery the person must act on. */
+  restartFailed?: true;
   outcome?: RunOutcomeKind;
   /** The run's own plain report, when it wrote one. */
   report?: string;
@@ -2206,6 +2220,11 @@ export interface HarnessHostApi {
       pendingProposals: Array<{ skill: string; title?: string; summary?: string[]; rationale: string | undefined }>;
     };
   };
+  /**
+   * The language Genex speaks (Settings, else the computer's): its tag and its own name. An agent
+   * answers Genex's own messages in it (a resume, a continue), and the person in theirs.
+   */
+  "studio.language": { params: void; result: { tag: string; name: string } };
   "context.policy": { params: { engine: string; model?: string; threadId?: string }; result: ContextSettings };
   /** The Self-improvement switch, asked by the harness before each thing it would learn. */
   "learning.enabled": { params: void; result: boolean };

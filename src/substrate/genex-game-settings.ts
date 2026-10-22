@@ -14,6 +14,8 @@ import { TEMPLATE_GENEX_SETTINGS } from "./genex-game-manifest.ts";
 export const GENEX_API_URL = "https://api.genex.games";
 /** A Genex project's slug as Genex names one. */
 const SLUG = /^[a-z0-9][a-z0-9-]{0,99}$/;
+/** Whether `value` is a Genex project's slug as Genex names one. */
+export const isGenexSlug = (value: string): boolean => SLUG.test(value);
 /** The matchmaking a publish sends, as the Genex SDK documents it. */
 const MATCHMAKING_PRESETS: ReadonlySet<string> = new Set(["open", "duel", "arena", "teams", "private"]);
 const WIN_CONDITIONS: ReadonlySet<string> = new Set([

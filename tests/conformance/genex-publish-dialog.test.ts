@@ -187,7 +187,10 @@ test("an Unreal game with a ready Mac app publishes as its app, never as a web g
   const rig = await dialogRig();
   try {
     const game = await addUnrealGame(rig);
-    await assert.rejects(publishAppsFromDialog(rig.core, UNREAL_GAME, UNREAL_TITLE, true), /no Mac or Windows app/);
+    await assert.rejects(
+      publishAppsFromDialog(rig.core, UNREAL_GAME, UNREAL_TITLE, true),
+      /no Mac, Windows or Linux app/,
+    );
     const app = path.join(game.dir, "Builds", "Mac", "Dirt Track.app", "Contents");
     await mkdir(path.join(app, "MacOS"), { recursive: true });
     await writeFile(
@@ -206,7 +209,10 @@ test("an Unreal game with a ready Mac app publishes as its app, never as a web g
       binding: { project: UNREAL_GAME, directory: game.dir, threadId: undefined },
     });
     assert.equal(rig.staged.length, 0, "no web copy is made");
-    await assert.rejects(publishAppsFromDialog(rig.core, UNREAL_GAME, UNREAL_TITLE, false), /no Mac or Windows app/);
+    await assert.rejects(
+      publishAppsFromDialog(rig.core, UNREAL_GAME, UNREAL_TITLE, false),
+      /no Mac, Windows or Linux app/,
+    );
     await assert.rejects(
       publishFromDialog(rig.core, UNREAL_GAME, await publishReview(rig.core, GAME)),
       refusedAsUnreal,

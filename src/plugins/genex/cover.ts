@@ -16,6 +16,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { lstat, mkdir, open, readdir, readFile, rm } from "node:fs/promises";
 import path from "node:path";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import {
   GENEX_COVER_CANDIDATES_DIR,
   GENEX_COVER_MAX_BYTES,
@@ -212,7 +213,8 @@ export const MESSAGE = {
   SendTimedOut: "Genex did not answer about the cover in time",
   OwnerHolds:
     "The owner chose this game's cover on genex.games and that choice stands: send nothing, and never ask them to clear it.",
-  NoSuchCandidate: "That cover is no longer among this game's recent frames.",
+  /** Publish's refusal of a pick, in the person's words. */
+  NoSuchCandidate: () => t("That cover is no longer among this game's recent frames."),
   TermsFirst: "Genex's terms have changed: the user must accept them on genex.games before the cover can be set.",
 } as const;
 

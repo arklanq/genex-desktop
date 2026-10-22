@@ -13,14 +13,15 @@ import {
   purchaseOver,
   withoutBidiControls,
 } from "../../shared/play-purchase.ts";
+import { intlLocale } from "../../shared/i18n.ts";
 import { PLAY_WORDS } from "../words.ts";
 
 const WORDS = PLAY_WORDS.purchase;
 const CENTS_PER_DOLLAR = 100;
-/** Coin as genex.games writes it: whole, digits grouped (1,240). */
-const COIN_DIGITS = new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 });
-/** genex.games prices coin in US dollars. */
-const DOLLARS = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" });
+/** Coin as the reader writes numbers: whole, digits grouped (1,240). */
+const COIN_DIGITS = new Intl.NumberFormat(intlLocale(), { maximumFractionDigits: 0 });
+/** genex.games prices coin in US dollars, written as the reader writes money. */
+const DOLLARS = new Intl.NumberFormat(intlLocale(), { style: "currency", currency: "USD" });
 
 /** A number of coin as the sheet writes it: `1,240`. */
 export const coinNumber = (coins: number): string => COIN_DIGITS.format(coins);

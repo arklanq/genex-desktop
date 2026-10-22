@@ -13,6 +13,7 @@
 import type { JSX, RefObject } from "react";
 import { MessageOrigin } from "../../shared/protocol.ts";
 import { RunState } from "../../shared/run-state.ts";
+import { t } from "../../shared/i18n.ts";
 import { EntryKind } from "../chat-entries.ts";
 import { ChatFilesScope, useChatFilesRecheck } from "../chat-files.ts";
 import type { ChatPanelProps } from "../chat/chat-panel-props.ts";
@@ -24,10 +25,11 @@ import { stepsOffer } from "../chat/engine-steps.ts";
 import { EngineStepsCard } from "../chat/EngineStepsCard.tsx";
 import { RewindDialog } from "../chat/RewindDialog.tsx";
 import { type ChatParts, useChatPanel } from "../chat/use-chat-panel.ts";
+import { HeldState } from "../chat/use-launch-handover.ts";
 import { chatPlaceholder } from "../composer-placeholder.ts";
 import { loopAvailableFor } from "../loop-setting.ts";
 import { notifyProblem } from "../state/toasts.ts";
-import { Pending } from "../ui/Pending.tsx";
+import { ChatSkeleton } from "../chat/ChatSkeleton.tsx";
 import { LoadFailed } from "../ui/LoadFailed.tsx";
 import { PromptBar, type PromptBarHandle } from "../ui/PromptBar.tsx";
 import { engineLoopGate, engineRewindNote } from "../engine-game.ts";
@@ -58,9 +60,13 @@ export function ChatPanel(props: ChatPanelProps): JSX.Element {
           {loading && (
             <div className="absolute inset-0 bg-page">
               {props.loadError ? (
-                <LoadFailed what="this chat" error={props.loadError} onRetry={props.onRetryLoad} />
+                <LoadFailed
+                  message={t("Could not load this chat.")}
+                  error={props.loadError}
+                  onRetry={props.onRetryLoad}
+                />
               ) : (
-                <Pending label="Loading conversation…" className="p-4 text-sm" />
+                <ChatSkeleton />
               )}
             </div>
           )}
@@ -80,6 +86,14 @@ export function ChatPanel(props: ChatPanelProps): JSX.Element {
   );
 }
 
+/**
+ * A new game's held first message already asks for the sign-in, with its own button: the composer's
+ * card shows only once that sign-in is under way, for its steps.
+ */
+function heldAsksSignIn({ handover, composer }: ChatParts): boolean {
+  return handover.held?.state === HeldState.SignedOut && !composer.gate.card?.waiting;
+}
+
 /** The composer and the cards docked above it: sign-in, questions, the plan and consents. */
 function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandle | null> }): JSX.Element {
   const { chat, composer, work, submit, composerRef, focusComposer, reply } = parts;
@@ -95,7 +109,7 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
       {...(threadId ? { conversationKey: threadId } : {})}
       loading={parts.props.loading}
       connectModel={chat.isStudioThread && !gate.needsSignIn && composer.noModel}
-      signIn={gate.card}
+      signIn={heldAsksSignIn(parts) ? null : gate.card}
       questions={transcript.interviewQuestions.filter((entry) => entry.kind === EntryKind.Question)}
       questionsDisabled={busy || working}
       onAnswerQuestion={(answer) => submit(answer, undefined, true)}

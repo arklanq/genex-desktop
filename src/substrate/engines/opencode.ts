@@ -30,6 +30,7 @@ import { writeDelegateStills } from "./codex.ts";
 import { JUDGE_RULES, mcpToolsNote, offLimitsNote, planModeNote, readOnlyNote } from "./codex-prompts.ts";
 import {
   OPENCODE_AGENT,
+  builtInHosts,
   OpenCodeAccess,
   OpenCodeDialect,
   openCodeConfig,
@@ -67,6 +68,7 @@ import { EngineFailureKind, StopReason } from "../../shared/engine-requests.ts";
 import { ModelCatalogSource } from "../../shared/model-catalog.ts";
 import { engineMode, PermissionMode } from "../../shared/permissions.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { t } from "../../shared/i18n.ts";
 import { stripTerminalCodes } from "../../shared/terminal.ts";
 
 /** How long `opencode models --verbose` may take: it may refresh its catalog from models.dev first. */
@@ -98,14 +100,20 @@ const PROXY_REFUSED_STATUS = 403;
 /** Where OpenCode refreshes its model catalogs; opened beside the provider's own hosts. */
 const CATALOG_HOSTS = ["models.dev", "models.opencode.ai"] as const;
 
-/** What this engine says to the person. */
+/**
+ * What this engine says: statuses and remedies for Settings in the person's language (functions,
+ * since main sets its language after it starts), and errors in English, since the harness and the
+ * chat's model read them too.
+ */
 const MESSAGE = {
   NotInstalled: "OpenCode isn't installed on this Mac.",
-  InstallRemedy: "Install OpenCode from Settings › Model Providers.",
-  NoModels: "OpenCode has no model it can run yet.",
-  SignInRemedy: "Sign in to a provider with OpenCode from Settings › Model Providers.",
-  Ready: (version: string | undefined, count: number) => `OpenCode ${version ?? ""}, ${count} model(s)`.trim(),
-  Untested: (ready: string) => `${ready} · newer than Genex has tested`,
+  NotInstalledStatus: () => t("OpenCode isn't installed on this Mac."),
+  InstallRemedy: () => t("Install OpenCode from Settings › Model Providers."),
+  NoModels: () => t("OpenCode has no model it can run yet."),
+  SignInRemedy: () => t("Sign in to a provider with OpenCode from Settings › Model Providers."),
+  Ready: (version: string | undefined, count: number) =>
+    t("OpenCode {version}, {count, plural, other {# model(s)}}", { version: version ?? "", count }).trim(),
+  Untested: (ready: string) => t("{status} · newer than Genex has tested", { status: ready }),
   UnknownVersion: "Genex can't tell which OpenCode version this is. Check it again in Settings › Model Providers.",
   ServerSilent: "OpenCode's model server did not say where it answers",
   ListingFailed: (status: number) => `OpenCode's model server answered ${status}`,
@@ -215,11 +223,16 @@ export class OpenCodeEngine implements Engine {
   async status(): Promise<EngineStatus> {
     const cli = await this.#resolveCli();
     if (!cli.ready && !cli.path)
-      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.NotInstalled, remedy: MESSAGE.InstallRemedy };
+      return {
+        code: EngineStatusCode.NotInstalled,
+        detail: MESSAGE.NotInstalledStatus(),
+        remedy: MESSAGE.InstallRemedy(),
+      };
     if (!cli.ready) return { code: EngineStatusCode.Error, detail: cli.detail };
     await this.refreshModels().catch(() => {});
     const count = this.#catalog.models().length;
-    if (!count) return { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.NoModels, remedy: MESSAGE.SignInRemedy };
+    if (!count)
+      return { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.NoModels(), remedy: MESSAGE.SignInRemedy() };
     const ready = MESSAGE.Ready(cliVersion(cli.version), count);
     const release = openCodeRelease(cli.version);
     const untested = "tested" in release && !release.tested;
@@ -516,10 +529,14 @@ export class OpenCodeEngine implements Engine {
     return row?.efforts?.includes(effort) ? effort : null;
   }
 
-  /** The hosts a session may reach: its model's provider, or every listed provider when OpenCode picks. */
+  /**
+   * The hosts a session may reach: its model's provider, or every listed provider when OpenCode
+   * picks. A model the listing has not named yet (a session started before the list was read, or
+   * after it failed) still reaches its provider's built-in hosts.
+   */
   #domains(model: string | undefined): string[] {
     const listed = this.#shown().hosts;
-    const hosts = model ? (listed.get(model) ?? []) : [...listed.values()].flat();
+    const hosts = model ? (listed.get(model) ?? builtInHosts(model)) : [...listed.values()].flat();
     return [...new Set([...hosts, ...CATALOG_HOSTS])];
   }
 

@@ -11,6 +11,7 @@
  */
 import type { JSX } from "react";
 import { useEffect, useState } from "react";
+import { intlLocale } from "../../shared/i18n.ts";
 import type { PlayMe } from "../../shared/play-people.ts";
 import { GenexTab, openGenexPage } from "../panels/plugins/genex/genex-tab.ts";
 import { openSettings, SettingsSection } from "../settings-navigation.ts";
@@ -47,7 +48,7 @@ const SIGNED_OUT_FACE = avatarRecipe("sign-in");
 
 /** "July 2026": when an account was made, as a profile says it. */
 export const joinedWhen = (iso: string | null): string | null =>
-  iso ? new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric" }).format(new Date(iso)) : null;
+  iso ? new Intl.DateTimeFormat(intlLocale(), { month: "long", year: "numeric" }).format(new Date(iso)) : null;
 
 /** Settings › Genex account, where the account's avatar, name and balance are. */
 const openAccountSettings = (): void => openSettings(SettingsSection.Account);

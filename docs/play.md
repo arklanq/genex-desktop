@@ -146,7 +146,19 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   LFS files come from the same repository's batch API over https, with no git-lfs needed, and each
   replaces its pointer only once its SHA-256 and size match; a download fails only once it stalls
   for a minute; a failed remix logs why in `studio.log`) into a
-  hidden folder, installs its packages with npm without running any of their scripts (a stale or
+  hidden folder; a source with no game in it (no `studio.json`, root page, npm scripts or engine
+  project: a creator who never shared its project, `game-source.ts`) makes nothing and says so
+  (`PlayRemixRefusal`). Cards and the viewer offer Remix only once main has looked at the source
+  (`studio:play.remix-ready`, `remix-ready.ts`: the head commit by `git ls-remote`, its file names by a
+  blobless shallow clone, kept by commit in `play-remix-ready.json`).
+  A game reaches Genex with its project only from a Publish that allowed remixing (the dialog's
+  Allow remixing, ticked by default; Rights says what remixers may do): Studio stages the files the
+  game's git keeps, without history, packages, agent settings, secrets or an engine's caches and
+  builds, an Unreal plugin's too (`remix-source.ts`), and the CLI pushes that folder as the source
+  (`--source`; a game with only apps sends it with `make-remixable` once they are live). The copy
+  goes once its push is over, and a draft carries none. Otherwise, or when the project can't
+  go (too big, no repository), the publish turns remixing off on Genex.
+  It then installs its packages with npm without running any of their scripts (a stale or
   another manager's lockfile: from package.json), moves it to `<slug>-remix`, adopts it without trusting its settings and builds it
   once, so it opens playing. One remix at a time. Remix (a card's, or the viewer's, which closes
   the viewer) switches to Create at once: a sidebar row with the cover in a ring (the adopted game
@@ -159,8 +171,8 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
 
 ## Native builds
 
-A game made in Unity, Godot or Unreal can carry a Mac app or a Windows program besides (or instead
-of) its web build. The app's copy of the contract is `src/shared/play-native.ts`; genex.games does
+A game made in Unity, Godot or Unreal can carry a Mac app, a Windows program or a Linux one besides
+(or instead of) its web build. The app's copy of the contract is `src/shared/play-native.ts`; genex.games does
 not serve it yet, and every field is optional, so a server that sends none of it leaves Play as it
 is.
 
@@ -171,14 +183,21 @@ is.
 - A build row: `platform` (`mac`, `windows`, `linux`), `arch` (`arm64`, `x64`, `universal` for a
   Mac app), `version` (the author's build id), `sizeBytes` (the archive), `installedBytes`
   (unpacked), `sha256` (hex of the archive), `url`, `entry` (what runs, from the archive's root: a
-  `.app` bundle at the root for a Mac, an `.exe` for Windows), optional `minOs` (`13.0`,
-  `10.0.19041`) and `publishedAt`. The archive is a zip; its `url` is https on a build host the app
+  `.app` bundle at the root for a Mac, an `.exe` for Windows, a plain path such as `Dust.x86_64` or
+  `Dust/Binaries/Linux/Dust-Linux-Shipping` for Linux), optional `minOs` (`13.0`,
+  `10.0.19041`; Linux has none to meet: a kernel's release says nothing of a build's C library) and
+  `publishedAt`. The archive is a zip; its `url` is https on a build host the app
   trusts (`NATIVE_BUILD_HOSTS`: `cdn.genex.technology` by exact name, so a game's own
   `<slug>.genex.technology` site never hands out an app), with no port or credentials, never
   redirecting elsewhere, and answers `Range`. A row with anything off is dropped, the rest kept.
 - The build a computer installs is its platform's for its own processor, else a universal Mac app,
   else, on Apple silicon with Rosetta installed, an Intel-only one, where its `minOs` is met
-  (`buildFor`). Nothing is launched on Windows until its sandbox can show a program's window. A game with no web
+  (`buildFor`). Games launch on the Mac and on Linux; nothing is launched on Windows until its
+  sandbox can show a program's window. Play names the computer "this Mac" on a Mac and "this
+  computer" elsewhere (`nativeHereWords`). When nothing installs, the game page says why in place of
+  Install (`whyNotHere`): this system runs no downloaded games (naming where Genex can run it), no
+  build for this system, one for a different processor (Apple silicon, Rosetta), or a newer macOS
+  needed. A card not installed shows its systems' marks on one plate. A game with no web
   build and no build for this computer is left out of the tabs and search; its maker's profile
   still lists it.
 - Installing (`main/play/native-installs.ts`, `studio:play.install`, progress as
@@ -187,15 +206,26 @@ is.
   range, given up after a minute without a byte), its sha256 checked, its zip directory read before
   anything is unpacked (`native-zip.ts`: no entry or link outside it, nothing written through a
   link, no more than the stated size), unpacked with `ditto --noqtn`, every link resolved inside it,
-  the app's signature (ad hoc is enough) and processor checked, then its bundle id set to
-  `games.genex.play.<slug>` and signed again ad hoc, so it can only write its own preferences. Each
+  its program made runnable (an app packed on Windows carries no execute bit), the app's signature
+  (ad hoc is enough) and processor checked, then its bundle id set to
+  `games.genex.play.<slug>` and signed again ad hoc, so it can only write its own preferences. A
+  Linux build is unpacked by the app itself (`unpackZip`: the same checks, each file no larger than
+  its record, execute bits kept, links last) and its `entry` must be a regular file, an ELF program
+  for this computer's processor, made runnable; the whole version folder is its app (`entry` `.`). Each
   game keeps `installed-games/<slug>/<version>/` and `saves/`; `index.json` lists them. Removing a
   game (refused while it runs) keeps its saves; an update keeps the running version until it quits.
 - Playing (`main/play/native-launch.ts`): one copy per game, in the game sandbox (`spawnNativeGame`:
   the app read-only, `saves/` its HOME and `CFFIXED_USER_HOME`, its own preference domain, its
   `NSIRD_` atomic-save folder, window, GPU and sound; its only network is its Genex gateway, below).
   Genex finds its window by pid and
-  brings it forward (macOS does not). A game opens full screen with its engine's own argument
+  brings it forward (macOS does not). On Linux (`spawnLinuxGame`, `substrate/plugins/linux-game.ts`)
+  the game runs in bubblewrap: `/usr`, `/etc` and the library folders read-only, its version folder
+  read-only, `saves/` its HOME, a fresh `/tmp`, `/run` and process table, and none of the person's
+  files; it gets the X11 socket and cookie or the Wayland socket, `/dev/dri`, NVIDIA's nodes, the
+  GPU's `/sys`, the PulseAudio or PipeWire socket and `/dev/input`, and a network namespace of its
+  own. Linux has no window list every session shares, so a game counts as on screen once it has
+  kept running for three seconds (`native-windows-linux.ts`), and the window manager brings it
+  forward. A game opens full screen with its engine's own argument
   (`launchArgs`: Unity `-screen-fullscreen 1`, Godot `--fullscreen`, Unreal `-fullscreen`; the
   engine is the catalog's, kept in the install record), unless its app sets `GenexWindowed` in its
   Info.plist (read at unpack, `WINDOWED_KEY`); the page's Quit asks it to quit, then ends its process tree;
@@ -206,12 +236,15 @@ is.
   - **The gateway.** Each launch opens a gateway on 127.0.0.1: one port for Genex's API, and six for
     relays as answers name them (`relayHostsOf`: `relay[-<region>].<api's domain>`).
   - **The sandbox.** The game's profile allows outbound TCP to those ports only. Seatbelt names no
-    host but `localhost`, so the gateway is how "Genex only" is enforced.
+    host but `localhost`, so the gateway is how "Genex only" is enforced. On Linux the game's own
+    network namespace holds only loopback: socat inside listens on the gateway's ports on 127.0.0.1
+    and passes each connection through a unix socket to the gateway outside (no socat, no network).
   - **What goes through.** Requests and WebSockets go on to their own Genex host over TLS. Relay
     addresses in JSON answers (relay lists, a seat's `publicAddress`) are rewritten to their local
     port, so the next connection comes back through the gateway. Anything else is refused: a port
     with no host yet, a relay once the ports are full, a request over 1 MB.
-  - **What the game is told.** Its environment carries `GENEX_API_URL` (the gateway) and, while the
+  - **What the game is told.** Its environment carries `GENEX_API_URL` (the gateway), `GENEX_GAME`
+    (its slug, so a build made before its first publish knows which rooms to join) and, while the
     Genex account is unlocked, `GENEX_EMBED_TICKET`. That is a single-use ticket minted with
     `delivery: "native"` (`gallery.ticket`); otherwise the game plays as a guest. Genex's Godot
     addon and Unity package read both (CLI_INTEGRATION §6b).
@@ -225,6 +258,14 @@ is.
     Genex first (`DELETE`, `studio:play.forget-identity`) and then here; the next launch asks again.
   - **Failure and shutdown.** A gateway that can't open leaves the game offline, not unplayable. The
     gateway closes when the game ends. A fixture launch opens none.
+  - **Its play count** (`main/play/native-plays.ts`). Most native builds never redeem the ticket, so
+    once a game counts as running (its window on screen, or a minute up without one) Play reports
+    the play itself (`POST /api/embed/native-play`): genex.games counts the signed-in account, or,
+    signed out, this computer's own random id (`installed-games/player.json`, sent only with no
+    account), once per game, like a web play. A refused token (401) ends the sign-in and the report
+    goes again as this computer's, as do later ones while the account still holds that token. A
+    game quit before it was running, or a failed report, counts nothing; a failed report is logged.
+    A fixture launch reports nothing.
 - Links (`main/play/game-links.ts`): the website's Open in Genex sends `genex://game/<slug>`.
   The packaged app declares the scheme (`protocols` in `forge.config.cjs`, the Linux packages'
   `x-scheme-handler/genex`) and registers it at start; macOS hands a link over `open-url`, Windows

@@ -228,6 +228,7 @@ describe("Who may answer a purchase sheet", () => {
       gallery: unused as PlayIpcDeps["gallery"],
       gameLinks: gameLinks(),
       remix: async () => "",
+      remixReady: async () => ({}),
       viewer: () => viewer,
       people: unused as PlayIpcDeps["people"],
       creators: unused as PlayIpcDeps["creators"],
@@ -236,6 +237,7 @@ describe("Who may answer a purchase sheet", () => {
       web: PLAY_ORIGIN.web,
       share: () => {},
       installs: () => null,
+      here: () => null,
       sessions: () => null,
       reveal: () => {},
     });

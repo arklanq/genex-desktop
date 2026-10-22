@@ -42,6 +42,7 @@ import { closePage, closeWithWindow, dropGameView } from "./view-drop.ts";
 import { isPurchaseWindow, wirePurchaseCapture } from "./purchase-window.ts";
 import type { PlayMicStore } from "./mic-store.ts";
 import { playViewer, type PlayViewer, type PlayViewerDeps } from "./viewer.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** Each studio window's Play views, for the development control (`dev/runtime.ts`). */
 const viewsOf = new WeakMap<BrowserWindow, PlayViews>();
@@ -92,9 +93,9 @@ const MIC_SETTINGS: Partial<Record<NodeJS.Platform, string>> = {
 };
 /** The mic menu's words. */
 const MESSAGE = {
-  micMenu: "Microphone",
-  systemDefault: "System default",
-  noNames: "Your microphones are listed once the mic is on",
+  micMenu: () => t("Microphone"),
+  systemDefault: () => t("System default"),
+  noNames: () => t("Your microphones are listed once the mic is on"),
 } as const;
 
 /** The studio window and what the viewer reaches through it. */
@@ -115,6 +116,8 @@ export interface PlayViewDeps {
   /** The bar's layer: its page (`dist/renderer/play-bar.html`) and its preload (`dist/preload/play-bar.cjs`). */
   barPage: string;
   barPreload: string;
+  /** The bar page's `additionalArguments` (the computer's languages, `main/language.ts`); none when absent. */
+  barArguments?: () => string[];
   /** The game's comments on genex.games. */
   comments: PlayComments;
   /** A web game's native app on this computer, for the bar's pill; absent where Genex plays no native game. */
@@ -226,11 +229,11 @@ function showMicMenu(
     click: () => choose(device),
   });
   const template: MenuItemConstructorOptions[] = [
-    { label: MESSAGE.micMenu, enabled: false },
-    item(MESSAGE.systemDefault, null),
+    { label: MESSAGE.micMenu(), enabled: false },
+    item(MESSAGE.systemDefault(), null),
     ...names.map((name) => item(name, name)),
   ];
-  if (devices.length === 0) template.push({ type: "separator" }, { label: MESSAGE.noNames, enabled: false });
+  if (devices.length === 0) template.push({ type: "separator" }, { label: MESSAGE.noNames(), enabled: false });
   Menu.buildFromTemplate(template).popup({ window: win, ...at });
 }
 
@@ -296,7 +299,13 @@ function barLayer(win: BrowserWindow, deps: PlayViewDeps, lost: () => void, hear
   const made = (): WebContentsView => {
     if (view && !view.webContents.isDestroyed()) return view;
     const layer = new WebContentsView({
-      webPreferences: { preload: deps.barPreload, sandbox: true, contextIsolation: true, nodeIntegration: false },
+      webPreferences: {
+        preload: deps.barPreload,
+        additionalArguments: deps.barArguments?.() ?? [],
+        sandbox: true,
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
     });
     layer.setBackgroundColor(TRANSPARENT);
     layer.setVisible(false);
@@ -336,6 +345,10 @@ function barLayer(win: BrowserWindow, deps: PlayViewDeps, lost: () => void, hear
     },
     warm: (): void => {
       if (!win.isDestroyed()) made();
+    },
+    reload: (): void => {
+      const contents = view?.webContents;
+      if (contents && !contents.isDestroyed()) contents.reload();
     },
     /** The viewer's news, for the bar's page. */
     tell: (event: PlayViewerEvent): void => {

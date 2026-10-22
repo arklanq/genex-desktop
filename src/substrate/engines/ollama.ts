@@ -39,6 +39,7 @@ import { EngineKind, EngineStatusCode } from "../../shared/engine-descriptor.ts"
 import { EngineFailureKind } from "../../shared/engine-requests.ts";
 import { ReasoningEffort } from "../../shared/model-preferences.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { t } from "../../shared/i18n.ts";
 import { CompletionStop, STOPPED_BY_USER } from "./common.ts";
 
 /** The conversion helpers live with the pi-ai transport every API engine shares; kept here for importers. */
@@ -69,21 +70,32 @@ const TOOL_CALL_PARSE_FAILURE = /error parsing tool call/i;
 const SIDECAR_START_TIMEOUT_MS = 15 * SECOND_MS;
 const SIDECAR_POLL_MS = 400;
 
-/** What this engine says to the user. */
+/**
+ * What this engine says: statuses, remedies, model notes and Settings' refusals in the person's
+ * language (functions, since main sets its language after it starts), and the errors a chat's run
+ * reads in English, since the harness and the model read them too.
+ */
 const MESSAGE = {
-  StartRemedy: "Install or start Ollama, then try again.",
-  PullRemedy: "Pull a recommended model from the Models tab.",
+  StartRemedy: () => t("Install or start Ollama, then try again."),
+  PullRemedy: () => t("Pull a recommended model from the Models tab."),
+  NoServer: (host: string) => t("no Ollama at {host}", { host }),
+  NoModels: (version: string) => t("Ollama {version} is running but has no models installed", { version }),
+  Ready: (version: string, count: number) =>
+    t("Ollama {version}, {count, plural, other {# model(s)}} installed", { version, count }),
+  Superseded: (model: string) => t("superseded by {model}", { model }),
   NoModel: "no local model is installed",
   NoVision: "vision input is not supported by this model's reported capabilities",
   NoTools: "tool calling is not supported by this model's reported capabilities",
-  EstimatedContext: "Runtime context is unknown; 8K is an estimated planning budget. Load the model to measure it.",
+  EstimatedContext: () =>
+    t("Runtime context is unknown; 8K is an estimated planning budget. Load the model to measure it."),
   NotAnswering: (host: string) =>
     `Ollama is not running at ${host} (it no longer answers). Start Ollama and try again.`,
   NotRunningForDownload: (host: string) =>
-    `Ollama is not running at ${host}. Install or start Ollama, then download again.`,
+    t("Ollama is not running at {host}. Install or start Ollama, then download again.", { host }),
   ModelMissing: (model: string) =>
     `the model ${model} is not installed in Ollama — pull it from the Models tab or pick another`,
-  NotInstalled: (model: string) => `${model || "This model"} is not installed in Ollama.`,
+  NotInstalled: (model: string) =>
+    model ? t("{model} is not installed in Ollama.", { model }) : t("This model is not installed in Ollama."),
   MalformedToolCall: (model: string) =>
     `${model || "the local model"} wrote plain text where a tool call belonged, ${TOOL_CALL_ATTEMPTS} times in a row, so Ollama could not read it as a tool call. Ollama itself is running fine. Send the message again, or pick a model with stronger tool calling in the Models tab.`,
 } as const;
@@ -337,19 +349,19 @@ export class OllamaEngine implements Engine {
     if (!version) {
       return {
         code: EngineStatusCode.NotRunning,
-        detail: `no Ollama at ${this.host}`,
-        remedy: MESSAGE.StartRemedy,
+        detail: MESSAGE.NoServer(this.host),
+        remedy: MESSAGE.StartRemedy(),
       };
     }
     const tags = await this.client.tags().catch(() => []);
     if (tags.length === 0) {
       return {
         code: EngineStatusCode.NotInstalled,
-        detail: `Ollama ${version} is running but has no models installed`,
-        remedy: MESSAGE.PullRemedy,
+        detail: MESSAGE.NoModels(version),
+        remedy: MESSAGE.PullRemedy(),
       };
     }
-    return { code: EngineStatusCode.Ready, detail: `Ollama ${version}, ${tags.length} model(s) installed` };
+    return { code: EngineStatusCode.Ready, detail: MESSAGE.Ready(version, tags.length) };
   }
 
   async models(): Promise<EngineModel[]> {
@@ -380,8 +392,8 @@ export class OllamaEngine implements Engine {
         supportsThinking: capabilities.includes("thinking"),
         sizeBytes: tag.size,
         installed: true,
-        ...(contextSource === ModelContextSource.Unknown ? { note: MESSAGE.EstimatedContext } : {}),
-        ...(replacement ? { stale: true, note: `superseded by ${replacement}` } : {}),
+        ...(contextSource === ModelContextSource.Unknown ? { note: MESSAGE.EstimatedContext() } : {}),
+        ...(replacement ? { stale: true, note: MESSAGE.Superseded(replacement) } : {}),
       });
     }
     return out;

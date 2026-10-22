@@ -7,6 +7,7 @@ import type { JSX, ReactNode } from "react";
 import { useEffect, useMemo, useState } from "react";
 import type { AgentScreenFrame } from "../../../shared/agent-screen.ts";
 import { SECOND_MS } from "../../../shared/duration.ts";
+import { t } from "../../../shared/i18n.ts";
 import { hostPlatform } from "../../platform.ts";
 import { partFrameOf, trailOf } from "../../state/agent-screens.ts";
 import { useAgentScreens } from "../../state/hooks.ts";
@@ -165,7 +166,7 @@ function TrailStep({
   onShow: () => void;
 }): JSX.Element {
   const src = useFrameSrc(frame);
-  const words = now ? "Now" : screenDone(frame.act, hostPlatform());
+  const words = now ? t("Now") : screenDone(frame.act, hostPlatform());
   return (
     <button
       type="button"
@@ -230,8 +231,8 @@ export function LiveScreen({
         }
       />
       {steps.length > 1 ? (
-        <Section label="What it did">
-          <div role="group" aria-label="What it did" className="flex gap-2 overflow-x-auto pb-0.5">
+        <Section label={t("What it did")}>
+          <div role="group" aria-label={t("What it did")} className="flex gap-2 overflow-x-auto pb-0.5">
             {steps.map((item) => (
               <TrailStep
                 key={`${item.handle}:${item.at}`}

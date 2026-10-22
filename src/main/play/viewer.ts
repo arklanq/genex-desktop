@@ -73,6 +73,8 @@ export interface PlayViewerDeps {
     focused(): boolean;
     /** Make the layer and load its page ahead of the first game, so the bar is there as it opens. */
     warm(): void;
+    /** Load the layer's page again, if it has one: it reads the app's words when it loads. */
+    reload(): void;
   };
   /** The game's comments on genex.games. */
   comments: Pick<PlayComments, "list" | "post" | "remove">;
@@ -591,6 +593,8 @@ export function playViewer(deps: PlayViewerDeps) {
     close: () => close(),
     /** Play's dashboard is open: the bar's layer gets ready for the first game. */
     warm: (): void => deps.bar.warm(),
+    /** The app's language changed: the bar's page loads again in it, and says it is ready as a late page does. */
+    languageChanged: (): void => deps.bar.reload(),
     /** A remix began or ended (a card's, or the viewer's own): the bar's Remix waits while one is made. */
     remixing: (on: boolean): void => {
       remixes = Math.max(0, remixes + (on ? 1 : -1));

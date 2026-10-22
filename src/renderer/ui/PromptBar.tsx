@@ -1,5 +1,6 @@
 import { markPerformance } from "../performance.tsx";
 import { PerformanceMarkName } from "../../shared/performance.ts";
+import { t } from "../../shared/i18n.ts";
 import type { ClipboardEvent, JSX, KeyboardEvent, Ref, RefObject } from "react";
 import { useEffect, useId, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./icons.tsx";
@@ -150,7 +151,7 @@ const MIN_INPUT_HEIGHT = 38;
 const MAX_INPUT_HEIGHT = 138;
 /** The send control morphs into Stop on the same click; this long after a send, Stop ignores it (ms). */
 const STOP_PAD_MS = 600;
-const DEFAULT_PLACEHOLDER = "Write a message…";
+const DEFAULT_PLACEHOLDER = t("Write a message…");
 
 /**
  * The composer's mode: the chat's own Loop (`loop-setting.ts`), what Mode shows and allows given
@@ -460,7 +461,10 @@ function FrameBoard({
   onRemoveFile: (path: string) => void;
 }): JSX.Element {
   return (
-    <div className="flex flex-wrap gap-1.5 px-1 pt-1 pb-1.5" aria-label={gameMode ? "Mood board" : "Attached images"}>
+    <div
+      className="flex flex-wrap gap-1.5 px-1 pt-1 pb-1.5"
+      aria-label={gameMode ? t("Mood board") : t("Attached images")}
+    >
       {frames.map((frame, index) => (
         <div key={`${frame.label}-${index}`} className="group relative">
           <img
@@ -471,7 +475,7 @@ function FrameBoard({
           />
           <button
             type="button"
-            aria-label={`Remove ${frame.label}`}
+            aria-label={t("Remove {name}", { name: frame.label })}
             onClick={() => onRemove(index)}
             className="absolute -top-1 -right-1 flex size-5 items-center justify-center rounded-full bg-ink text-micro text-surface group-hover:flex"
             style={{ background: "var(--ink)", color: "var(--surface)" }}
@@ -494,13 +498,13 @@ function ReplyAboutTag({ about }: { about: ReplyAboutChip }): JSX.Element {
       <span
         data-reply-about
         className="inline-flex h-7 min-w-0 items-center gap-1.5 rounded-[9px] bg-inset pr-1 pl-2 text-body-sm text-ink-2"
-        title={`Your next message goes to the build as a note about ${about.label}`}
+        title={t("Your next message goes to the build as a note about {about}", { about: about.label })}
       >
         <Icon name="chat" size={13} />
         <span className="truncate">{about.label}</span>
         <button
           type="button"
-          aria-label={`Stop replying about ${about.label}`}
+          aria-label={t("Stop replying about {about}", { about: about.label })}
           onClick={about.onClear}
           className="grid size-5 shrink-0 cursor-pointer place-items-center rounded-[6px] text-ink-3 hover:bg-control-hover hover:text-control-text-hover"
         >
@@ -532,17 +536,17 @@ function SendControl({
       hidden={quiet}
       content={
         stopping ? (
-          "Stop"
+          t("Stop")
         ) : (
           <span className="flex items-center gap-2">
-            Send <Shortcut>↵</Shortcut>
+            {t("Send")} <Shortcut>↵</Shortcut>
           </span>
         )
       }
     >
       <button
         type="button"
-        aria-label={stopping ? "Stop" : "Send"}
+        aria-label={stopping ? t("Stop") : t("Send")}
         data-state={action}
         disabled={action === SendAction.Idle}
         onClick={(event) => {
@@ -831,7 +835,7 @@ function PromptTextarea({
         }
       }}
       placeholder={placeholder}
-      aria-label="Prompt"
+      aria-label={t("Prompt")}
       onScroll={(event) => onScroll(event.currentTarget.scrollTop)}
       {...(list
         ? {
@@ -1211,10 +1215,10 @@ function AttachControl({
     );
   }
   return (
-    <ComposerTip align="start" content="Attach images">
+    <ComposerTip align="start" content={t("Attach images")}>
       <button
         type="button"
-        aria-label="Attach images"
+        aria-label={t("Attach images")}
         disabled={disabled}
         onClick={onPickImages}
         className="composer-icon composer-add"

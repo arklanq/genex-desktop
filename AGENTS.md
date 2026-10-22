@@ -107,9 +107,9 @@ Write code a person enjoys reading; behavior never changes in a readability edit
   small predicate beside its type (`needsSignIn(engine)`). Compute repeated sub-expressions
   once. No nested ternaries, no `!` assertions in code you touch.
 - Timeouts, caps, sizes and retries are SCREAMING_CASE consts at the top of their module, in
-  `shared/duration.ts` units (the seed's `loop/time.ts`). User copy lives in
-  `renderer/words.ts` or a module-local `MESSAGE` object; model prompts in a sibling
-  `*-prompts.ts` or seed `prompts/*.md`.
+  `shared/duration.ts` units (the seed's `loop/time.ts`). User copy is English inside `t()`
+  ([translation](docs/agent/translation.md)), in `renderer/words.ts` or a module-local
+  `MESSAGE` object; model prompts in a sibling `*-prompts.ts` or seed `prompts/*.md`.
 - Functions aim for 60 lines (80 at most, cognitive complexity 15): guard clauses first, no
   `else` after `return`, no parameter reassignment, repeated steps become a named helper beside
   their domain.

@@ -5,6 +5,7 @@
  * `PlayPromo.tsx`, `ProfilePlate.tsx`, `PlayViewerLayer.tsx` and `App.tsx` draw what these decide.
  */
 import { GenexAccountStatus } from "../../shared/genex-account.ts";
+import { intlLocale, t } from "../../shared/i18n.ts";
 import type { PlayMe } from "../../shared/play-people.ts";
 import {
   isPlaySlug,
@@ -87,7 +88,7 @@ export function writeRecent(
 /** Below this a stat is shown whole: the account's own numbers keep every play until they run long. */
 const STAT_WHOLE_BELOW = 10_000;
 /** Digit grouping in the reader's own style. */
-const GROUPED = new Intl.NumberFormat();
+const GROUPED = new Intl.NumberFormat(intlLocale());
 
 /** A count as the stats show it: whole and grouped below ten thousand (1,240), else as a card does (12k). */
 export function formatStat(value: number): string {
@@ -101,10 +102,10 @@ export function formatCount(value: number): string {
   if (value < 1000) return String(Math.floor(value));
   if (value < 1_000_000) {
     const thousands = value / 1000;
-    return `${thousands < 10 ? trimmed(thousands) : Math.floor(thousands)}k`;
+    return t("{thousands}k", { thousands: thousands < 10 ? trimmed(thousands) : Math.floor(thousands) });
   }
   const millions = value / 1_000_000;
-  return `${millions < 10 ? trimmed(millions) : Math.floor(millions)}M`;
+  return t("{millions}M", { millions: millions < 10 ? trimmed(millions) : Math.floor(millions) });
 }
 
 /** One decimal, rounded down and dropped when it is zero: 2.7, 6, 9.9. */

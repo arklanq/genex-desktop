@@ -6,6 +6,7 @@
  * as its toolbar does.
  */
 import type { PluginToolbarStatus } from "../../plugin-sdk/index.d.ts";
+import { t, tc } from "../../shared/i18n.ts";
 import { editorRuns } from "./editor-life.ts";
 import { type OpenDeps, UNKNOWN_VERSION } from "./editor-open.ts";
 import { findEditors, isUnity6 } from "./editors.ts";
@@ -124,45 +125,45 @@ const MUTED = "info" as const satisfies PluginToolbarStatus["tone"];
  */
 const WORD: Record<PanelStep, (version: string) => PluginToolbarStatus> = {
   [PanelStep.GetUnity]: () => ({
-    badge: "Not installed",
+    badge: t("Not installed"),
     tone: MUTED,
     dot: true,
-    title: "Unity 6 isn't installed: see how to get it",
+    title: t("Unity 6 isn't installed: see how to get it"),
   }),
-  [PanelStep.NoGame]: () => ({ tone: MUTED, title: "Open a game to use Unity" }),
-  [PanelStep.NoProject]: () => ({ tone: MUTED, title: "This game has no Unity project" }),
+  [PanelStep.NoGame]: () => ({ tone: MUTED, title: t("Open a game to use Unity") }),
+  [PanelStep.NoProject]: () => ({ tone: MUTED, title: t("This game has no Unity project") }),
   [PanelStep.OldProject]: (version) => ({
-    badge: "Not set up",
+    badge: t("Not set up"),
     tone: MUTED,
     dot: true,
-    title: `This project was saved with Unity ${version}: Genex works with Unity 6 or later`,
+    title: t("This project was saved with Unity {version}: Genex works with Unity 6 or later", { version }),
   }),
   [PanelStep.NotSetUp]: () => ({
-    badge: "Not set up",
+    badge: t("Not set up"),
     tone: MUTED,
     dot: true,
-    title: "Set up this game's Unity project",
+    title: t("Set up this game's Unity project"),
   }),
   [PanelStep.NoEditor]: (version) => ({
-    badge: "Not open",
+    badge: t("Not open"),
     tone: MUTED,
     dot: true,
-    title: `Unity ${version} isn't installed: this project was saved with it`,
+    title: t("Unity {version} isn't installed: this project was saved with it", { version }),
   }),
-  [PanelStep.NotOpen]: () => ({ badge: "Not open", tone: MUTED, dot: true, title: "Unity isn't open" }),
-  [PanelStep.Opening]: () => ({ badge: "Starting", tone: "warn", dot: true, title: "Unity is starting" }),
-  [PanelStep.Ready]: () => ({ badge: "Ready", tone: "ok", dot: true, title: "Unity is open and answers" }),
+  [PanelStep.NotOpen]: () => ({ badge: t("Not open"), tone: MUTED, dot: true, title: t("Unity isn't open") }),
+  [PanelStep.Opening]: () => ({ badge: t("Starting"), tone: "warn", dot: true, title: t("Unity is starting") }),
+  [PanelStep.Ready]: () => ({ badge: t("Ready"), tone: "ok", dot: true, title: t("Unity is open and answers") }),
   [PanelStep.Stalled]: () => ({
-    badge: "Stalled",
+    badge: t("Stalled"),
     tone: "warn",
     attention: true,
-    title: "Unity isn't answering: a dialog may be waiting in it",
+    title: t("Unity isn't answering: a dialog may be waiting in it"),
   }),
   [PanelStep.Terms]: () => ({
-    badge: "Waiting for you",
+    badge: tc("editor", "Waiting for you"),
     tone: "warn",
     attention: true,
-    title: "Unity is waiting for you to accept its Software Terms in its window",
+    title: t("Unity is waiting for you to accept its Software Terms in its window"),
   }),
 };
 

@@ -23,14 +23,15 @@ Community plugins and the plugin guide, with
 (else newest commit). Games build, preview and export without plugins. The host draws Genex's
 app-wide page (balance, routed tools, candidate pictures) and Local Blender's runtime card. Connect,
 unapproved, turns Genex on and reuses a saved account or opens browser sign-in; setup survives restart and reinstall.
-Game spend: the usage panel; prices: Genex's Credits tab. Enabled Genex suggests assets in planning.
+Spend: usage panel; prices: Credits tab. Enabled Genex suggests assets in planning.
 Generations wait for unaccepted terms (Review: sidebar, chat).
 
 Genex bundles its MCP (game/animation search, owned games, generation status) on the same account;
 host tools run the pinned CLI outside the game: `genex__cli` free; `genex__cli-paid` and
-`genex__package` (multiplayer, player identity; template games map Studio's copies) after consent. Publish (a host-drawn dialog)
+`genex__package` (multiplayer, player identity; template games map Studio's copies) after consent. Publish (host-drawn)
 connects SDK-less games, tests the draft, goes public and sends the `genex-cover` frame and
-`genex-clip` clip ([rules](../plugins.md#first-party-privileges)); Studio takes the cover after
+`genex-clip` clip ([rules](../plugins.md#first-party-privileges)), plus its project if remixable
+([Remix](../play.md)); Studio takes the cover after
 turns (Unity/Godot/Unreal builders render theirs in-engine); consented `genex__cover-set` sends it now; chat shows it. Multiplayer (built, single-player) asks chat (Genex
 off: enable it); Publish needs only the account; both offer Update while older. Agents read
 Genex’s guide via `genex__skill`, not game files. Plugin MCPs connect on first use.

@@ -2,6 +2,7 @@ import { realpath } from "node:fs/promises";
 import { z } from "zod";
 import { ModelCatalog, CatalogError, CATALOG_DEADLINE_MS } from "./model-catalog.ts";
 import { ModelCatalogSource, ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
+import { t } from "../../shared/i18n.ts";
 import { readCodexModels } from "./codex-models.ts";
 import { ReasoningEffort, supportedPreferences, type ModelPreferences } from "../../shared/model-preferences.ts";
 import { cliVersion, requireCodingCli, resolveCodingCli, invalidateCodingCli } from "./external-cli.ts";
@@ -300,16 +301,27 @@ const TOOL_ITEMS = new Set<string>([
   CodexItem.FileChange,
 ]);
 
-/** What this engine says to the user: statuses, remedies and errors. */
+/**
+ * What this engine says: statuses and remedies for Settings in the person's language (functions,
+ * since main sets its language after it starts), and errors in English, since the harness and the
+ * chat's model read them too.
+ */
 const MESSAGE = {
+  /** A sign-in error ends with it; Settings shows `SignInRemedy`, the same words translated. */
   LoginHint: "Connect your ChatGPT subscription in the studio.",
-  CliRequired: "An external Codex CLI is required.",
-  InstallRemedy: "Install Codex, then check again.",
-  IsolatedLogin: "ChatGPT connected for this studio",
-  SystemLogin: "Using your existing ChatGPT sign-in on this Mac",
+  SignInRemedy: () => t("Connect your ChatGPT subscription in the studio."),
+  CliRequired: () => t("An external Codex CLI is required."),
+  InstallRemedy: () => t("Install Codex, then check again."),
+  IsolatedLogin: () => t("ChatGPT connected for this studio"),
+  SystemLogin: () => t("Using your existing ChatGPT sign-in on this Mac"),
+  /** English: Settings tells an API-key sign-in by these words (`renderer/panels/ModelsSection.tsx`). */
   ApiKeyLogin: "Codex is signed in with an API key. Connect your ChatGPT subscription instead.",
-  NotConnected: "ChatGPT is not connected. Sign in to start building.",
-  CheckFailed: "Could not check the Codex connection. Try again.",
+  NotConnected: () => t("ChatGPT is not connected. Sign in to start building."),
+  CheckFailed: () => t("Could not check the Codex connection. Try again."),
+  /** The picker's row for whatever model the user's Codex is configured for. */
+  DefaultModel: () => t("{engine} default", { engine: "Codex" }),
+  DefaultModelNote: () => t("Uses whatever model your Codex is configured for."),
+  NoCache: () => t("The CLI model cache is unavailable."),
   NoToolLoop: "Codex has no tool-loop completion; use engine.delegate to build",
   CliMissing: "An external Codex CLI is required. Install or select an external Codex CLI, then Recheck.",
   NotCompacted: "Codex did not compact the session",
@@ -345,12 +357,9 @@ interface CatalogueRow {
 }
 
 /** The first row of every catalogue: whatever model the user's Codex is configured for. */
-const DEFAULT_ROW: CatalogueRow = {
-  id: DEFAULT_MODEL,
-  label: "Codex default",
-  note: "Uses whatever model your Codex is configured for.",
-  efforts: [],
-};
+function defaultRow(): CatalogueRow {
+  return { id: DEFAULT_MODEL, label: MESSAGE.DefaultModel(), note: MESSAGE.DefaultModelNote(), efforts: [] };
+}
 
 function codexEngineModel(row: CatalogueRow): EngineModel {
   return {
@@ -505,7 +514,7 @@ export class CodexEngine implements Engine {
   }
 
   loginHint(): string {
-    return MESSAGE.LoginHint;
+    return MESSAGE.SignInRemedy();
   }
 
   async probeAuth(): Promise<EngineStatus> {
@@ -529,7 +538,7 @@ export class CodexEngine implements Engine {
     }
     const binary = installation?.status.path ?? (await this.#resolveBinary());
     if (!binary) {
-      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.CliRequired, remedy: MESSAGE.InstallRemedy };
+      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.CliRequired(), remedy: MESSAGE.InstallRemedy() };
     }
     const login = await this.resolveLogin();
     const home = login.home ?? this.systemHome;
@@ -583,9 +592,9 @@ export class CodexEngine implements Engine {
   }
 
   /**
-   * The plan's limits for the composer, read at most once a minute from the account itself. A read
-   * that a login recheck overtook is dropped, and its callers wait for a read of the account
-   * signed in now.
+   * The plan's limits for the composer, read at most once a minute from the account itself. Null
+   * when the plan shares none; a throw when they could not be read. A read that a login recheck
+   * overtook is dropped, and its callers wait for a read of the account signed in now.
    */
   async readUsage(): Promise<ProviderUsage | null> {
     if (this.#usage && Date.now() - Date.parse(this.#usage.measuredAt) < USAGE_FRESH_MS) return this.#usage;
@@ -595,10 +604,13 @@ export class CodexEngine implements Engine {
     const read: Promise<ProviderUsage | null> = this.#askUsage()
       .then((usage) => {
         if (!current()) return this.readUsage();
-        if (usage) this.#usage = usage;
-        return usage ?? this.#usage;
+        this.#usage = usage;
+        return usage;
       })
-      .catch(() => (current() ? this.#usage : this.readUsage()))
+      .catch((error: unknown) => {
+        if (current()) throw error;
+        return this.readUsage();
+      })
       .finally(() => {
         if (this.#usageRead === read) this.#usageRead = null;
       });
@@ -636,7 +648,7 @@ export class CodexEngine implements Engine {
 
   async models(): Promise<EngineModel[]> {
     void this.refreshModels().catch(() => {});
-    return [codexEngineModel(DEFAULT_ROW), ...this.#catalog.models()];
+    return [codexEngineModel(defaultRow()), ...this.#catalog.models()];
   }
 
   async refreshModels(force = false): Promise<void> {
@@ -675,7 +687,7 @@ export class CodexEngine implements Engine {
           () => {},
         );
         const rows = await readCodexCatalogue(home);
-        if (!rows) throw new CatalogError(ModelCatalogProblemCode.Malformed, "The CLI model cache is unavailable.");
+        if (!rows) throw new CatalogError(ModelCatalogProblemCode.Malformed, MESSAGE.NoCache());
         return {
           models: rows.filter((row) => row.id !== DEFAULT_MODEL).map(codexEngineModel),
           source: ModelCatalogSource.Cache,
@@ -1371,7 +1383,7 @@ export class CodexEngine implements Engine {
     }
     // A sign-in gone stale, or the account's access taken away (the table both engines share).
     if (AUTH_PATTERNS.some((re) => re.test(text)) || isAccessLost(text)) {
-      return new EngineError(EngineFailureKind.Auth, this.id, `${text} — ${this.loginHint()}`);
+      return new EngineError(EngineFailureKind.Auth, this.id, `${text} — ${MESSAGE.LoginHint}`);
     }
     if (UNAVAILABLE_PATTERN.test(text)) return new EngineError(EngineFailureKind.Unavailable, this.id, text);
     return new EngineError(EngineFailureKind.Other, this.id, text);
@@ -1670,7 +1682,7 @@ function cliState(
 function connectedStatus(login: CodexLogin): EngineStatus {
   return {
     code: EngineStatusCode.Ready,
-    detail: login.source === LoginSource.Isolated ? MESSAGE.IsolatedLogin : MESSAGE.SystemLogin,
+    detail: login.source === LoginSource.Isolated ? MESSAGE.IsolatedLogin() : MESSAGE.SystemLogin(),
   };
 }
 
@@ -1685,8 +1697,8 @@ function notConnectedStatus(cli: CodexAuthStatus, remedy: string): EngineStatus 
 
 function notConnectedDetail(cli: CodexAuthStatus): string {
   if (cli.method === "api_key") return MESSAGE.ApiKeyLogin;
-  if (cli.loggedIn === false) return MESSAGE.NotConnected;
-  return MESSAGE.CheckFailed;
+  if (cli.loggedIn === false) return MESSAGE.NotConnected();
+  return MESSAGE.CheckFailed();
 }
 
 /** Stills written to files for `-i`: Codex takes pictures as paths. */
@@ -2330,7 +2342,7 @@ export async function readCodexCatalogue(home: string): Promise<CatalogueRow[] |
       .filter((model) => model.slug && model.visibility === "list")
       .sort((a, b) => (a.priority ?? UNRANKED) - (b.priority ?? UNRANKED));
 
-    return [{ ...DEFAULT_ROW, efforts: [...CODEX_EFFORTS] }, ...listed.map(catalogueRow)];
+    return [{ ...defaultRow(), efforts: [...CODEX_EFFORTS] }, ...listed.map(catalogueRow)];
   } catch {
     return null;
   }

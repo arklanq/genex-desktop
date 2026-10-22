@@ -5,6 +5,7 @@
  */
 import type { JSX } from "react";
 import { useState } from "react";
+import { t } from "../../shared/i18n.ts";
 import type { FolderInspection, GameLocation } from "../../shared/game-project.ts";
 import { pathLeaf } from "../../shared/path-label.ts";
 import { inspectPickedFolder } from "../open-folder.ts";
@@ -23,11 +24,12 @@ import { problemWords } from "../words.ts";
 
 /** The chip's words. */
 const MESSAGE = {
-  where: "Where this game is saved",
-  saveIn: "Save the new game in",
-  another: "Another folder…",
-  open: "Open a folder…",
-  openHint: "Keep working on a game you already have",
+  where: t("Where this game is saved"),
+  whereFolder: (folder: string) => t("Where this game is saved: {folder}", { folder }),
+  saveIn: t("Save the new game in"),
+  another: t("Another folder…"),
+  open: t("Open a folder…"),
+  openHint: t("Keep working on a game you already have"),
 } as const;
 
 /** The menu's two places: the games folder, or the folder the user chose. */
@@ -93,7 +95,7 @@ export function HomeFolderChip({
           data-home-folder
           className="home-folder-chip"
           title={MESSAGE.where}
-          aria-label={`${MESSAGE.where}: ${label}`}
+          aria-label={MESSAGE.whereFolder(label)}
           disabled={disabled || busy}
         >
           <Icon name="folder" size={15} />

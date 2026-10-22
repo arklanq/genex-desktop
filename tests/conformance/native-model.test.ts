@@ -27,7 +27,9 @@ import {
   NativePlatform,
   type NativeSession,
   NativeSessionPhase,
+  WhyNotHere,
 } from "../../src/shared/play-native.ts";
+import { NATIVE_WORDS, nativeHereWords, notHereWords } from "../../src/renderer/words.ts";
 
 const HOST: NativeHost = { platform: NativePlatform.Mac, arch: NativeArch.Arm64, osVersion: "15.0" };
 
@@ -124,6 +126,48 @@ describe("a native game's page", () => {
     assert.equal(gameStanding(windowsOnly, installs(), []).phase, GamePhase.Elsewhere);
     assert.equal(gameStanding(game(), installs({ host: null }), []).phase, GamePhase.Elsewhere, "no native games here");
     assert.equal(gameStanding(windowsOnly, installs({ installed: [installed()] }), []).phase, GamePhase.Ready);
+    assert.deepEqual(gameStanding(windowsOnly, installs(), []).notHere, { why: WhyNotHere.NoBuild });
+    assert.equal(gameStanding(game(), installs(), []).notHere, null, "it installs here");
+    assert.equal(gameStanding(game(), installs({ host: null }), []).notHere, null, "nothing to say before main has");
+  });
+
+  it("offers no Install where Genex launches no native game, and says why", () => {
+    const windows = installs({
+      host: { platform: NativePlatform.Windows, arch: NativeArch.X64, osVersion: "10.0.26100" },
+    });
+    const both = game([build(), build({ platform: NativePlatform.Windows, arch: NativeArch.X64, entry: "Dust.exe" })]);
+    const standing = gameStanding(both, windows, []);
+    assert.equal(standing.build, null);
+    assert.equal(standing.phase, GamePhase.Elsewhere);
+    assert.deepEqual(standing.notHere, { why: WhyNotHere.System, elsewhere: [NativePlatform.Mac] });
+  });
+
+  it("says plainly why it can't install here, in place of Install", () => {
+    const WINDOWS = NativePlatform.Windows;
+    const MAC = NativePlatform.Mac;
+    const LINUX = NativePlatform.Linux;
+    assert.deepEqual(notHereWords({ why: WhyNotHere.System, elsewhere: [MAC] }, [MAC, WINDOWS], WINDOWS), {
+      title: "Can’t play on Windows",
+      line: "Genex can only run it on Mac.",
+    });
+    assert.deepEqual(notHereWords({ why: WhyNotHere.System, elsewhere: [] }, [WINDOWS], WINDOWS), {
+      title: "Can’t play on Windows",
+      line: "Genex can’t run downloaded games on Windows.",
+    });
+    assert.deepEqual(notHereWords({ why: WhyNotHere.NoBuild }, [WINDOWS], MAC), {
+      title: "Only on Windows",
+      line: "There’s no Mac version of this game yet.",
+    });
+    assert.deepEqual(notHereWords({ why: WhyNotHere.OldSystem, minOs: "15.4" }, [MAC], MAC), {
+      title: "Not for this Mac",
+      line: "It needs macOS 15.4 or later.",
+    });
+    assert.equal(notHereWords({ why: WhyNotHere.AppleSilicon }, [MAC], MAC).line, "It needs a Mac with Apple silicon.");
+    assert.equal(notHereWords({ why: WhyNotHere.Rosetta }, [MAC], MAC).line, "It needs Rosetta to run on this Mac.");
+    assert.deepEqual(notHereWords({ why: WhyNotHere.Processor }, [LINUX], LINUX), {
+      title: "Not for this computer",
+      line: "It’s made for a different processor.",
+    });
   });
 
   it("opens its page only for a game with no web build", () => {
@@ -150,16 +194,33 @@ describe("a native game's card", () => {
       percent: 38,
       etaMs: 120_000,
     });
-    assert.deepEqual(cardBadge(game(), installs({ installed: [installed()] })), { kind: CardBadge.Installed });
+    assert.deepEqual(cardBadge(game(), installs({ installed: [installed()] })), {
+      kind: CardBadge.Installed,
+      platform: NativePlatform.Mac,
+    });
     assert.deepEqual(cardBadge(game(), installs({ installed: [installed("1.2")] })), {
       kind: CardBadge.Update,
       bytes: 1_200,
     });
     assert.deepEqual(
       cardBadge(game([build()], true), installs({ installed: [installed()] })),
-      { kind: CardBadge.Installed },
+      { kind: CardBadge.Installed, platform: NativePlatform.Mac },
       "a web game's Mac app installed here says so",
     );
+  });
+
+  it("names this Mac on a Mac, and this computer on Linux", () => {
+    const linux = installs({ host: { platform: NativePlatform.Linux, arch: NativeArch.X64, osVersion: "6.8.0" } });
+    assert.equal(gameStanding(game(), installs(), []).here, NativePlatform.Mac);
+    assert.equal(gameStanding(game(), linux, []).here, NativePlatform.Linux);
+    for (const platform of ["", "darwin", NativePlatform.Mac])
+      assert.equal(nativeHereWords(platform).installedHere, "On this Mac", platform || "before main has said");
+    for (const platform of ["linux", NativePlatform.Linux]) {
+      const here = nativeHereWords(platform);
+      assert.equal(here.installedHere, "On this computer");
+      assert.equal(here.readyToPlay, "Ready to play on this computer.");
+      assert.equal(NATIVE_WORDS.installFailed[InstallFailure.NotOffered]("", here), here.notOffered);
+    }
   });
 
   it("reads a download's percent whole and never past 100", () => {

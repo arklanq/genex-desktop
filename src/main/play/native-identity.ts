@@ -5,6 +5,7 @@
  * missing, it asks the player once, records a yes on Genex and mints again. A no, a refusal or a
  * failure plays as a guest, and nothing is recorded. Electron-free: the question is a dependency.
  */
+import { t } from "../../shared/i18n.ts";
 import { type PlayTicket, TicketDelivery, TicketStatus } from "./gallery.ts";
 
 /**
@@ -12,16 +13,18 @@ import { type PlayTicket, TicketDelivery, TicketStatus } from "./gallery.ts";
  * app asks with (one obligation, one sentence), and where to take it back in Studio.
  */
 export const IDENTITY_QUESTION = {
-  title: (game: string) => `Let ${game} know who you are?`,
-  detail:
-    "It will see your display name and avatar, so your progress and scores can be saved to your account. Games are code written by other people, not by Genex. You can stop sharing any time in Settings › Storage.",
-  accept: "Continue as me",
-  decline: "Play as guest",
+  title: (game: string) => t("Let {game} know who you are?", { game }),
+  detail: () =>
+    t(
+      "It will see your display name and avatar, so your progress and scores can be saved to your account. Games are code written by other people, not by Genex. You can stop sharing any time in Settings › Storage.",
+    ),
+  accept: () => t("Continue as me"),
+  decline: () => t("Play as guest"),
 } as const;
 
 /** Words the person may see when stopping fails. */
 const MESSAGE = {
-  ForgetFailed: "Genex couldn't stop sharing who you are with this game. Try again in a moment.",
+  ForgetFailed: () => t("Genex couldn't stop sharing who you are with this game. Try again in a moment."),
 } as const;
 
 /** What Play asks the player about: the game that would learn who they are. */
@@ -70,6 +73,6 @@ export interface ForgetIdentityDeps {
 export async function forgetNativeIdentity(deps: ForgetIdentityDeps, slug: string): Promise<void> {
   const projectId = await deps.projectOf(slug);
   if (!projectId) return;
-  if (!(await deps.forget(projectId))) throw new Error(MESSAGE.ForgetFailed);
+  if (!(await deps.forget(projectId))) throw new Error(MESSAGE.ForgetFailed());
   await deps.knowsYou(slug, null);
 }

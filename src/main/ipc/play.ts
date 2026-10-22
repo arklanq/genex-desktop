@@ -1,5 +1,6 @@
 /** Play: genex.games' catalog for the dashboard, the full-screen viewer a game opens in, and people. */
 import { isAvatarVariant } from "../../shared/avatar-recipe.ts";
+import { t } from "../../shared/i18n.ts";
 import { isPlayShelf, isPlaySlug, PlayShelf, type PlayPoint, readPlayPoint } from "../../shared/play.ts";
 import { isAccountId, isAvatarStyle, isFriendAction, isPresenceVisibility } from "../../shared/play-people.ts";
 import { isStatsPeriod } from "../../shared/play-stats.ts";
@@ -11,13 +12,18 @@ import type { PlayGallery, PlayWorld } from "../play/gallery.ts";
 import { forgetNativeIdentity } from "../play/native-identity.ts";
 import type { PlayManage } from "../play/manage.ts";
 import type { NativeInstaller } from "../play/native-installs.ts";
-import { isSessionAction, NO_INSTALLS, SessionAction } from "../../shared/play-native.ts";
+import { isSessionAction, NO_INSTALLS, type NativeHost, SessionAction } from "../../shared/play-native.ts";
 import type { NativeSessions } from "../play/native-launch.ts";
 import { onWebsite } from "../play/origins.ts";
 import type { PlayPeople } from "../play/people.ts";
+import { RemixRefusedError } from "../play/remix.ts";
 import type { PlayViewer } from "../play/viewer.ts";
 import type { IpcHandle } from "./registrar.ts";
 
+/**
+ * Why a Play request from the renderer is refused. `noInstalls` and `notInstalled` are words the
+ * person reads; the rest answer only a malformed call from our own renderer, or a closed window.
+ */
 const MESSAGE = {
   badSlug: "not a game address",
   noWindow: "the window is not open",
@@ -32,9 +38,9 @@ const MESSAGE = {
   badGame: "not a published game",
   badChange: "not a change the card menu makes",
   badCoverType: "not a cover picture type",
-  noInstalls: "native games are not available on this computer",
+  noInstalls: () => t("native games are not available on this computer"),
   badSessionAction: "not something a running game is asked",
-  notInstalled: "that game is not installed",
+  notInstalled: () => t("that game is not installed"),
 } as const;
 
 /** What Play's channels answer from. */
@@ -42,6 +48,8 @@ export interface PlayIpcDeps {
   gallery: PlayGallery;
   /** Copy a game's public source into a new game; answers its library name. */
   remix(world: PlayWorld): Promise<string>;
+  /** Whether each named game's source holds a game, so its card offers Remix (`remix-ready.ts`). */
+  remixReady(slugs: readonly unknown[]): Promise<Record<string, boolean>>;
   /** The viewer in the studio window; null while there is none. */
   viewer(): PlayViewer | null;
   people: PlayPeople;
@@ -55,6 +63,8 @@ export interface PlayIpcDeps {
   share(url: string, at: PlayPoint | undefined): void;
   /** Native games' installs on this computer; null where Genex runs no native game. */
   installs(): NativeInstaller | null;
+  /** This computer as Play names it, even where Genex runs no native game; null where it has no name. */
+  here(): NativeHost | null;
   /** Native games being played; null where Genex runs no native game. */
   sessions(): NativeSessions | null;
   /** Show a file in Finder (`shell.showItemInFolder`). */
@@ -97,11 +107,17 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
     viewer()?.remixing(true);
     try {
       return await remix(await gallery.world(payload.slug));
+    } catch (error) {
+      // A refusal is told by its code: the renderer says each in its own words.
+      if (error instanceof RemixRefusedError) return { refused: error.code };
+      throw error;
     } finally {
       viewer()?.remixing(false);
     }
   });
   handle("studio:play.online", (payload) => gallery.online(Array.isArray(payload?.slugs) ? payload.slugs : []));
+  // Main finds each game's source from the catalog itself; the renderer names games only by slug.
+  handle("studio:play.remix-ready", (payload) => deps.remixReady(Array.isArray(payload?.slugs) ? payload.slugs : []));
   // The renderer names a game by its slug; main builds every address from it.
   handle("studio:play.open", async (payload) => {
     if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
@@ -124,7 +140,7 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   // The purchase sheet's answer: the viewer reads it, and pays or cancels only the purchase it holds.
   handle("studio:play.purchase", async (payload) => viewer()?.answerPurchase(payload));
   registerCommentsIpc(handle, viewer);
-  registerInstallsIpc(handle, deps.installs, gallery);
+  registerInstallsIpc(handle, deps, gallery);
   registerSessionsIpc(handle, deps.sessions);
   registerGameIpc(handle, deps);
 }
@@ -133,7 +149,7 @@ export function registerPlayIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
 function registerSessionsIpc(handle: IpcHandle, sessions: PlayIpcDeps["sessions"]): void {
   const launcher = (): NativeSessions => {
     const found = sessions();
-    if (!found) throw new Error(MESSAGE.noInstalls);
+    if (!found) throw new Error(MESSAGE.noInstalls());
     return found;
   };
   handle("studio:play.launch", (payload) => {
@@ -154,7 +170,7 @@ function registerGameIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
   handle("studio:play.reveal-install", async (payload) => {
     if (!isPlaySlug(payload?.slug)) throw new Error(MESSAGE.badSlug);
     const app = await deps.installs()?.appOf(payload.slug);
-    if (!app) throw new Error(MESSAGE.notInstalled);
+    if (!app) throw new Error(MESSAGE.notInstalled());
     deps.reveal(app);
   });
   handle("studio:play.like", async (payload) => {
@@ -167,12 +183,12 @@ function registerGameIpc(handle: IpcHandle, deps: PlayIpcDeps): void {
 /** A native game's install: the renderer names a game by its slug; main reads its build from the catalog. */
 function registerInstallsIpc(
   handle: IpcHandle,
-  installs: PlayIpcDeps["installs"],
+  { installs, here }: Pick<PlayIpcDeps, "installs" | "here">,
   gallery: Pick<PlayGallery, "forgetIdentity">,
 ): void {
   const installer = (): NativeInstaller => {
     const found = installs();
-    if (!found) throw new Error(MESSAGE.noInstalls);
+    if (!found) throw new Error(MESSAGE.noInstalls());
     return found;
   };
   const slugOf = (payload: { slug?: unknown } | undefined): string => {
@@ -181,7 +197,8 @@ function registerInstallsIpc(
   };
   handle("studio:play.install", (payload) => installer().install(slugOf(payload)));
   handle("studio:play.install-cancel", (payload) => installer().cancel(slugOf(payload)));
-  handle("studio:play.installs", async () => (await installs()?.state()) ?? NO_INSTALLS);
+  // Where nothing installs, the computer is still named, so a game's page can say why not.
+  handle("studio:play.installs", async () => (await installs()?.state()) ?? { ...NO_INSTALLS, host: here() });
   handle("studio:play.uninstall", (payload) => installer().uninstall(slugOf(payload)));
   handle("studio:play.forget-identity", (payload) => {
     const slug = slugOf(payload);

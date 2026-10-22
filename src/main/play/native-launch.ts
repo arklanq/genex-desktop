@@ -91,7 +91,11 @@ export interface NativeSessionsDeps {
   log(line: string): void;
   /** Opens a game's way to Genex (`main/play/genex-gateway.ts`); without it a game has no network. */
   genex?(slug: string): Promise<GameGenex | null>;
-  /** Where presence and plays will be reported once genex.games takes them from the app; unused until then. */
+  /**
+   * Where a game's presence and plays go: started once it counts as running (its window on screen,
+   * or a minute up without one), which reports the play to genex.games (`native-plays.ts`), and
+   * ended once a running game ends (nothing yet: genex.games takes no presence from the app).
+   */
   presence?: { started(slug: string): void; ended(slug: string): void };
 }
 
@@ -169,20 +173,25 @@ export class NativeSessions {
     return this.#live.get(slug) === one;
   }
 
-  /** Look for the game's window until it appears, it exits, or long enough has passed. */
+  /**
+   * Look for the game's window until it appears, it exits, it is being quit, or long enough has
+   * passed. A game quit while it starts is never brought forward, played or counted.
+   */
   async #awaitWindow(slug: string, one: Live): Promise<void> {
     const started = this.#deps.clock.now();
-    while (this.#current(slug, one)) {
+    const waiting = (): boolean => this.#current(slug, one) && !one.quitting;
+    while (waiting()) {
       const seen = await this.#deps.hasWindow(one.pid);
       if (seen || this.#deps.clock.now() - started >= WINDOW_WAIT_MS) break;
       await new Promise<void>((resolve) => this.#deps.clock.setTimeout(resolve, WINDOW_POLL_MS));
     }
-    if (!this.#current(slug, one)) return;
+    if (!waiting()) return;
     one.session = { ...one.session, phase: NativeSessionPhase.Running };
     this.#push();
+    // Before the awaits: a game that ends while it is brought forward reports its end after its start.
+    this.#deps.presence?.started(slug);
     await this.#deps.show(one.pid);
     await this.#deps.played(slug).catch(() => undefined);
-    this.#deps.presence?.started(slug);
   }
 
   /** What happens once a game's process ends: running, it was played; starting, it failed. */
@@ -234,7 +243,8 @@ export class NativeSessions {
       bundleId,
       bundleName,
       args: launchArgs(record),
-      ...(genex ? { genex: { ports: genex.ports, env: genex.env } } : {}),
+      // The game's own name on Genex too: a build made before its first publish knows no other.
+      ...(genex ? { genex: { ports: genex.ports, env: { ...genex.env, GENEX_GAME: slug } } } : {}),
     };
     try {
       const child = await this.#deps.spawn(request);

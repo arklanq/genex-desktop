@@ -9,6 +9,7 @@ import {
   type RefObject,
 } from "react";
 import type { ConnectionSnapshot } from "../../shared/connections.ts";
+import { t } from "../../shared/i18n.ts";
 import type { PluginInfo } from "../../shared/plugins.ts";
 import type { McpConnectorView } from "../../shared/mcp.ts";
 import { UiEvent, type UiEventType } from "../../shared/ui-events.ts";
@@ -387,7 +388,7 @@ function EntryRow({
           type="button"
           className="picker-action"
           disabled={pending}
-          aria-label={`${action.label} ${entry.name}`}
+          aria-label={t("{action} {name}", { action: action.label, name: entry.name })}
           onClick={action.run}
         >
           {action.label}
@@ -397,7 +398,7 @@ function EntryRow({
         id={id}
         checked={entry.on}
         disabled={pending || entry.locked}
-        label={`Use ${entry.name}`}
+        label={t("Use {name}", { name: entry.name })}
         describedBy={scope}
         onChange={entry.toggle}
       />
@@ -501,16 +502,16 @@ function FullMenu({
   );
   return (
     <>
-      <PickerLabel first>Add</PickerLabel>
+      <PickerLabel first>{t("Add")}</PickerLabel>
       <button type="button" className={pickerRow} onClick={onImages}>
         <Icon name="image" className="text-ink" />
-        <span className="shrink-0">Images</span>
-        <span className="picker-desc">Reference or mood board</span>
+        <span className="shrink-0">{t("Images")}</span>
+        <span className="picker-desc">{t("Reference or mood board")}</span>
       </button>
       {plan && <PlanModeItem plan={plan} onPicked={onPicked} />}
-      {pluginEntries.length > 0 && <PickerLabel>Plugins</PickerLabel>}
+      {pluginEntries.length > 0 && <PickerLabel>{t("Plugins")}</PickerLabel>}
       {pluginEntries.map(row)}
-      {serverEntries.length > 0 && <PickerLabel>MCP servers</PickerLabel>}
+      {serverEntries.length > 0 && <PickerLabel>{t("MCP servers")}</PickerLabel>}
       {serverEntries.map(row)}
       {error && (
         <p role="alert" className="px-2.5 py-1.5 text-[12px] leading-4 text-red">
@@ -520,7 +521,7 @@ function FullMenu({
       <PickerSeparator />
       <button type="button" onClick={onManage} className={pickerRow}>
         <Icon name="plugins" className="text-ink" />
-        Manage plugins
+        {t("Manage plugins")}
         <Icon name="chevron-right" className="ml-auto text-ink-3" />
       </button>
     </>
@@ -560,14 +561,14 @@ function AddTrigger({ open, disabled }: { open: boolean; disabled: boolean }) {
       align="start"
       content={
         <span className="flex items-center gap-2">
-          Add images and more <Shortcut>@</Shortcut>
+          {t("Add images and more")} <Shortcut>@</Shortcut>
         </span>
       }
     >
       <PopoverTrigger
         render={<button type="button" />}
         disabled={disabled}
-        aria-label="Add images and more"
+        aria-label={t("Add images and more")}
         className="composer-icon composer-add"
       >
         <Icon name="plus" />
@@ -708,7 +709,7 @@ export function ComposerAddMenu({
         initialFocus={!listMode}
         finalFocus={() => !viaMention.current}
         className={panelClass(listMode)}
-        aria-label="Add"
+        aria-label={t("Add")}
       >
         {listMode ? (
           <MentionPanel

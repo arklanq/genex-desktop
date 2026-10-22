@@ -1,13 +1,15 @@
 /**
  * The player builds a game folder holds: a Mac app (a `.app` with an Info.plist and a Mach-O program
- * inside) and a Windows program (a PE `.exe` beside its data), wherever Unity, Godot or Unreal put
- * them. Platform and processor are read from the binary itself, never from a name or the author's
+ * inside), a Windows program (a PE `.exe` beside its data) and a Linux program (a 64-bit ELF named
+ * as Unity and Godot name it, `<Game>.x86_64`, or in an Unreal package's `<Game>/Binaries/Linux`),
+ * wherever Unity, Godot or Unreal put them. Platform and processor are read from the binary itself, never from a name or the author's
  * words. The folder is written by agents: nothing is followed through a link, a bundle whose program
  * is a link or is not a binary is not a build, and the walk stops at a cap however large the folder.
  */
 import { lstat, open, readdir, realpath, stat } from "node:fs/promises";
 import path from "node:path";
 import { NativeArch, NativePlatform } from "../../shared/play-native.ts";
+import { linuxBuildOf } from "../../shared/publish-platforms.ts";
 import { diskBytes } from "../../substrate/storage-folders.ts";
 
 /** How deep under the game folder builds are looked for, and how many entries one look reads. */
@@ -30,6 +32,12 @@ const SKIPPED = new Set([
 ]);
 /** Programs an engine ships beside a game's own: never the game. */
 const HELPER_EXE = /^(UnityCrashHandler|CrashReportClient|unins|setup)/i;
+/** The name Unity and Godot give a Linux player: `<Game>.x86_64`, `<Game>.arm64`. */
+const LINUX_PLAYER = /\.(x86_64|arm64|aarch64)$/i;
+/** The folders an Unreal package keeps a Linux game's program in, under `<Game>/Binaries/`. */
+const UNREAL_LINUX_BINARIES = new Set(["Linux", "LinuxArm64"]);
+/** Unreal's own folder in a package: its programs are the engine's, never the game. */
+const UNREAL_ENGINE = "Engine";
 
 /** Mach-O magic numbers, as the first four bytes read big-endian: thin 64-bit either way round, and fat. */
 const MACH_O = new Set([0xfeedfacf, 0xcffaedfe, 0xcafebabe, 0xbebafeca]);
@@ -37,6 +45,17 @@ const MACH_O = new Set([0xfeedfacf, 0xcffaedfe, 0xcafebabe, 0xbebafeca]);
 const PE_MACHINE: Readonly<Record<number, typeof NativeArch.X64 | typeof NativeArch.Arm64>> = {
   0x8664: NativeArch.X64,
   0xaa64: NativeArch.Arm64,
+};
+/** An ELF file's first four bytes, read big-endian, and the header fields Genex reads. */
+const ELF_MAGIC = 0x7f454c46;
+const ELF_CLASS_64 = 2;
+const ELF_LITTLE_ENDIAN = 1;
+/** ELF `e_type`: a program, linked fixed or position-independent (a shared library is that too, so names decide). */
+const ELF_PROGRAM_TYPES = new Set([2, 3]);
+/** The ELF machine field's values Genex knows. */
+const ELF_MACHINE: Readonly<Record<number, typeof NativeArch.X64 | typeof NativeArch.Arm64>> = {
+  0x3e: NativeArch.X64,
+  0xb7: NativeArch.Arm64,
 };
 /** Mach-O CPU types in a fat header or a thin one. */
 const CPU_ARM64 = 0x0100000c;
@@ -47,8 +66,10 @@ export interface FoundBuild {
   platform: NativePlatform;
   /** Its processors; a Mac app with both is universal. */
   arch: NativeArch;
-  /** The `.app` or the `.exe`, relative to the game folder. */
+  /** The `.app`, the `.exe` or the Linux program, relative to the game folder. */
   entry: string;
+  /** What is shipped, relative to the game folder: the bundle, or the folder the program and its data are in. */
+  folder: string;
   /** The space the build takes (the bundle, or the program's folder). */
   bytes: number;
   /** When its program was last written, ms since the epoch. */
@@ -93,6 +114,15 @@ export async function peArch(file: string): Promise<NativeArch | null> {
   return PE_MACHINE[bytes.readUInt16LE(pe + 4)] ?? null;
 }
 
+/** The processor a 64-bit little-endian ELF program is for, read from its header; null when it is not one Genex knows. */
+export async function elfArch(file: string): Promise<NativeArch | null> {
+  const bytes = await head(file, 64);
+  if (!bytes || bytes.length < 20 || bytes.readUInt32BE(0) !== ELF_MAGIC) return null;
+  if (bytes[4] !== ELF_CLASS_64 || bytes[5] !== ELF_LITTLE_ENDIAN) return null;
+  if (!ELF_PROGRAM_TYPES.has(bytes.readUInt16LE(16))) return null;
+  return ELF_MACHINE[bytes.readUInt16LE(18)] ?? null;
+}
+
 /** The longest Info.plist read. */
 const PLIST_MAX_BYTES = 64 * 1024;
 
@@ -129,7 +159,14 @@ async function macBuild(root: string, app: string): Promise<FoundBuild | null> {
   const arch = await machOArch(program);
   if (!arch) return null;
   const entry = path.relative(root, app).split(path.sep).join("/");
-  return { platform: NativePlatform.Mac, arch, entry, bytes: await diskBytes(app), builtAt: info.mtimeMs };
+  return {
+    platform: NativePlatform.Mac,
+    arch,
+    entry,
+    folder: entry,
+    bytes: await diskBytes(app),
+    builtAt: info.mtimeMs,
+  };
 }
 
 /** The game's own `.exe` among a folder's files, as a build, or null. */
@@ -142,14 +179,55 @@ async function windowsBuild(root: string, dir: string, names: readonly string[])
     const arch = await peArch(file);
     if (!arch) continue;
     const entry = path.relative(root, file).split(path.sep).join("/");
-    return { platform: NativePlatform.Windows, arch, entry, bytes: await diskBytes(dir), builtAt: info.mtimeMs };
+    const folder = path.relative(root, dir).split(path.sep).join("/");
+    return {
+      platform: NativePlatform.Windows,
+      arch,
+      entry,
+      folder,
+      bytes: await diskBytes(dir),
+      builtAt: info.mtimeMs,
+    };
+  }
+  return null;
+}
+
+/** Whether `dir` is an Unreal package's `<Game>/Binaries/Linux`, where its Linux program is. */
+function isUnrealLinuxBinaries(dir: string): boolean {
+  const parts = dir.split(path.sep);
+  return UNREAL_LINUX_BINARIES.has(parts.at(-1) ?? "") && parts.at(-2) === "Binaries" && parts.at(-3) !== UNREAL_ENGINE;
+}
+
+/**
+ * The names among a folder's files that may be a Linux game's program: `<Game>.x86_64` anywhere, and
+ * in an Unreal package's binaries folder a name with no extension (beside it lie `.so`, `.debug`
+ * and `.sym` files, ELF too, and never the game).
+ */
+function linuxCandidates(dir: string, names: readonly string[]): string[] {
+  const unreal = isUnrealLinuxBinaries(dir);
+  return names.filter((name) => !HELPER_EXE.test(name) && (LINUX_PLAYER.test(name) || (unreal && !name.includes("."))));
+}
+
+/** The game's own Linux program among a folder's files, as a build, or null. */
+async function linuxBuild(root: string, dir: string, names: readonly string[]): Promise<FoundBuild | null> {
+  for (const name of linuxCandidates(dir, names)) {
+    const file = path.join(dir, name);
+    const info = await lstat(file).catch(() => null);
+    if (!info?.isFile()) continue;
+    const arch = await elfArch(file);
+    if (!arch) continue;
+    const entry = path.relative(root, file).split(path.sep).join("/");
+    const build = linuxBuildOf(entry);
+    if (!build) continue;
+    const bytes = await diskBytes(path.join(root, ...build.folder.split("/")));
+    return { platform: NativePlatform.Linux, arch, entry, folder: build.folder, bytes, builtAt: info.mtimeMs };
   }
   return null;
 }
 
 /**
- * The player builds under `root`, newest first: every `.app` that is a Mac app and every folder whose
- * `.exe` is a Windows program. Links are never followed, engine caches are skipped, and the look
+ * The player builds under `root`, newest first: every `.app` that is a Mac app, every folder whose
+ * `.exe` is a Windows program and every folder whose Linux program is a game's. Links are never followed, engine caches are skipped, and the look
  * stops after {@link WALK_ENTRIES_MAX} entries.
  */
 export async function findNativeBuilds(root: string): Promise<FoundBuild[]> {
@@ -162,6 +240,8 @@ export async function findNativeBuilds(root: string): Promise<FoundBuild[]> {
     const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
     const windows = await windowsBuild(root, next.dir, files);
     if (windows) found.push(windows);
+    const linux = await linuxBuild(root, next.dir, files);
+    if (linux) found.push(linux);
     const folders = entries.filter((entry) => entry.isDirectory() && !SKIPPED.has(entry.name));
     for (const entry of folders) await lookIn(root, next, entry.name, found, pending);
   }

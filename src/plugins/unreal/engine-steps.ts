@@ -5,6 +5,7 @@
  * permission card; it appears in a game's chat when new-game makes its Unreal project while a step
  * is open, and the agent can show it again when C++ would clearly help.
  */
+import { t } from "../../shared/i18n.ts";
 import { type XcodeRange, type XcodeStatus, XcodeState } from "./xcode.ts";
 
 /** Each step's id on the card. Wire values: the renderer keys its rows by them. */
@@ -53,36 +54,50 @@ export type UnrealSteps = {
   doneSays?: string;
 };
 
-/** How the intro counts the open steps: in words up to three, which is all the card ever holds. */
-const COUNT_WORDS = ["", "One", "Two", "Three"] as const;
-
+/** The card's words, in the person's language. */
 const WORDS = {
-  Title: "Unreal setup",
+  Title: () => t("Unreal setup"),
+  /** The open steps counted in words, which is all the card ever holds (three at most). */
   Intro: (open: number) =>
-    open === 1
-      ? "One step left so the agent can add C++ to this game."
-      : `${COUNT_WORDS[open] ?? open} steps left so the agent can add C++ to this game.`,
-  AllDone: "Everything Unreal needs from you is done.",
-  SetUp: (engine: string, project: string) => `Unreal ${engine} is set up for ${project}`,
-  SetUpDetail: "Agents can edit and play it from this chat.",
-  InstallXcode: "Install Xcode",
-  InstallDetail:
-    "Recommended. Lets the agent add C++ to this game; without it, it builds in Blueprints. Free from the App Store.",
-  GetXcode: "Get Xcode",
-  OpenXcode: "Open Xcode once",
-  OpenDetail: "It finishes its own setup the first time it opens.",
-  OpenButton: "Open Xcode",
-  SelectXcode: "Use Xcode for builds",
-  SelectDetail: "Xcode is installed but not in use. Run this in Terminal; it asks for your password:",
-  UpdateXcode: (version: string | null) => (version ? `Update Xcode (this Mac has ${version})` : "Update Xcode"),
-  UpdateDetail: (engine: string, min: string, max: string) => `Unreal ${engine} builds with Xcode ${min} to ${max}.`,
-  UpdateButton: "Open App Store",
-  AddXcode: (major: string) => `Add Xcode ${major}`,
+    t(
+      "{open, plural, =1 {One step left so the agent can add C++ to this game.} =2 {Two steps left so the agent can add C++ to this game.} =3 {Three steps left so the agent can add C++ to this game.} other {# steps left so the agent can add C++ to this game.}}",
+      { open },
+    ),
+  AllDone: () => t("Everything Unreal needs from you is done."),
+  SetUp: (engine: string, project: string) => t("Unreal {engine} is set up for {project}", { engine, project }),
+  SetUpDetail: () => t("Agents can edit and play it from this chat."),
+  InstallXcode: () => t("Install Xcode"),
+  InstallDetail: () =>
+    t(
+      "Recommended. Lets the agent add C++ to this game; without it, it builds in Blueprints. Free from the App Store.",
+    ),
+  GetXcode: () => t("Get Xcode"),
+  OpenXcode: () => t("Open Xcode once"),
+  OpenDetail: () => t("It finishes its own setup the first time it opens."),
+  OpenButton: () => t("Open Xcode"),
+  SelectXcode: () => t("Use Xcode for builds"),
+  SelectDetail: () => t("Xcode is installed but not in use. Run this in Terminal; it asks for your password:"),
+  UpdateXcode: (version: string | null) =>
+    version ? t("Update Xcode (this Mac has {version})", { version }) : t("Update Xcode"),
+  UpdateDetail: (engine: string, min: string, max: string) =>
+    t("Unreal {engine} builds with Xcode {min} to {max}.", { engine, min, max }),
+  UpdateButton: () => t("Open App Store"),
+  AddXcode: (major: string) => t("Add Xcode {major}", { major }),
   AddDetail: (engine: string, range: XcodeRange, version: string | null) =>
-    `Unreal ${engine} builds with Xcode ${range.min} to ${range.max}. Keep Xcode ${version ?? ""} and add Xcode ${majorOf(range.max)} from Apple's downloads: put it in Applications beside Xcode ${majorOf(version ?? "")}; this card then shows the one command to select it.`,
-  AddButton: "Open Apple's downloads",
-  XcodeReady: (version: string | null) => `Xcode${version ? ` ${version}` : ""} is ready`,
-  ReadyDetail: "The agent can add C++ to this game.",
+    t(
+      "Unreal {engine} builds with Xcode {min} to {max}. Keep Xcode {version} and add Xcode {wanted} from Apple's downloads: put it in Applications beside Xcode {current}; this card then shows the one command to select it.",
+      {
+        engine,
+        min: range.min,
+        max: range.max,
+        version: version ?? "",
+        wanted: majorOf(range.max),
+        current: majorOf(version ?? ""),
+      },
+    ),
+  AddButton: () => t("Open Apple's downloads"),
+  XcodeReady: (version: string | null) => (version ? t("Xcode {version} is ready", { version }) : t("Xcode is ready")),
+  ReadyDetail: () => t("The agent can add C++ to this game."),
 } as const;
 
 const getXcode = (step: XcodeStep, label: string): StepAction => ({ name: GET_XCODE_ACTION, args: { step }, label });
@@ -102,14 +117,14 @@ function unsupportedStep(xcode: XcodeStatus, engine: string): UnrealStep {
       label: WORDS.AddXcode(majorOf(range.max)),
       detail: WORDS.AddDetail(engine, range, xcode.version),
       done: false,
-      action: getXcode(XcodeStep.Downloads, WORDS.AddButton),
+      action: getXcode(XcodeStep.Downloads, WORDS.AddButton()),
     };
   return {
     id: UnrealStepId.UpdateXcode,
     label: WORDS.UpdateXcode(xcode.version),
     detail: range ? WORDS.UpdateDetail(engine, range.min, range.max) : "",
     done: false,
-    action: getXcode(XcodeStep.Install, WORDS.UpdateButton),
+    action: getXcode(XcodeStep.Install, WORDS.UpdateButton()),
   };
 }
 
@@ -118,17 +133,17 @@ function xcodeSteps(xcode: XcodeStatus, engine: string): UnrealStep[] {
   const installed = xcode.state !== XcodeState.Missing;
   const install: UnrealStep = {
     id: UnrealStepId.InstallXcode,
-    label: WORDS.InstallXcode,
-    detail: WORDS.InstallDetail,
+    label: WORDS.InstallXcode(),
+    detail: WORDS.InstallDetail(),
     done: installed,
-    ...(installed ? {} : { action: getXcode(XcodeStep.Install, WORDS.GetXcode) }),
+    ...(installed ? {} : { action: getXcode(XcodeStep.Install, WORDS.GetXcode()) }),
   };
   const open: UnrealStep = {
     id: UnrealStepId.OpenXcode,
-    label: WORDS.OpenXcode,
-    detail: WORDS.OpenDetail,
+    label: WORDS.OpenXcode(),
+    detail: WORDS.OpenDetail(),
     done: false,
-    ...(installed ? { action: getXcode(XcodeStep.Open, WORDS.OpenButton) } : {}),
+    ...(installed ? { action: getXcode(XcodeStep.Open, WORDS.OpenButton()) } : {}),
   };
   switch (xcode.state) {
     case XcodeState.NotApplicable:
@@ -140,8 +155,8 @@ function xcodeSteps(xcode: XcodeStatus, engine: string): UnrealStep[] {
       return [
         {
           id: UnrealStepId.SelectXcode,
-          label: WORDS.SelectXcode,
-          detail: WORDS.SelectDetail,
+          label: WORDS.SelectXcode(),
+          detail: WORDS.SelectDetail(),
           done: false,
           command: xcode.command ?? "",
         },
@@ -153,7 +168,7 @@ function xcodeSteps(xcode: XcodeStatus, engine: string): UnrealStep[] {
         {
           id: UnrealStepId.InstallXcode,
           label: WORDS.XcodeReady(xcode.version),
-          detail: WORDS.ReadyDetail,
+          detail: WORDS.ReadyDetail(),
           done: true,
         },
       ];
@@ -166,28 +181,35 @@ function xcodeSteps(xcode: XcodeStatus, engine: string): UnrealStep[] {
  */
 export function unrealSteps(project: string | null, engine: string, xcode: XcodeStatus): UnrealSteps {
   const setUp: UnrealStep[] = project
-    ? [{ id: UnrealStepId.SetUp, label: WORDS.SetUp(engine, project), detail: WORDS.SetUpDetail, done: true }]
+    ? [{ id: UnrealStepId.SetUp, label: WORDS.SetUp(engine, project), detail: WORDS.SetUpDetail(), done: true }]
     : [];
   const steps = [...setUp, ...xcodeSteps(xcode, engine)];
   const open = steps.filter((step) => !step.done).length;
-  return { title: WORDS.Title, intro: open ? WORDS.Intro(open) : WORDS.AllDone, steps, open: open > 0 };
+  return { title: WORDS.Title(), intro: open ? WORDS.Intro(open) : WORDS.AllDone(), steps, open: open > 0 };
 }
 
 /** The plugin actions the install card's buttons run. Wire values: the manifest declares them. */
 export const InstallCardAction = { GetUnreal: "get-unreal", Skip: "skip" } as const;
 
+/** Where Epic's launcher installs an engine version, as its own English menus name the steps. */
+const launcherInstallPath = (version: string) => `Library, + beside Engine Versions, ${version}, Install`;
+
+/** The install card's words: the person's, then what the agent is told once the card closes. */
 const INSTALL_WORDS = {
-  Intro: "Two steps before the agent can build in Unreal.",
-  GetLauncher: "Get the Epic Games Launcher",
-  GetLauncherDetail: "Epic's free app that installs Unreal. Genex opens Epic's download page.",
-  LauncherReady: "The Epic Games Launcher is installed",
-  Download: "Download",
-  Install: (version: string) => `Install Unreal ${version}`,
+  Intro: () => t("Two steps before the agent can build in Unreal."),
+  GetLauncher: () => t("Get the Epic Games Launcher"),
+  GetLauncherDetail: () => t("Epic's free app that installs Unreal. Genex opens Epic's download page."),
+  LauncherReady: () => t("The Epic Games Launcher is installed"),
+  Download: () => t("Download"),
+  Install: (version: string) => t("Install Unreal {version}", { version }),
   InstallDetail: (version: string) =>
-    `In the launcher, sign in, then Library, + beside Engine Versions, ${version}, Install. About 45 GB. Only you can sign in to Epic.`,
-  OpenLauncher: "Open the Epic Games Launcher",
-  Installed: (version: string) => `Unreal ${version} is installed`,
-  Skip: "Don't use Unreal",
+    t("In the launcher, sign in, then {clickPath}. About 45 GB. Only you can sign in to Epic.", {
+      clickPath: launcherInstallPath(version),
+    }),
+  OpenLauncher: () => t("Open the Epic Games Launcher"),
+  Installed: (version: string) => t("Unreal {version} is installed", { version }),
+  Skip: () => t("Don't use Unreal"),
+  // The card's `doneSays`, which the agent reads: English.
   Done: (version: string) =>
     `Unreal ${version} is installed on this Mac. Go on with the person's game in Unreal: call unreal__new-game if it has no Unreal project yet.`,
   Skipped:
@@ -208,13 +230,13 @@ export function unrealInstallCard(state: {
 }): UnrealSteps {
   const { version } = state;
   const launcher: UnrealStep = state.launcher
-    ? { id: UnrealStepId.GetLauncher, label: INSTALL_WORDS.LauncherReady, detail: "", done: true }
+    ? { id: UnrealStepId.GetLauncher, label: INSTALL_WORDS.LauncherReady(), detail: "", done: true }
     : {
         id: UnrealStepId.GetLauncher,
-        label: INSTALL_WORDS.GetLauncher,
-        detail: INSTALL_WORDS.GetLauncherDetail,
+        label: INSTALL_WORDS.GetLauncher(),
+        detail: INSTALL_WORDS.GetLauncherDetail(),
         done: false,
-        action: { name: InstallCardAction.GetUnreal, args: {}, label: INSTALL_WORDS.Download },
+        action: { name: InstallCardAction.GetUnreal, args: {}, label: INSTALL_WORDS.Download() },
       };
   const engine: UnrealStep = state.installed
     ? { id: UnrealStepId.InstallEngine, label: INSTALL_WORDS.Installed(version), detail: "", done: true }
@@ -225,11 +247,11 @@ export function unrealInstallCard(state: {
         done: false,
         you: true,
         ...(state.launcher
-          ? { action: { name: InstallCardAction.GetUnreal, args: {}, label: INSTALL_WORDS.OpenLauncher } }
+          ? { action: { name: InstallCardAction.GetUnreal, args: {}, label: INSTALL_WORDS.OpenLauncher() } }
           : {}),
       };
-  const card = { title: WORDS.Title, intro: INSTALL_WORDS.Intro, steps: [launcher, engine] };
+  const card = { title: WORDS.Title(), intro: INSTALL_WORDS.Intro(), steps: [launcher, engine] };
   if (state.installed) return { ...card, open: false, doneSays: INSTALL_WORDS.Done(version) };
   if (state.skipped) return { ...card, open: false, doneSays: INSTALL_WORDS.Skipped };
-  return { ...card, open: true, secondary: { name: InstallCardAction.Skip, args: {}, label: INSTALL_WORDS.Skip } };
+  return { ...card, open: true, secondary: { name: InstallCardAction.Skip, args: {}, label: INSTALL_WORDS.Skip() } };
 }

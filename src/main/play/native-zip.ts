@@ -2,12 +2,15 @@
  * What a native build's zip holds, read from its central directory before anything is unpacked: each
  * entry's name, size and kind, and where a link points. The archive is hostile input; an entry that
  * would land outside the game, a link that points out of it or a file written through a link is
- * refused here, so `ditto` only ever unpacks an archive already found sound. ZIP64 is read: a game
- * may be larger than 4 GiB.
+ * refused here, so `ditto` (a Mac build) or {@link unpackZip} (a Linux one) only ever unpacks an
+ * archive already found sound. ZIP64 is read: a game may be larger than 4 GiB.
  */
-import { open } from "node:fs/promises";
+import { createWriteStream } from "node:fs";
+import { mkdir, open, symlink } from "node:fs/promises";
 import path from "node:path";
-import { inflateRawSync } from "node:zlib";
+import { Transform } from "node:stream";
+import { pipeline } from "node:stream/promises";
+import { createInflateRaw, inflateRawSync } from "node:zlib";
 
 /** The signatures and sizes of the records read, as the ZIP format names them. */
 const EOCD_SIGNATURE = 0x06054b50;
@@ -35,6 +38,12 @@ const KIND_DIRECTORY = 0o040000;
 const KIND_FILE = 0o100000;
 /** Unix attributes live in the upper 16 bits when the entry was made on unix. */
 const MADE_ON_UNIX = 3;
+/** Any execute bit of a unix mode. */
+const EXECUTE_BITS = 0o111;
+/** The modes {@link unpackZip} gives what it writes: a program, any other file, a folder. */
+const PROGRAM_MODE = 0o755;
+const FILE_MODE = 0o644;
+const FOLDER_MODE = 0o755;
 /** The longest link target the app reads. */
 const LINK_MAX = 4096;
 /** The most entries one archive may have. */
@@ -86,6 +95,8 @@ export interface ZipListing {
 interface CentralRecord {
   name: string;
   kind: ZipEntryKind;
+  /** Its unix mode carries an execute bit. */
+  executable: boolean;
   method: number;
   compressedSize: number;
   size: number;
@@ -148,9 +159,12 @@ function zip64Values(extra: Buffer, wanted: { size: boolean; compressed: boolean
   throw unreadable("missing ZIP64 field");
 }
 
+/** An entry's unix mode, or 0 when it was not made on unix. */
+const unixMode = (madeBy: number, external: number): number => (madeBy >> 8 === MADE_ON_UNIX ? external >>> 16 : 0);
+
 /** The kind an entry unpacks to, from its unix mode (else its trailing slash). */
 function kindOf(name: string, madeBy: number, external: number): ZipEntryKind {
-  const mode = madeBy >> 8 === MADE_ON_UNIX ? (external >>> 16) & KIND_MASK : 0;
+  const mode = unixMode(madeBy, external) & KIND_MASK;
   if (mode === KIND_LINK) return ZipEntryKind.Link;
   if (mode === KIND_DIRECTORY || name.endsWith("/")) return ZipEntryKind.Directory;
   if (mode === 0 || mode === KIND_FILE) return ZipEntryKind.File;
@@ -183,8 +197,9 @@ function centralRecord(directory: Buffer, at: number): { record: CentralRecord; 
   if (method !== STORED && method !== DEFLATED) throw unreadable(`method ${method}`);
   const kind = kindOf(raw, madeBy, external);
   const name = raw.replace(/\/+$/, "");
+  const executable = (unixMode(madeBy, external) & EXECUTE_BITS) !== 0;
   return {
-    record: { name, kind, method, compressedSize, size, localOffset },
+    record: { name, kind, executable, method, compressedSize, size, localOffset },
     next: nameStart + nameLength + extraLength + commentLength,
   };
 }
@@ -206,13 +221,17 @@ function linkLands(name: string, target: string): string | null {
   return landed === ".." || landed.startsWith("../") ? null : landed;
 }
 
+/** Where an entry's data starts: past its local header, whose name and extra may differ from the directory's. */
+async function dataOffset(file: Awaited<ReturnType<typeof open>>, record: CentralRecord): Promise<number> {
+  const header = await readAt(file, record.localOffset, LOCAL_SIZE);
+  if (header.readUInt32LE(0) !== LOCAL_SIGNATURE) throw unreadable("broken local header");
+  return record.localOffset + LOCAL_SIZE + header.readUInt16LE(26) + header.readUInt16LE(28);
+}
+
 /** The target a link entry stores: its data, inflated when it was deflated. */
 async function linkTarget(file: Awaited<ReturnType<typeof open>>, record: CentralRecord): Promise<string> {
   if (record.compressedSize > LINK_MAX || record.size > LINK_MAX) throw unsafe(`long link ${record.name}`);
-  const header = await readAt(file, record.localOffset, LOCAL_SIZE);
-  if (header.readUInt32LE(0) !== LOCAL_SIGNATURE) throw unreadable("broken local header");
-  const dataAt = record.localOffset + LOCAL_SIZE + header.readUInt16LE(26) + header.readUInt16LE(28);
-  const data = await readAt(file, dataAt, record.compressedSize);
+  const data = await readAt(file, await dataOffset(file, record), record.compressedSize);
   const bytes = record.method === DEFLATED ? inflateRawSync(data, { maxOutputLength: LINK_MAX }) : data;
   return bytes.toString("utf8");
 }
@@ -228,6 +247,39 @@ function refuseWritesThroughLinks(entries: readonly ZipEntry[]): void {
   }
 }
 
+/** An archive's checked listing and the records behind it, in the same order. */
+interface CheckedArchive {
+  listing: ZipListing;
+  records: CentralRecord[];
+}
+
+/** Read and check the central directory of the open `file` (see {@link listZip}). */
+async function checkArchive(file: Awaited<ReturnType<typeof open>>, maxUnpackedBytes: number): Promise<CheckedArchive> {
+  const { size } = await file.stat();
+  if (size < EOCD_SIZE) throw unreadable("too short");
+  const { offset, count } = await directoryOf(file, size);
+  if (count > ZIP_ENTRIES_MAX) throw new ZipError(ZipRefusal.TooLarge, `${count} entries`);
+  if (offset >= size) throw unreadable("directory past the end");
+  const directory = await readAt(file, offset, size - offset);
+  const entries: ZipEntry[] = [];
+  const records: CentralRecord[] = [];
+  let unpackedBytes = 0;
+  let at = 0;
+  for (let index = 0; index < count; index++) {
+    const { record, next } = centralRecord(directory, at);
+    at = next;
+    if (!isPlainZipName(record.name)) throw unsafe(`entry ${JSON.stringify(record.name)}`);
+    unpackedBytes += record.size;
+    if (unpackedBytes > maxUnpackedBytes) throw new ZipError(ZipRefusal.TooLarge, `${unpackedBytes} bytes`);
+    const target = record.kind === ZipEntryKind.Link ? await linkTarget(file, record) : null;
+    if (target !== null && linkLands(record.name, target) === null) throw unsafe(`link ${record.name} -> ${target}`);
+    entries.push({ name: record.name, kind: record.kind, size: record.size, target });
+    records.push(record);
+  }
+  refuseWritesThroughLinks(entries);
+  return { listing: { entries, unpackedBytes }, records };
+}
+
 /**
  * The entries of the zip at `archive`, each checked: a plain name inside the archive, a link only
  * to somewhere inside it, nothing written through a link, at most {@link ZIP_ENTRIES_MAX} entries
@@ -236,27 +288,61 @@ function refuseWritesThroughLinks(entries: readonly ZipEntry[]): void {
 export async function listZip(archive: string, maxUnpackedBytes: number): Promise<ZipListing> {
   const file = await open(archive, "r");
   try {
-    const { size } = await file.stat();
-    if (size < EOCD_SIZE) throw unreadable("too short");
-    const { offset, count } = await directoryOf(file, size);
-    if (count > ZIP_ENTRIES_MAX) throw new ZipError(ZipRefusal.TooLarge, `${count} entries`);
-    if (offset >= size) throw unreadable("directory past the end");
-    const directory = await readAt(file, offset, size - offset);
-    const entries: ZipEntry[] = [];
-    let unpackedBytes = 0;
-    let at = 0;
-    for (let index = 0; index < count; index++) {
-      const { record, next } = centralRecord(directory, at);
-      at = next;
-      if (!isPlainZipName(record.name)) throw unsafe(`entry ${JSON.stringify(record.name)}`);
-      unpackedBytes += record.size;
-      if (unpackedBytes > maxUnpackedBytes) throw new ZipError(ZipRefusal.TooLarge, `${unpackedBytes} bytes`);
-      const target = record.kind === ZipEntryKind.Link ? await linkTarget(file, record) : null;
-      if (target !== null && linkLands(record.name, target) === null) throw unsafe(`link ${record.name} -> ${target}`);
-      entries.push({ name: record.name, kind: record.kind, size: record.size, target });
+    return (await checkArchive(file, maxUnpackedBytes)).listing;
+  } finally {
+    await file.close();
+  }
+}
+
+/** Passes an entry's bytes on, refusing any past the size its directory record states. */
+function sizeCap(record: CentralRecord): Transform {
+  let seen = 0;
+  return new Transform({
+    transform(chunk: Buffer, _encoding, done) {
+      seen += chunk.length;
+      done(seen > record.size ? new ZipError(ZipRefusal.TooLarge, record.name) : null, chunk);
+    },
+  });
+}
+
+/** Write one file entry of the open `file` to `to`, a new file: never one already there. */
+async function writeEntry(file: Awaited<ReturnType<typeof open>>, record: CentralRecord, to: string): Promise<void> {
+  if (record.compressedSize === 0 && record.size !== 0) throw unreadable(`short entry ${record.name}`);
+  await mkdir(path.dirname(to), { recursive: true, mode: FOLDER_MODE });
+  const output = createWriteStream(to, { flags: "wx", mode: record.executable ? PROGRAM_MODE : FILE_MODE });
+  if (record.compressedSize === 0) {
+    output.end();
+    return new Promise((resolve, reject) => output.once("close", resolve).once("error", reject));
+  }
+  const start = await dataOffset(file, record);
+  const input = file.createReadStream({ start, end: start + record.compressedSize - 1, autoClose: false });
+  const cap = sizeCap(record);
+  if (record.method === DEFLATED) await pipeline(input, createInflateRaw(), cap, output);
+  else await pipeline(input, cap, output);
+  if (output.bytesWritten !== record.size) throw unreadable(`short entry ${record.name}`);
+}
+
+/**
+ * Unpack the zip at `archive` into `into` after checking it as {@link listZip} does: folders and
+ * files first, each file new and no larger than its record states, an execute bit kept where the
+ * entry had one; links last, so nothing is ever written through one. Answers its listing.
+ */
+export async function unpackZip(archive: string, into: string, maxUnpackedBytes: number): Promise<ZipListing> {
+  const file = await open(archive, "r");
+  try {
+    const { listing, records } = await checkArchive(file, maxUnpackedBytes);
+    await mkdir(into, { recursive: true, mode: FOLDER_MODE });
+    for (const record of records) {
+      const to = path.join(into, record.name);
+      if (record.kind === ZipEntryKind.Directory) await mkdir(to, { recursive: true, mode: FOLDER_MODE });
+      else if (record.kind === ZipEntryKind.File) await writeEntry(file, record, to);
     }
-    refuseWritesThroughLinks(entries);
-    return { entries, unpackedBytes };
+    for (const entry of listing.entries) {
+      if (entry.target === null) continue;
+      await mkdir(path.dirname(path.join(into, entry.name)), { recursive: true, mode: FOLDER_MODE });
+      await symlink(entry.target, path.join(into, entry.name));
+    }
+    return listing;
   } finally {
     await file.close();
   }

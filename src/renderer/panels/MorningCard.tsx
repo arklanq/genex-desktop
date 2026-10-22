@@ -11,6 +11,7 @@ import { LearningSummary } from "../chat/LearningSummary.tsx";
  */
 import { type JSX, type ReactNode, useEffect, useState } from "react";
 import { SECOND_MS } from "../../shared/duration.ts";
+import { t } from "../../shared/i18n.ts";
 import type { RunSummary } from "../../shared/run-summary.ts";
 import { useRunSummary } from "../use-run-summary.ts";
 import { RunOutcome } from "./RunOutcome.tsx";
@@ -198,14 +199,14 @@ export function MorningCard({
       return (
         <Button
           key={action}
-          title="Pick the build up where it left off"
+          title={t("Pick the build up where it left off")}
           data-run-resume={runId ?? undefined}
           onClick={() => onResume?.()}
         >
           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
             <path d="M8 5v14l11-7z" />
           </svg>
-          Resume
+          {t("Resume")}
         </Button>
       );
     }
@@ -215,7 +216,7 @@ export function MorningCard({
           <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
             <path d="M8 5v14l11-7z" />
           </svg>
-          Play
+          {t("Play")}
         </Button>
       );
     }
@@ -223,7 +224,7 @@ export function MorningCard({
     return (
       <Button
         key={action}
-        title="Load this build in the Live tab from a copy; your game folder stays as it is"
+        title={t("Load this build in the Live tab from a copy; your game folder stays as it is")}
         onClick={() => {
           webBuildShown(project);
           void window.studio.showBuild(project, commit).catch((err) => onNotice?.(problemWords(err), ToastTone.Error));
@@ -233,7 +234,7 @@ export function MorningCard({
         <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
           <path d="M8 5v14l11-7z" />
         </svg>
-        Play
+        {t("Play")}
       </Button>
     );
   };

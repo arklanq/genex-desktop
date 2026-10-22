@@ -203,6 +203,11 @@ export interface PluginManifestTool extends PluginTool {
   confirmationInput?: { parameter: string; label: string };
   /** API 3, agent tools only: the kind of asset a call makes. */
   asset?: PluginToolAsset;
+  /**
+   * API 3: the longest one call may run, in whole milliseconds, when that is longer than the host's
+   * ceiling (190 s): a game engine's import or export. At most 9 minutes.
+   */
+  timeoutMs?: number;
 }
 
 /**
@@ -907,6 +912,12 @@ export interface PluginPanelContext {
    * Absent from older hosts.
    */
   surface?: "page" | "card";
+  /**
+   * Genex's language as a BCP 47 tag: `en`, `ru`, `es`, `pt-BR`, `de`, `fr`, `ja`, `ko` or
+   * `zh-Hans`. `studioPlugin.t` already speaks it when the plugin brings its words; absent from
+   * older hosts, which speak English.
+   */
+  locale?: string;
 }
 
 /**
@@ -965,6 +976,22 @@ export interface StudioPluginPanel {
   chooseFile(request: PluginFileRequest): Promise<string | null>;
   /** Present once `src/plugin-sdk/ui.js` is inlined after `panel.js`. */
   ui?: StudioPluginUi;
+  /**
+   * `english` (ICU message syntax: `{name}`, `{count, plural, one {# game} other {# games}}`,
+   * `{choice, select, …}`) in Genex's language, its placeholders filled in from `params`; the
+   * English when the plugin's `locales/<lang>.json` has no translation. Call it once `ready` has
+   * settled. Present once `src/plugin-sdk/words.js` is inlined (the SDK marker does it).
+   */
+  t?(english: string, params?: Record<string, string | number>): string;
+  /** "a, b and c" in the panel's language. */
+  formatList?(items: string[]): string;
+  /** The language the panel speaks: Genex's when the plugin brings its words, else `en`. */
+  readonly locale?: string;
+  /**
+   * Settles with `locale` once the host has named the language (or after two seconds, in English)
+   * and the page's `data-t` marks speak it: await it before the panel writes any words.
+   */
+  ready?: Promise<string>;
 }
 
 declare global {

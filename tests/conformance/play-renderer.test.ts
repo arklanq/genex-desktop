@@ -93,6 +93,7 @@ import {
   type PlayGame,
   type PlayGameDetail,
   PlayNote,
+  PlayRemixRefusal,
   PlayShelf,
   type PlayShelves,
   PlayViewerPhase,
@@ -209,6 +210,10 @@ function fakeApi(handlers: Partial<PlayApi> = {}) {
       calls.remix.push(slug);
       return handlers.playRemix ? handlers.playRemix(slug) : Promise.resolve(`${slug}-copy`);
     },
+    playRemixReady: (slugs) =>
+      handlers.playRemixReady
+        ? handlers.playRemixReady(slugs)
+        : Promise.resolve(Object.fromEntries(slugs.map((slug) => [slug, true]))),
     assetLibrary: () => Promise.resolve({ assets: [], nextCursor: null }),
     playCatalog: () => Promise.resolve([]),
     playManage: (gameId, change) => {
@@ -840,6 +845,44 @@ describe("Play: a remix shown in Create while it is made", () => {
     const refused = createPlayStore(fakeApi({ playRemix: () => Promise.reject(new Error("no")) }).api, memory());
     await refused.remix(game("c", { remixable: true }));
     assert.equal(refused.getState().remixFailed, true);
+    assert.equal(refused.getState().remixRefusal, null, "a failure names no reason");
+
+    const noProject = createPlayStore(
+      fakeApi({ playRemix: () => Promise.resolve({ refused: PlayRemixRefusal.NoProject }) }).api,
+      memory(),
+    );
+    await noProject.remix(game("d", { remixable: true }));
+    assert.equal(noProject.getState().remixFailed, true, "a source with no game makes nothing");
+    assert.equal(noProject.getState().remixRefusal, PlayRemixRefusal.NoProject, "and the shell says why");
+    assert.equal(noProject.getState().remixed, null);
+  });
+
+  it("asks main once, for every card shown together, whether each game's source holds a game", async () => {
+    const asked: string[][] = [];
+    let fail = true;
+    const { api } = fakeApi({
+      playRemixReady: async (slugs) => {
+        asked.push([...slugs]);
+        if (fail) throw new Error("offline");
+        return Object.fromEntries(slugs.map((slug) => [slug, slug !== "megastructure"]));
+      },
+    });
+    const store = createPlayStore(api, memory(), manualClock().now);
+    store.checkRemix("megastructure");
+    store.checkRemix("lost-cathedral");
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(asked, [["megastructure", "lost-cathedral"]], "one ask for the cards shown at once");
+    assert.deepEqual(store.getState().remixReady, {}, "a failed ask answers nothing: Remix stays hidden");
+    fail = false;
+    store.checkRemix("megastructure");
+    store.checkRemix("lost-cathedral");
+    await Promise.resolve();
+    await Promise.resolve();
+    assert.deepEqual(store.getState().remixReady, { megastructure: false, "lost-cathedral": true });
+    store.checkRemix("megastructure");
+    await Promise.resolve();
+    assert.equal(asked.length, 2, "an answered game is not asked again");
   });
 
   it("makes the viewer's remix as a card's: the viewer gives way, and main always answers", async () => {

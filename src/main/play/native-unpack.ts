@@ -3,16 +3,21 @@
  * before anything is written (`native-zip.ts`), unpacked by `ditto` without quarantine, every link
  * in it resolved inside it, the app it names found and checked (a signature, even ad hoc; a binary
  * for this Mac's processor), then given a bundle id of Genex's own (`games.genex.play.<slug>`) and
- * signed again ad hoc, so the game can only ever read and write its own preferences.
+ * signed again ad hoc, so the game can only ever read and write its own preferences. A Linux build
+ * is unpacked by the app itself (`unpackZip`), checked the same way, and its program must be an ELF
+ * binary for this computer's processor; Linux has no signature or bundle to check.
  */
 import { execFile } from "node:child_process";
-import { lstat, mkdir, readdir, readlink, realpath } from "node:fs/promises";
+import { chmod, lstat, mkdir, readdir, readlink, realpath } from "node:fs/promises";
 import path from "node:path";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { InstallFailure, type NativeBuild, NativeArch, type NativeHost } from "../../shared/play-native.ts";
+import { elfArch } from "../core/native-builds.ts";
 import { InstallError } from "./native-download.ts";
-import { listZip, ZipError, ZipRefusal } from "./native-zip.ts";
+import { listZip, unpackZip, ZipEntryKind, ZipError, ZipRefusal } from "./native-zip.ts";
 
+/** The execute bits a game's program needs, for its owner and everyone. */
+const RUNNABLE = 0o111;
 /** How long one tool may run on a game: unpacking or signing a large one takes a while. */
 const TOOL_TIMEOUT_MS = 20 * MINUTE_MS;
 /** How much larger than the catalog says the unpacked game may be: block rounding and metadata. */
@@ -35,6 +40,9 @@ export const WINDOWED_KEY = "GenexWindowed";
 
 /** The prefix of every installed game's bundle id: Genex's own preference domains. */
 export const GAME_BUNDLE_PREFIX = "games.genex.play.";
+
+/** A Linux game's app inside its version folder: the folder itself. */
+const LINUX_APP = ".";
 
 /** A finished tool run. */
 export interface ToolResult {
@@ -61,7 +69,12 @@ export const runTool: ToolRun = (file, args, options) =>
 
 /** What the unpack learned about the app it installed, for the launcher. */
 export interface UnpackedApp {
-  /** The executable inside the bundle, relative to it (`Contents/MacOS/Game`). */
+  /**
+   * The app's folder inside the version folder when it is not the build's entry: a Linux build's
+   * program sits among its files, so its app is the whole version folder (`.`).
+   */
+  entry?: string;
+  /** The executable inside the app, relative to it (`Contents/MacOS/Game`, `Game.x86_64`). */
   executable: string;
   /** The bundle id it now has, and its name (what macOS names its temporary save folders after). */
   bundleId: string;
@@ -89,17 +102,22 @@ async function tool(run: ToolRun, file: string, args: string[], failure: Install
   return result.stdout;
 }
 
-/** The archive's entries checked, or the install failure it is. */
-async function checkedListing(archive: string, build: NativeBuild) {
-  const cap = Math.ceil(build.installedBytes * UNPACKED_SLACK) + UNPACKED_SLACK_BYTES;
+/** The most a build's archive may unpack to: what the catalog states, and some slack. */
+const unpackedCap = (build: NativeBuild) => Math.ceil(build.installedBytes * UNPACKED_SLACK) + UNPACKED_SLACK_BYTES;
+
+/** What `step` answers, or the install failure a refused archive is. */
+async function zipStep<T>(step: () => Promise<T>): Promise<T> {
   try {
-    return await listZip(archive, cap);
+    return await step();
   } catch (error) {
     if (!(error instanceof ZipError)) throw error;
     const failure = error.refusal === ZipRefusal.TooLarge ? InstallFailure.TooLarge : InstallFailure.UnsafeArchive;
     throw refused(failure, error.message);
   }
 }
+
+/** The archive's entries checked, or the install failure it is. */
+const checkedListing = (archive: string, build: NativeBuild) => zipStep(() => listZip(archive, unpackedCap(build)));
 
 /**
  * Walk the unpacked tree without following links: every link must resolve to somewhere inside it
@@ -147,6 +165,15 @@ async function appOf(run: ToolRun, staging: string, entry: string): Promise<{ ap
   return { app, executable };
 }
 
+/**
+ * The app's program set runnable: a Mac app packed on Windows (a Godot game exported and published
+ * there) carries no execute bit, since Windows's disks keep none. A signature doesn't cover it.
+ */
+async function makeRunnable(program: string): Promise<void> {
+  const { mode } = await lstat(program);
+  if ((mode & RUNNABLE) !== RUNNABLE) await chmod(program, mode | RUNNABLE);
+}
+
 /** Whether the binary runs on `host`: its own processor, or Intel through Rosetta. */
 async function assertRunsOn(run: ToolRun, program: string, host: NativeHost): Promise<void> {
   const archs = (await tool(run, TOOL.Lipo, ["-archs", program], InstallFailure.UnsupportedOs)).trim().split(/\s+/);
@@ -176,6 +203,7 @@ export async function unpackMacBuild(
   await tool(run, TOOL.Ditto, ["-x", "-k", "--noqtn", archive, staging], InstallFailure.UnsafeArchive);
   await assertContained(staging);
   const { app, executable } = await appOf(run, staging, top);
+  await makeRunnable(path.join(app, executable));
   await tool(run, TOOL.Codesign, ["--verify", "--deep", "--strict", app], InstallFailure.Unsigned);
   await assertRunsOn(run, path.join(app, executable), game.host);
   const plist = path.join(app, "Contents", "Info.plist");
@@ -186,4 +214,35 @@ export async function unpackMacBuild(
   await tool(run, TOOL.Codesign, ["--force", "--deep", "--sign", "-", app], InstallFailure.Unsigned);
   await tool(run, TOOL.Codesign, ["--verify", "--deep", "--strict", app], InstallFailure.Unsigned);
   return { executable, bundleId, bundleName, windowed };
+}
+
+/**
+ * Unpack the verified `archive` of a Linux `build` into `staging` (a new, empty folder): checked
+ * before and after unpacking, its program (the build's entry) a regular file, an ELF binary for
+ * this computer's processor, and runnable. The whole version folder is the game's app. Throws
+ * {@link InstallError} with the failure it is.
+ */
+export async function unpackLinuxBuild(
+  archive: string,
+  staging: string,
+  build: NativeBuild,
+  game: { slug: string; host: NativeHost },
+): Promise<UnpackedApp> {
+  const listing = await checkedListing(archive, build);
+  const named = listing.entries.find((entry) => entry.name === build.entry);
+  if (named?.kind !== ZipEntryKind.File) throw refused(InstallFailure.EntryMissing, build.entry);
+  await zipStep(() => unpackZip(archive, staging, unpackedCap(build)));
+  await assertContained(staging);
+  const program = path.join(staging, build.entry);
+  if (!(await lstat(program).catch(() => null))?.isFile()) throw refused(InstallFailure.EntryMissing, build.entry);
+  const arch = await elfArch(program);
+  if (arch !== game.host.arch) throw refused(InstallFailure.UnsupportedOs, arch ?? "not an ELF program");
+  await makeRunnable(program);
+  return {
+    entry: LINUX_APP,
+    executable: build.entry,
+    bundleId: `${GAME_BUNDLE_PREFIX}${game.slug}`,
+    bundleName: path.posix.basename(build.entry),
+    windowed: false,
+  };
 }

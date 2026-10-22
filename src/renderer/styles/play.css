@@ -41,11 +41,13 @@
   color: var(--play-selected-text, var(--ink));
 }
 
-/* Play / Create beside the wordmark: a small track, the selected pill sliding to the side that is on. */
+/* Play / Create beside the wordmark: a small track, the selected pill sliding to the side that is on.
+   Each tab is at least its English width and grows to a longer language's label; PlaySwitch.tsx
+   measures them for the pill. */
 .play-switch {
   position: relative;
   display: inline-grid;
-  grid-template-columns: 44px 54px;
+  grid-template-columns: auto auto;
   flex: none;
   padding: 2px;
   border-radius: 9px;
@@ -56,24 +58,29 @@
   position: absolute;
   inset-block: 2px;
   inset-inline-start: 2px;
-  width: 44px;
+  width: var(--play-switch-play, 44px);
   border-radius: 7px;
   transition:
     translate var(--duration-fast) var(--ease-smooth-out),
     width var(--duration-fast) var(--ease-smooth-out);
 }
 .play-switch[data-mode="create"] .play-switch-pill {
-  width: 54px;
-  translate: 44px 0;
+  width: var(--play-switch-create, 54px);
+  translate: var(--play-switch-play, 44px) 0;
 }
 .play-switch-tab {
   position: relative;
+  min-width: 44px;
   height: 22px;
+  padding-inline: 5px;
   border-radius: 7px;
   color: var(--ink-3);
   font: 11px / 16px var(--font-family-mono);
   cursor: pointer;
   transition: color var(--duration-quick);
+}
+.play-switch-tab[data-play-mode="create"] {
+  min-width: 54px;
 }
 .play-switch-tab:hover,
 .play-switch-tab[aria-selected="true"],

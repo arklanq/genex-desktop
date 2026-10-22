@@ -6,16 +6,20 @@
  */
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { setImmediate as tick } from "node:timers/promises";
 import { createIpcHandle, type IpcResult, type IpcSender } from "../../src/main/ipc-handle.ts";
 import { KEEP_AWAKE_FALLBACK_MS, KeepAwake, type FallbackTimers } from "../../src/main/keep-awake.ts";
 import { registerRunsIpc, extFromMime, safeLabel, type RunsIpcDeps } from "../../src/main/ipc/runs.ts";
 import { registerLoginIpc, type LoginIpcDeps } from "../../src/main/ipc/login.ts";
 import { badgeText, registerNotificationsIpc } from "../../src/main/ipc/notifications.ts";
 import { registerModelsIpc, type ModelsIpcDeps } from "../../src/main/ipc/models.ts";
+import { createProviderUsage } from "../../src/main/core/provider-usage.ts";
+import { type ProviderUsageReport, UsageState } from "../../src/shared/provider-usage.ts";
 import { registerUpdateIpc } from "../../src/main/ipc/update.ts";
 import { registerStorageIpc } from "../../src/main/ipc/storage.ts";
 import { registerJobsIpc } from "../../src/main/ipc/jobs.ts";
 import { type PlayIpcDeps, registerPlayIpc } from "../../src/main/ipc/play.ts";
+import { NativeArch, type NativeHost, NativePlatform } from "../../src/shared/play-native.ts";
 import { gameLinks } from "../../src/main/play/game-links.ts";
 import { createLoginControllers, settleSignIn, type SubscriptionEngine } from "../../src/main/login-controllers.ts";
 import { AccountId, SubscriptionAccounts } from "../../src/substrate/engines/subscription-accounts.ts";
@@ -671,35 +675,42 @@ describe("both sign-in paths go through the controllers", () => {
 });
 
 describe("the composer's plan limits", () => {
-  it("come from every ready subscription and never from a signed-out, missing or failing one", async () => {
+  it("answer with the limits as they stand at once, and push each subscription's fresh read", async () => {
     const usage = {
       measuredAt: "2026-09-24T00:00:00.000Z",
       windows: [{ id: "five_hour", label: "5-hour limit", percent: 12 }],
     };
-    const engines: Record<string, { status(): Promise<{ code: string }>; readUsage?(): Promise<unknown> }> = {
-      "claude-code": { status: async () => ({ code: "ready" }), readUsage: async () => usage },
-      codex: {
-        status: async () => ({ code: "needs_login" }),
-        readUsage: async () => {
-          throw new Error("must not be asked");
-        },
-      },
-      ollama: { status: async () => ({ code: "ready" }), readUsage: async () => usage },
-    };
-    const core = {
-      engines: { has: (id: string) => id in engines, get: (id: string) => engines[id] },
-    } as unknown as ModelsIpcDeps["core"];
+    const pushed: ProviderUsageReport[][] = [];
+    let answer: (value: typeof usage) => void = () => {};
+    const service = createProviderUsage({
+      engines: ["claude-code"],
+      source: () => ({
+        status: async () => ({ code: "ready" }),
+        account: async () => "terminal",
+        readUsage: () =>
+          new Promise((resolve) => {
+            answer = resolve;
+          }),
+      }),
+      push: (reports) => pushed.push(reports),
+    });
+    const core = { engines: { has: () => false, get: () => null } } as unknown as ModelsIpcDeps["core"];
     const { handle, invoke } = registrar();
-    registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: () => {}, openRouterLogin: noSignIn });
-    assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [{ engine: "claude-code", usage }] });
-    engines.codex = {
-      status: async () => ({ code: "ready" }),
-      readUsage: async () => {
-        throw new Error("offline");
-      },
-    };
-    delete engines["claude-code"];
-    assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [{ engine: "codex", usage: null }] });
+    registerModelsIpc(handle, {
+      core,
+      subscription: () => null,
+      pushUiEvent: () => {},
+      openRouterLogin: noSignIn,
+      usage: service,
+    });
+    assert.deepEqual(await invoke("studio:provider-usage"), { ok: true, value: [] }, "the panel never waits on a read");
+    while (!pushed.some((reports) => reports[0]?.state === UsageState.Checking)) await tick();
+    answer(usage);
+    while (!pushed.some((reports) => reports[0]?.state === UsageState.Ready)) await tick();
+    assert.deepEqual(await invoke("studio:provider-usage"), {
+      ok: true,
+      value: [{ engine: "claude-code", state: UsageState.Ready, account: "terminal", usage }],
+    });
   });
 });
 
@@ -809,7 +820,13 @@ it("model refresh validates provider identities before invoking discovery", asyn
   // Only the registrar's engine registry is needed; no profile or credentials are opened.
   const core = { engines };
   const { handle, invoke } = registrar();
-  registerModelsIpc(handle, { core, subscription: () => null, pushUiEvent: () => {}, openRouterLogin: noSignIn });
+  registerModelsIpc(handle, {
+    core,
+    subscription: () => null,
+    pushUiEvent: () => {},
+    openRouterLogin: noSignIn,
+    usage: noUsage,
+  });
   for (const provider of [undefined, null, 7, {}, "../codex", "ollama", ""]) {
     assert.equal((await invoke("studio:models.refresh", { provider })).ok, false);
     assert.equal(calls, 0);
@@ -907,6 +924,7 @@ it("model refresh and recheck reach OpenCode and OpenRouter, which have no subsc
   registerModelsIpc(handle, {
     core: { engines },
     subscription: () => null,
+    usage: noUsage,
     pushUiEvent: (event) => events.push(event),
     openRouterLogin: noSignIn,
   });
@@ -917,6 +935,9 @@ it("model refresh and recheck reach OpenCode and OpenRouter, which have no subsc
 });
 
 /** A browser sign-in that is never started: the registrars under test do not reach it. */
+/** No subscription's limits: the tests that use it never ask for them. */
+const noUsage: ModelsIpcDeps["usage"] = { snapshot: () => [], refresh: async () => {} };
+
 const noSignIn: ModelsIpcDeps["openRouterLogin"] = {
   start: async () => {
     throw new Error("no browser sign-in in this test");
@@ -944,6 +965,7 @@ it("the OpenRouter key is saved and forgotten through the engine, and only its s
     registerModelsIpc(handle, {
       core: { engines },
       subscription: () => null,
+      usage: noUsage,
       pushUiEvent: (event) => events.push(event),
       openRouterLogin: noSignIn,
     });
@@ -1009,6 +1031,7 @@ it("the browser sign-in hands its key to the engine, and only how it ended comes
     registerModelsIpc(handle, {
       core: { engines },
       subscription: () => null,
+      usage: noUsage,
       pushUiEvent: (event) => events.push(event),
       openRouterLogin: {
         start: (saveKey) => login.start(saveKey),
@@ -1050,6 +1073,7 @@ it("deleting a model asks the local engine that owns it and announces the change
   registerModelsIpc(handle, {
     core,
     subscription: () => null,
+    usage: noUsage,
     pushUiEvent: (event) => events.push(event),
     openRouterLogin: noSignIn,
   });
@@ -1147,7 +1171,7 @@ describe("the in-window update prompt", () => {
 
 describe("Play's share menu", () => {
   /** Play's channels with only Share… and game links live: every menu it pops is kept. */
-  function shareRig(web: string, links = gameLinks()) {
+  function shareRig(web: string, links = gameLinks(), here: NativeHost | null = null) {
     const { handle, invoke } = registrar();
     const shared: Array<[string, unknown]> = [];
     const unused = {} as unknown;
@@ -1155,8 +1179,10 @@ describe("Play's share menu", () => {
       gallery: unused as PlayIpcDeps["gallery"],
       gameLinks: links,
       remix: async () => "",
+      remixReady: async () => ({}),
       viewer: () => null,
       installs: () => null,
+      here: () => here,
       sessions: () => null,
       reveal: () => {},
       people: unused as PlayIpcDeps["people"],
@@ -1176,6 +1202,15 @@ describe("Play's share menu", () => {
     links.arrive("genex://game/iron-tide");
     assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: "iron-tide" });
     assert.deepEqual(await invoke("studio:play.take-game-link"), { ok: true, value: null });
+  });
+
+  it("names this computer even where Genex installs no native game, so a page can say why", async () => {
+    const windows: NativeHost = { platform: NativePlatform.Windows, arch: NativeArch.X64, osVersion: "10.0.26100" };
+    const { invoke } = shareRig("https://genex.games", gameLinks(), windows);
+    assert.deepEqual(await invoke("studio:play.installs"), {
+      ok: true,
+      value: { installed: [], progress: [], host: windows },
+    });
   });
 
   it("pops for a page of the website Play links to, by the button that asked", async () => {

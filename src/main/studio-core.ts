@@ -36,10 +36,12 @@ import { CustomEvent, customEventData } from "../shared/custom-events.ts";
 import { MINUTE_MS, SECOND_MS } from "../shared/duration.ts";
 import { EngineStatusCode } from "../shared/engine-descriptor.ts";
 import { errorMessage } from "../shared/errors.ts";
+import { t } from "../shared/i18n.ts";
 import { EventKind, ThreadKind, SnapshotScope } from "../shared/event-log.ts";
 import { assetKind, isAudioFile, type AssetDeliveredPayload } from "../shared/game-assets.ts";
 import { coverFromBrief, replaceableCover, type GameUpdate } from "../shared/game-library.ts";
 import type { HarnessHostHandlers, HarnessParams, HarnessResult, HostMethod } from "../shared/harness-api.ts";
+import type { WebBuildLoad } from "../shared/live-behind.ts";
 import {
   type ExportReview,
   type PluginBinding,
@@ -178,8 +180,10 @@ import {
   clampBuilders,
   LEGACY_DEFAULT_BUILDERS,
   LEGACY_DEFAULT_POOL,
+  savedLanguage,
   type StudioSettings,
 } from "./core/settings.ts";
+import { SYSTEM_LANGUAGE } from "../shared/locale.ts";
 import { SUBSCRIPTION_ENGINES } from "./core/subscription-engines.ts";
 import { GameBuilds } from "./game-build.ts";
 import { engineRpc } from "./harness-rpc/engine.ts";
@@ -228,20 +232,25 @@ const ENGINE_SCRATCH_PREFIX = "genex-play-";
 /** How long after a boot the first full read of the log (for Activity) waits. */
 const ACTIVITY_WARMUP_DELAY_MS = 5 * SECOND_MS;
 
-/** What the core itself writes for people: thread titles, journal reasons, errors. */
+/**
+ * What the core itself writes: thread titles and journal reasons (stored, so English), the cover
+ * tools' answers and the harness's refusals (the agent reads them, English), and the errors a
+ * person reads, which answer in the app's language.
+ */
 const MESSAGE = {
   studioThreadTitle: "Studio",
   resetByUser: "reset to the shipped version by the user",
   updateRewound: "it did not boot; the studio rewound",
   updateUnhealthy: "healthcheck failed",
-  stillBuilding: (project: string) => `a contractor is still building in "${project}" — wait for it to finish first`,
-  protectedLocation: "Studio can't create games there. Choose another folder.",
-  workStillRunning: "Wait for this game's work to finish before removing it.",
-  buildStillRunning: "Stop this game's build before removing it.",
-  gameNotFound: "Game not found",
-  exportBuildFailed: "Current build failed; no stale output was exported",
+  stillBuilding: (project: string) =>
+    t('a contractor is still building in "{project}" — wait for it to finish first', { project }),
+  protectedLocation: () => t("Studio can't create games there. Choose another folder."),
+  workStillRunning: () => t("Wait for this game's work to finish before removing it."),
+  buildStillRunning: () => t("Stop this game's build before removing it."),
+  gameNotFound: () => t("Game not found"),
+  exportBuildFailed: () => t("Current build failed; no stale output was exported"),
   coverWrongGame: "Cover tool is bound to this conversation’s game.",
-  notEnginePlugin: "That plugin doesn't link games to an engine.",
+  notEnginePlugin: () => t("That plugin doesn't link games to an engine."),
   noCoverRenderer: "GPU cover rendering is unavailable.",
   shaderCoverKept: "This game already has a custom cover. Its image was preserved.",
   shaderCoverRaced: "The cover changed while rendering. The newer image was preserved.",
@@ -250,11 +259,11 @@ const MESSAGE = {
   recipeCoverKept: "This game already has a chosen cover. It was kept.",
   recipeCoverRaced: "The cover changed meanwhile. The newer one was kept.",
   recipeCoverSaved: (look: string) => `Saved this game’s cover: ${look}.`,
-  queueNeedsHarness: "Queue editing needs the updated conversation harness. Your message is still queued.",
-  resumeUnsupported:
-    "This build of the studio can't pick a build back up yet — its own loop code predates timed builds.",
-  runAlreadyFinished: (runId: string) => `run ${runId} already finished — nothing to resume`,
-  noAutopilotJournal: (runId: string) => `no Autopilot journal found for run ${runId}`,
+  queueNeedsHarness: () => t("Queue editing needs the updated conversation harness. Your message is still queued."),
+  resumeUnsupported: () =>
+    t("This build of the studio can't pick a build back up yet — its own loop code predates timed builds."),
+  runAlreadyFinished: (runId: string) => t("run {runId} already finished — nothing to resume", { runId }),
+  noAutopilotJournal: (runId: string) => t("no Autopilot journal found for run {runId}", { runId }),
   notInLibrary: (project: string) => `refused: "${project}" is not a game in the library`,
   notOurRoot: (root: string, project: string) =>
     `refused: ${root} is not a studio worktree or the folder of "${project}"`,
@@ -528,6 +537,7 @@ export class StudioCore {
     blender: true,
     autoResume: true,
     computerControl: false,
+    language: SYSTEM_LANGUAGE,
   };
   #assetCheckpointStore?: AssetCheckpoints;
   #planReviews?: PlanReviewController;
@@ -1860,6 +1870,7 @@ export class StudioCore {
     }
     // Only an explicit true turns the computer over; anything else the page sends reads as off.
     next.computerControl = next.computerControl === true;
+    next.language = savedLanguage(next.language);
     const computerOff = this.#settings.computerControl && !next.computerControl;
     this.#settings = next;
     // Turning computer control off stops every desktop session's driver now, as ⌃⌥⌘Esc does.
@@ -1900,6 +1911,7 @@ export class StudioCore {
         autoResume: parsed.autoResume !== false,
         // Off unless the person turned it on: a file from before the switch reads as off.
         computerControl: parsed.computerControl === true,
+        language: savedLanguage(parsed.language),
       };
     } catch {
       /* first launch — defaults stand */
@@ -1995,7 +2007,7 @@ export class StudioCore {
     for (const guarded of this.#protectedPaths()) {
       // Compared real path to real path: the Genex folder may itself be a link.
       const resolved = await realpath(guarded).catch(() => path.resolve(guarded));
-      if (isInside(resolved, real)) throw new Error(MESSAGE.protectedLocation);
+      if (isInside(resolved, real)) throw new Error(MESSAGE.protectedLocation());
     }
   }
 
@@ -2060,7 +2072,8 @@ export class StudioCore {
   async undoEngineLink(request: EngineLinkUndo): Promise<boolean> {
     const { project, pluginId, linkedAt, threadId } = request;
     const plugin = this.plugins.list().find((p) => p.manifest.id === pluginId);
-    if (!plugin?.manifest.capabilities.includes(PluginCapability.GameEngine)) throw new Error(MESSAGE.notEnginePlugin);
+    if (!plugin?.manifest.capabilities.includes(PluginCapability.GameEngine))
+      throw new Error(MESSAGE.notEnginePlugin());
     await this.assertProjectAllowed(this.games.dirFor(project));
     // The chat line belongs to this game's chat; a line from another chat says nothing there.
     const own = threadId ? threadProject(await this.store.getRecord(threadId)) === project : false;
@@ -2088,10 +2101,10 @@ export class StudioCore {
     const threadWorking = threads.some(
       (thread) => this.#x.activeCompletions.has(thread.id) || this.#x.pluginTurnLeases.has(thread.id),
     );
-    if (this.#building(project) || threadWorking) throw new Error(MESSAGE.workStillRunning);
+    if (this.#building(project) || threadWorking) throw new Error(MESSAGE.workStillRunning());
     for (const thread of threads) {
       const run = latestRun(await this.store.listEvents(thread.id));
-      if (run?.state === RunState.Running) throw new Error(MESSAGE.buildStillRunning);
+      if (run?.state === RunState.Running) throw new Error(MESSAGE.buildStillRunning());
     }
     await this.games.forget(project);
     this.emit(UiEvent.GameChanged, { project });
@@ -2179,13 +2192,13 @@ export class StudioCore {
    */
   async exportPublicCopy(project: string, targetDir: string): Promise<ExportResult> {
     const game = (await this.games.list()).find((g) => g.name === project);
-    if (!game) throw new Error(MESSAGE.gameNotFound);
+    if (!game) throw new Error(MESSAGE.gameNotFound());
     // A game whose web game is in a folder of it (an engine's web export) publishes that folder.
     const folder = webFolderOf(game);
     let output: string | undefined = folder ? path.join(game.dir, folder) : undefined;
     if (!folder && game.shape?.build) {
       const built = await this.builds.ensure({ project: game.name, dir: game.dir, shape: game.shape });
-      if (!built.ok || !built.output) throw new Error(MESSAGE.exportBuildFailed);
+      if (!built.ok || !built.output) throw new Error(MESSAGE.exportBuildFailed());
       output = built.output;
     }
     return this.games.export(project, targetDir, output, { secretValues: this.knownSecretValues() });
@@ -2353,6 +2366,8 @@ export class StudioCore {
     if (!project) return undefined;
     const directory = this.games.dirFor(project);
     await this.assertProjectAllowed(directory);
+    // A game opened from another Genex brings its engine link: adopted before any plugin reads its storage.
+    await this.engineLinks?.adopt(project).catch(() => undefined);
     return { project, directory, threadId };
   }
 
@@ -2477,6 +2492,11 @@ export class StudioCore {
   /** The stage's Play on a stopped game. */
   playLive(): Promise<void> {
     return this.#previews.playLive();
+  }
+
+  /** Live loads the game's finished web build in a folder when it holds another page of the game (`PreviewService.loadWebBuild`). */
+  loadWebBuild(project: string): Promise<WebBuildLoad> {
+    return this.#previews.loadWebBuild(project);
   }
 
   /** Something would have changed Live: it waits for the person's Reload instead (`live.behind`). */
@@ -2729,7 +2749,7 @@ export class StudioCore {
     operation: "hold" | "edit" | "remove",
     text?: string,
   ): Promise<void> {
-    if (!this.host.hasCapability(HarnessCapability.MessageQueue)) throw new Error(MESSAGE.queueNeedsHarness);
+    if (!this.host.hasCapability(HarnessCapability.MessageQueue)) throw new Error(MESSAGE.queueNeedsHarness());
     this.#rewind.assertNotRewinding(threadId);
     await this.store.getRecord(threadId);
     await this.host.dispatch({ type: DispatchActionType.QueueMessage, threadId, messageId, operation, text });
@@ -2800,7 +2820,7 @@ export class StudioCore {
     this.#selfImprovement.touchActivity();
     const loopPredatesResume =
       this.host.state === HarnessState.Ready && !this.host.hasCapability(HarnessCapability.Autopilot);
-    if (loopPredatesResume) throw new Error(MESSAGE.resumeUnsupported);
+    if (loopPredatesResume) throw new Error(MESSAGE.resumeUnsupported());
     for (const thread of await this.store.listThreads()) {
       const journal = (await this.store.readArtifact(thread.id, `autopilot_${runId}`).catch(() => null)) as {
         phase?: string;

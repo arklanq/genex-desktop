@@ -140,6 +140,15 @@ describe("Genex multiplayer in a Godot game", () => {
     assert.ok(!args.some((arg) => arg.includes(".debug.")), "no debug build is unpacked");
   });
 
+  it("before the first publish, says Genex's Play and the published page name the game, so a publish needs no rebuild", async () => {
+    const game = await godotGame();
+    const answer = await game.call();
+    assert.match(answer, /no Genex project yet/);
+    assert.match(answer, /GENEX_GAME/);
+    assert.match(answer, /window\.__GENEX__\.slug/);
+    assert.doesNotMatch(answer, /so native builds know which game to join/, "a publish needs no second build");
+  });
+
   it("keeps a Genex file the person changed beside the new one as .mine", async () => {
     const game = await godotGame();
     await game.call();

@@ -1,16 +1,18 @@
 /** Settings → Storage's data folder: where Genex keeps its files, picking another folder, and the move. */
 import { dialog, type BrowserWindow } from "electron";
 import type { DataFolderChoices } from "../data-folder-choice.ts";
+import { t } from "../../shared/i18n.ts";
 import type { IpcHandle } from "./registrar.ts";
 
-const PICKER = {
-  title: "Folder for Genex’s files",
-  buttonLabel: "Use this folder",
-  message: "Pick an empty folder or a drive. Genex makes a Genex folder in one that has files.",
-} as const;
+/** The picker's words, read when it opens: main's language is set after start. */
+const picker = () => ({
+  title: t("Folder for Genex’s files"),
+  buttonLabel: t("Use this folder"),
+  message: t("Pick an empty folder or a drive. Genex makes a Genex folder in one that has files."),
+});
 
 const MESSAGE = {
-  noWindow: "The studio window is not open.",
+  noWindow: () => t("The studio window is not open."),
 } as const;
 
 /** What the data folder's channels need: its choices, and how a folder is picked (the native picker by default). */
@@ -24,7 +26,7 @@ export interface DataFolderIpcDeps {
 /** The native folder picker. */
 async function pickFolder(window: BrowserWindow, defaultPath: string): Promise<string | null> {
   const result = await dialog.showOpenDialog(window, {
-    ...PICKER,
+    ...picker(),
     defaultPath,
     properties: ["openDirectory", "createDirectory"],
   });
@@ -41,7 +43,7 @@ export function registerDataFolderIpc(handle: IpcHandle, deps: DataFolderIpcDeps
     const state = deps.choices.state();
     if (!state.movable) return deps.choices.choose(state.dir);
     const window = deps.window();
-    if (!window) throw new Error(MESSAGE.noWindow);
+    if (!window) throw new Error(MESSAGE.noWindow());
     const dir = await (deps.pick ?? pickFolder)(window, state.dir);
     return dir ? deps.choices.choose(dir) : null;
   });

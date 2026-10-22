@@ -22,8 +22,13 @@ import { isGameThread, threadMeta } from "../state/threads.ts";
 import type { ConversationRecord, GameProject } from "../types.ts";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { EngineId } from "../../shared/providers.ts";
+import { t } from "../../shared/i18n.ts";
 
-const ACTION: Partial<Record<Notice["kind"], string>> = { question: "Answer", plan: "Review", permission: "Review" };
+const ACTION: Partial<Record<Notice["kind"], string>> = {
+  question: t("Answer"),
+  plan: t("Review"),
+  permission: t("Review"),
+};
 
 /** The bell's count shows up to this many, then "9+". */
 const BADGE_MAX = 9;
@@ -44,8 +49,8 @@ interface Props {
 
 /** The bell's accessible name: what waits on you, else whether there is news. */
 function bellLabel(waiting: number, unread: number): string {
-  if (waiting) return `Notifications, ${waiting} waiting for you`;
-  return unread ? "Notifications, new activity" : "Notifications";
+  if (waiting) return t("Notifications, {count} waiting for you", { count: waiting });
+  return unread ? t("Notifications, new activity") : t("Notifications");
 }
 
 /** The bell's badge: a count while work waits, a dot for unread news, else nothing. */
@@ -87,7 +92,7 @@ function useRing(latest: string): boolean {
 /** When a row happened, or for a notice that waits to start, how soon it starts. */
 function noticeTime(notice: Notice, now: number): string {
   if (!notice.until) return relativeTime(notice.at, now);
-  return `starts in ${Math.max(1, Math.ceil((notice.until - now) / MINUTE_MS))}m`;
+  return t("starts in {minutes}m", { minutes: Math.max(1, Math.ceil((notice.until - now) / MINUTE_MS)) });
 }
 
 /** A row's glyph with no game cover: Play's for a game from Play, else the chat's kind. */
@@ -117,7 +122,7 @@ function NoticeTrail({ notice, fresh }: { notice: Notice; fresh: boolean }) {
   if (!fresh) return null;
   return (
     <span className="notify-dot">
-      <span className="sr-only">New</span>
+      <span className="sr-only">{t("New")}</span>
     </span>
   );
 }
@@ -187,8 +192,8 @@ function NoticeList({
   return (
     <div className="notify-list">
       {waiting.length > 0 && (
-        <section aria-label="Waiting for you">
-          <PickerLabel first>Waiting for you</PickerLabel>
+        <section aria-label={t("Waiting for you")}>
+          <PickerLabel first>{t("Waiting for you")}</PickerLabel>
           {waiting.map(row)}
         </section>
       )}
@@ -200,8 +205,8 @@ function NoticeList({
       ))}
       {!waiting.length && !activity.length && (
         <div className="notify-empty">
-          <p>You’re all caught up</p>
-          <p>Questions, plans and finished builds from your games show up here.</p>
+          <p>{t("You’re all caught up")}</p>
+          <p>{t("Questions, plans and finished builds from your games show up here.")}</p>
         </div>
       )}
     </div>
@@ -270,22 +275,22 @@ export function NotificationsMenu({ items, games, threads, onOpen, onRead, onCle
             </span>
           </PopoverTrigger>
         </TooltipTrigger>
-        <TooltipContent>Notifications</TooltipContent>
+        <TooltipContent>{t("Notifications")}</TooltipContent>
       </Tooltip>
       <PopoverContent
         side="bottom"
         align="start"
         sideOffset={6}
-        aria-label="Notifications"
+        aria-label={t("Notifications")}
         onKeyDown={moveBetweenRows}
         className="picker-panel notify-panel flex w-[360px] max-w-(--available-width) flex-col p-1.5"
         style={{ maxHeight: "min(560px, var(--available-height))" }}
       >
         <div className="notify-head">
-          <h2>Notifications</h2>
+          <h2>{t("Notifications")}</h2>
           {activity.length > 0 && (
             <button type="button" className="notify-clear" onClick={onClear}>
-              Clear
+              {t("Clear")}
             </button>
           )}
         </div>

@@ -6,7 +6,8 @@ Genex source application's visual language with local desktop behavior. See
 for principles and skill routing.
 
 - **Type:** Zalando Sans SemiExpanded for words, Geist Mono for actions and machine text;
-  restricted Geist fallback for Greek/Cyrillic. Chat/menu 14px, composer 15px, dialog title
+  TikTok Sans tuned to Zalando for Cyrillic/Greek, and the app language's script from LINE Seed JP,
+  Genex Hangul (Pretendard) or Noto Sans SC. Chat/menu 14px, composer 15px, dialog title
   20px. Use named roles rather than adding arbitrary font sizes.
 - **Color:** configurable semantic light/dark palettes on one shared lightness ramp. A first launch follows the
   system's light or dark, painted before the page's first frame (`appearance/first-paint.ts`); Genex dark is the dark default,
@@ -35,11 +36,14 @@ for principles and skill routing.
   a faster start sees only the page), fades out in 200ms and never returns, and the window can be
   dragged by it. Reduced motion shows it at once and still. A failed start shows each
   area's failure and Retry, which stays up, busy (**Retrying…**), while it runs.
-- **Loading:** there are no skeletons, except, at the owner's request, Play's grid: a tab on its
-  way draws eight cards' shapes (cover tile, title and author bars) shimmering in a faint ink tint,
-  fading in after 120ms, still under reduced motion. Elsewhere a region whose content is on its way uses `Pending`: nothing
-  for 400ms (the local reads behind chats, settings, activity and files usually finish unseen),
-  then its label ("Loading conversation…") shimmering in ink-3, still under reduced motion.
+- **Loading:** a region whose content is on its way uses `Pending`: nothing for 400ms (the local
+  reads behind chats, settings, activity and files usually finish unseen), then the shape of what
+  is coming, never words: `Skeleton` blocks in the hover fill, the size of the lines, pictures and
+  controls that come, breathing slowly together (2.4s), still under reduced motion. Each place draws
+  its own shape (a chat's message, reply and card over a quiet composer; Builds' parts on the graph's
+  dots; settings rows; asset tiles); the label is only announced. Real work being started (checking
+  Blender, a terminal starting) is `Pending working`: the chat's orb beside one 12px shimmering line.
+  Play's grid, the @ picker and comments keep their own shimmering card shapes.
   Nothing claims to be empty (No matches, No screenshot, stripes for a missing still) before its
   read has answered, and a read that fails says so instead of checking forever. Media keeps a
   plain inset tile of its final size while it loads; an agent's turn keeps `LoadingState`; actions
@@ -445,10 +449,13 @@ chat header's ⋯ menu and uses that chat's bound game; it is disabled on drafts
 game stage, selected build history and native-view occlusion behind Review, drawers and dialogs.
 
 Chat header and stage strip are 48px: 8px above and below 32px controls, and every gap between
-controls drags the window. The strip is always one row: once its labelled buttons (a plugin's, Make
-multiplayer, Publish) would overflow it, they all fold into 32px icons at once, each name moving to
-its tooltip and a status dot to the icon's corner, and unfold only when the labelled row fits again
-(`panels/stage/strip-fold.ts`). The game title hugs its text (at most 320px, then truncates); select it
+controls drags the window. The strip holds the views, Play/Stop, Reload, Sound and Full screen at
+its start and the plugin buttons (a plugin's, Make multiplayer, Publish) at its end, always named,
+and nothing in it ever runs under the window's own controls. Narrower, it makes room in steps
+(`panels/stage/strip-fold.ts`): the views fold into one button naming the current one, in the
+switcher's accent with a chevron, its menu listing every view with the current one ticked; then the
+plugin buttons move to a second 48px row at the strip's end; then Sound and Full screen join them at
+that row's start. Each step undoes once the first row fits again. The game title hugs its text (at most 320px, then truncates); select it
 to rename, Enter to save and Escape to cancel. Rename updates the library display name; folder
 paths and identifiers stay stable. Show in Finder and Terminal sit together at the header's end,
 then ⋯ (Export game…, Rename). One game has one chat, so there is no chat switcher; conversations

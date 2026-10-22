@@ -29,7 +29,7 @@ app.whenReady().then(async()=>{
  await win.loadFile(${JSON.stringify(path.join(out, "index.html"))});await evalJS('document.fonts.ready.then(()=>true)');await wait(400);
  await wait(100);
  check('gallery renders',await evalJS('!!document.querySelector("#primary")'));
- check('offline faces load',await evalJS('document.fonts.check(\'14px "Zalando Sans SemiExpanded"\') && document.fonts.check(\'14px "Geist Mono"\') && document.fonts.check(\'14px "Geist Fallback"\',"Создать")'));
+ check('offline faces load',await evalJS('document.fonts.check(\'14px "Zalando Sans SemiExpanded"\') && document.fonts.check(\'14px "Geist Mono"\') && document.fonts.check(\'14px "TikTok Sans Genex"\',"Создать")'));
  wc.debugger.attach('1.3');await wc.debugger.sendCommand('DOM.enable');await wc.debugger.sendCommand('CSS.enable');
  const root=await wc.debugger.sendCommand('DOM.getDocument');const faces={};
  for(const selector of ['#latin','#cyrillic','#mono']){const {nodeId}=await wc.debugger.sendCommand('DOM.querySelector',{nodeId:root.root.nodeId,selector});faces[selector]=(await wc.debugger.sendCommand('CSS.getPlatformFontsForNode',{nodeId})).fonts;}

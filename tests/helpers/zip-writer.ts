@@ -16,6 +16,8 @@ export interface ZipItem {
   mode?: number;
   /** Deflate the data instead of storing it. */
   deflate?: boolean;
+  /** The unpacked size the directory states instead of the real one: an archive that lies. */
+  statedSize?: number;
 }
 
 const UNIX_FILE = 0o100644;
@@ -77,7 +79,7 @@ export function writeZip(items: readonly ZipItem[], options: { zip64?: boolean }
     central.writeUInt16LE(method, 10);
     central.writeUInt32LE(crc, 16);
     central.writeUInt32LE(options.zip64 ? 0xffffffff : packed.length, 20);
-    central.writeUInt32LE(options.zip64 ? 0xffffffff : raw.length, 24);
+    central.writeUInt32LE(options.zip64 ? 0xffffffff : (item.statedSize ?? raw.length), 24);
     central.writeUInt16LE(name.length, 28);
     central.writeUInt16LE(extra.length, 30);
     central.writeUInt32LE((mode << 16) >>> 0, 38);

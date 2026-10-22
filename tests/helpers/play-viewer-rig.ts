@@ -182,6 +182,7 @@ export function rig(overrides: RigOverrides = {}) {
       focus: () => log.push("bar.focus"),
       focused: overrides.barFocused ?? (() => false),
       warm: () => log.push("bar.warm"),
+      reload: () => log.push("bar.reload"),
     },
     comments: {
       list: async (id, cursor) => {

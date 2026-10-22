@@ -11,12 +11,14 @@
 import type { JSX } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { avatarRecipe } from "../../shared/avatar-recipe.ts";
+import { intlLocale } from "../../shared/i18n.ts";
 import { GenexAccountStatus } from "../../shared/genex-account.ts";
 import { creditsPlansUrl } from "../../shared/play-credits.ts";
 import { handleBaseFromName } from "../../shared/handle.ts";
 import { AvatarStyle, PLAY_NAME_LENGTH, type PlayMe, playName } from "../../shared/play-people.ts";
 import { AvatarMotion, GeneratedAvatar } from "../avatars/GeneratedAvatar.tsx";
 import { MakingDrawing } from "../making-art.ts";
+import { richText } from "../rich-text.tsx";
 import { GenexTab, openGenexPage } from "./plugins/genex/genex-tab.ts";
 import { avatarWebp } from "../play/avatar-image.ts";
 import { CreditsShard } from "../play/CreditsShard.tsx";
@@ -397,7 +399,9 @@ function NicknameRow({ me, online }: { me: PlayMe; online: boolean }): JSX.Eleme
 /** "1,700 credits": the balance as last read, or nothing before it was. */
 function creditsWords(credits: { balance: number | null; unlimited: boolean } | null): string | null {
   if (credits?.unlimited) return WORDS.creditsUnlimited;
-  return credits?.balance == null ? null : WORDS.creditsCount(new Intl.NumberFormat().format(credits.balance));
+  return credits?.balance == null
+    ? null
+    : WORDS.creditsCount(new Intl.NumberFormat(intlLocale()).format(credits.balance));
 }
 
 /**
@@ -415,7 +419,6 @@ function CreditsRow(): JSX.Element {
       .api.openUrl(creditsPlansUrl(web))
       .catch(() => undefined);
   };
-  const note = WORDS.creditsNote;
   return (
     <div className="account-row" data-account-credits>
       <span className="account-row-label">{WORDS.credits}</span>
@@ -429,16 +432,18 @@ function CreditsRow(): JSX.Element {
           </button>
         </div>
         <span className="account-note">
-          {note.before}
-          <button
-            type="button"
-            className="account-note-link"
-            aria-label={WORDS.creditsPluginLabel}
-            onClick={() => openGenexPage(GenexTab.Tools)}
-          >
-            {note.plugin}
-          </button>
-          {note.after}
+          {richText(WORDS.creditsNote, {
+            plugin: (name) => (
+              <button
+                type="button"
+                className="account-note-link"
+                aria-label={WORDS.creditsPluginLabel}
+                onClick={() => openGenexPage(GenexTab.Tools)}
+              >
+                {name}
+              </button>
+            ),
+          })}
         </span>
       </div>
     </div>

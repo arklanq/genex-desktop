@@ -6,6 +6,7 @@ import { STUDIO_CONSENT_NAMES, type StudioConsentSource } from "../../shared/plu
  * `StudioCore`; its state stays in the core.
  */
 import { PluginConsentDeclined, type PluginMcpLaunch } from "../../substrate/plugins/registry.ts";
+import { shownCardTool } from "../../substrate/plugins/manifest-words.ts";
 import { PluginCallCutOff, PluginCallNotSent } from "../../substrate/plugins/process.ts";
 import { containedReal } from "../../substrate/paths.ts";
 import { finishedPayload, roleOf, startedPayload } from "../plugin-activity.ts";
@@ -63,6 +64,7 @@ import { shortId } from "../../substrate/ids.ts";
 import type { LiveToolResult } from "../../substrate/engines/types.ts";
 import type { CoreInternals, StudioCore } from "../studio-core.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { CustomEvent, customEventData } from "../../shared/custom-events.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
@@ -111,15 +113,19 @@ export const PLUGIN_MCP_PROJECT = /^[a-zA-Z0-9_-]{1,100}$/;
 /** The folder a plugin server with no project of its own works in, beside the per-project ones. */
 export const PLUGIN_MCP_SHARED = "_shared";
 
-/** Why a plugin's MCP server cannot start, as the connector panel and the agent read it. */
+/**
+ * The consent cards' questions and why a plugin's MCP server cannot start (the connector panel shows
+ * it), in the person's language; the agent's answers (a refused or cut-off call) stay English.
+ */
 const MESSAGE = {
-  exportConfirmation: "Review the files that will be uploaded. Approve only if this staged copy is ready to share.",
+  exportConfirmation: () =>
+    t("Review the files that will be uploaded. Approve only if this staged copy is ready to share."),
   connectorConversation: "Connector calls require a game conversation for consent",
-  connectorConfirmation: (name: string) => `Let the agent use ${name}?`,
+  connectorConfirmation: (name: string) => t("Let the agent use {name}?", { name }),
   localConnectorConfirmation: (plugin: string, tool: string) =>
-    `${plugin} was loaded from a folder on this Mac and runs with your access. Let it run ${tool}?`,
-  unlockFirst: "Unlock this plugin's account first.",
-  setSettingFirst: (key: string) => `Set "${key}" in this plugin's settings first.`,
+    t("{plugin} was loaded from a folder on this Mac and runs with your access. Let it run {tool}?", { plugin, tool }),
+  unlockFirst: () => t("Unlock this plugin's account first."),
+  setSettingFirst: (key: string) => t('Set "{setting}" in this plugin\'s settings first.', { setting: key }),
   bundledOnly: "Only the bundled plugin may start a program Studio ships",
   inPlan:
     "The chat is in Plan mode, so this action did not run: plugin and connector actions wait until the plan is approved. Put it in your plan instead.",
@@ -356,19 +362,20 @@ export class PluginToolService {
     const name = `${pluginId}__${tool.name}`;
     const declined = options.afresh ? null : await this.#declinedBefore(attribution, threadId, name, args);
     if (declined) return declined;
+    const card = await this.#shownCard(pluginId, tool);
     const base = {
       consentId,
       pluginId,
-      pluginName: options.displayName ?? this.#pluginName(pluginId),
+      pluginName: options.displayName ?? this.#pluginName(pluginId, card.name),
       tool: name,
       args: consentArgsDigest(args),
       project: binding.project,
       ...consentThreads(binding.threadId, threadId, attribution),
-      prompt: tool.confirmation ?? "",
+      prompt: card.tool.confirmation ?? "",
       ...(exportReview ? { exportReview } : {}),
       ...(options.offerAlways ? { alwaysOffered: true } : {}),
     };
-    const field = cardField(tool, args);
+    const field = cardField(card.tool, args);
     const asked: PluginConsentEvent = {
       ...base,
       ...field,
@@ -460,10 +467,24 @@ export class PluginToolService {
     return consentAudience(this.#core, binding, runId);
   }
 
-  /** The name a consent card shows: the connector's or plugin's own, else its id. */
-  #pluginName(pluginId: string): string {
+  /**
+   * A card in the app's language: its plugin's name, and the tool's confirmation and field label
+   * where they are the manifest's own words (`shownCardTool`).
+   */
+  async #shownCard<T extends PluginTool & Pick<PluginManifestTool, "confirmationInput">>(
+    pluginId: string,
+    tool: T,
+  ): Promise<{ name?: string; tool: T }> {
+    const shown = await this.#core.plugins.displayManifest(pluginId);
+    const declared = this.#core.plugins.list().find((p) => p.manifest.id === pluginId)?.manifest;
+    return { name: shown?.name, tool: shownCardTool(tool, declared, shown) };
+  }
+
+  /** The name a consent card shows: the connector's or plugin's own (`shown`, in the app's language), else its id. */
+  #pluginName(pluginId: string, shown?: string): string {
     return (
       this.#core.mcp.nameOf(pluginId) ??
+      shown ??
       this.#core.plugins.list().find((p) => p.manifest.id === pluginId)?.manifest.name ??
       studioConsentName(pluginId) ??
       pluginId
@@ -478,8 +499,8 @@ export class PluginToolService {
   ): Promise<void> {
     const tool: PluginTool = {
       name: "export_review",
-      description: MESSAGE.exportConfirmation,
-      confirmation: MESSAGE.exportConfirmation,
+      description: MESSAGE.exportConfirmation(),
+      confirmation: MESSAGE.exportConfirmation(),
       parameters: { type: "object", properties: {} },
     };
     const review = { included: [...result.included].sort(), excluded: [...result.excluded].sort() };
@@ -1040,7 +1061,7 @@ export class PluginToolService {
     unlocked: boolean,
   ): Promise<McpPluginServer> {
     let unavailable: string | undefined;
-    if (server.requires?.credential && !unlocked) unavailable = MESSAGE.unlockFirst;
+    if (server.requires?.credential && !unlocked) unavailable = MESSAGE.unlockFirst();
     for (const key of server.requires?.settings ?? []) {
       const value = settings[key];
       if (value === undefined || value === "") unavailable ??= MESSAGE.setSettingFirst(key);

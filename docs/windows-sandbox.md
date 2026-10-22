@@ -19,9 +19,10 @@ the setup screen opens on `git-missing`. What differs from macOS:
   or a disposed member's folders, queue one `reset()` + `initialize()` that runs once no command
   holds the session; the last member out releases everything. A per-run grant outside the
   session's roots is refused (`not-granted`); network changes stay live (`updateConfig`).
-  `initialize()` is tried a second time only when srt-win's egress check (`wfp`) times out; a
-  timed-out ACL step fails at once, since a retry would repeat its walk under each folder srt-win
-  grants and each denied path's parent.
+  `initialize()` is tried a second time when srt-win's egress check (`wfp`) times out, and again
+  after 5 s and 10 s when Windows refuses that check's start of srt-win as the sandbox user
+  (below); a timed-out ACL step fails at once, since a retry would repeat its walk under each
+  folder srt-win grants and each denied path's parent.
 - Core startup awaits `ProcessSandbox.ensureReady()` before migrating or booting the harness.
   A failed background sandbox start reports its original error without rewinding or reseeding
   valid harness edits. A later Try again can retry initialization; broken harness code still
@@ -58,9 +59,17 @@ the setup screen opens on `git-missing`. What differs from macOS:
   grants the install folder (and srt-win's, when apart) for reading first, among Genex's own grants
   or, where Genex cannot set them, with srt-win's (`grantLauncherFolders`), and a packaged app
   works from its install folder (`installedWorkingDir`).
+  In that fallback, the session keeps those launch folders in srt-win's read grants across resets.
   It asks srt-win for the user's SID up to three times; without that grant the check fails with
-  "CreateProcessWithLogonW(srt-sandbox): Access is denied", so the log says why one was not made.
-  The same refusal comes from a disabled Secondary Logon service (`seclogon`).
+  "CreateProcessWithLogonW(srt-sandbox): Access is denied" (0x80070005), so the log says why one
+  was not made. srt-win's words add "ensure the Secondary Logon service is running", but a disabled
+  service answers 0x80070422 instead, which the setup check handles. A first start from a new
+  install can be refused with 0x80070005 although the grant is in place, and start seconds later
+  with nothing changed: the session waits and tries again (`sandboxUserRefused`, `LOGON_RETRY_MS`),
+  and a refusal that outlasts both pauses fails with plain words
+  (`SandboxLaunchCode.SandboxUserRefused`: restart the PC) while the log keeps srt-win's. Where
+  srt-win's launcher grant was not made (no SID, or srt-win refused it), waiting cannot help: the
+  start fails at once with srt-win's error, which the setup check reads.
 - The sandbox user reads nothing in the profile unless granted, so each folder between
   `USERPROFILE` and a root gets `(S,RA)` (read attributes and synchronize, no listing) after every
   apply, since srt-win's deny stamps replace the entry. Synchronize matters before Windows 11
@@ -124,15 +133,29 @@ the setup screen opens on `git-missing`. What differs from macOS:
   gave the group stays. An edit that finds a path as it should be
   writes nothing, so passing entries down a folder happens once: a Genex that quits keeps its
   record, and the next sync of any Genex keeps what a running one needs and takes back the rest. A
-  first walk of a large folder can take minutes (10 at most per batch; the log names each edit
-  over 2 s); one that runs out of time keeps what it set, and the next try goes on. Where the
+  first walk of a large folder can take minutes. The script answers a line per edit as it finishes,
+  so a batch stopped at its deadline keeps what it set and names the edit Windows was still on; the
+  log names each edit over 2 s. Denies, guards, take-backs, write grants (where the agents work: a
+  game, a linked project), a write grant narrowed to reading, and grants on the folders srt-win
+  starts from and on Genex's data folder (`urgent`) are set in full before the start goes on (10
+  minutes at most per batch). Every other read grant (a toolchain on PATH) gets 30 s
+  (`GRANT_BUDGET_MS`): unfinished, it only opens less, so what is not done by then is recorded to
+  walk before the batch runs and passed down after the start, at once and for 60 minutes at most;
+  the log says so (`… is passed down after the start`). One Windows refused there is tried again
+  in full and fails the start if it still refuses. The record is written whole (`atomicWriteText`),
+  one rewrite at a time. Where the
   sandbox user (in BUILTIN\Users) can open nothing under a denied path with or without the walk
   (the path passes no allow down to anyone but its owner, SYSTEM and the Administrators, before or
   after the edit, and every entry under it, read for its owner and DACL alone, is owned by them
   and allows only them, protected or not), the start writes the path alone, which files made in it
   inherit, and records the walk; the session runs
-  it two minutes after the start (`own entries passed down` in the log), and the next start runs
-  one a Genex quit before. A browser profile's walk took 17 s of a Windows 11 first start. An allow
+  it two minutes after the start, or at once when a grant is left to walk too (`own entries passed
+  down` in the log), and the next start runs
+  one a Genex quit before. A walk says the paths it walks in the same turn it reads them, once no
+  regrant is setting entries; a regrant that starts while it is under way waits for it only when it
+  sets or takes back entries in or around those paths (or one still to walk), which the walk could
+  undo, so a long first walk holds up no command in another folder. Walks run one at a time, and
+  Genex quitting stops the one under way, which stays recorded for the next start. A browser profile's walk took 17 s of a Windows 11 first start. An allow
   for an app container or a capability SID (`S-1-15-2-*`, `S-1-15-3-*`: Chrome gives its own
   sandboxes its profile's network folder) counts as theirs: Windows matches those only in an app
   container's second access check, and an app container gets only what its user is allowed too.

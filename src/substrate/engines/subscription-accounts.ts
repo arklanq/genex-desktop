@@ -8,6 +8,7 @@
 import { rm } from "node:fs/promises";
 import path from "node:path";
 import { atomicWriteText, ensureDir, readJsonIfExists } from "../fsx.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** The two accounts every subscription can have, by their fixed ids; added ones are `account-N`. */
 export const AccountId = {
@@ -27,9 +28,10 @@ const FIRST_ADDED = 2;
 const MAX_ADDED = 999;
 const CHOICE_FILE = "accounts.json";
 
+/** Why Settings' account change is refused, in the person's language. */
 const MESSAGE = {
-  unknown: (id: string) => `No such account: ${JSON.stringify(id.slice(0, 40))}`,
-  full: "Too many accounts.",
+  unknown: (id: string) => t("No such account: {account}", { account: JSON.stringify(id.slice(0, 40)) }),
+  full: () => t("Too many accounts."),
 } as const;
 
 /** What the choice file keeps: the account in use and the accounts added, with their emails. */
@@ -164,7 +166,7 @@ export class SubscriptionAccounts {
       await ensureDir(home);
       return { id, home };
     }
-    throw new Error(MESSAGE.full);
+    throw new Error(MESSAGE.full());
   }
 
   /**

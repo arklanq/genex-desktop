@@ -67,13 +67,14 @@ import { serial } from "./serial.ts";
 import { isInside, samePath, toPosixRelative } from "../../substrate/paths.ts";
 import { isEffectivelyBlack } from "../../substrate/pixel-stats.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 import { ReadyPhase, CaptureSurface, GameClock, GameFront } from "../../shared/preview-contract.ts";
 import { StateShape, keepPathsOf } from "../../shared/studio-state-shape.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { buildFinished, LiveGate, type LiveOffer, readBuild } from "./live-gate.ts";
-import type { LiveBehindEvent } from "../../shared/live-behind.ts";
+import { type LiveBehindEvent, WebBuildLoad } from "../../shared/live-behind.ts";
 import type { GameSoundRequest } from "../../shared/game-sound.ts";
 import { liveAudible, type LiveSound } from "../game-sound.ts";
 import { liveMaxFps } from "../live-pace.ts";
@@ -131,7 +132,13 @@ const STAND_IN_IDLE_MS = 2 * MINUTE_MS;
 /** How many of a too-large copy's largest folders its refusal names. */
 const COPY_FOLDERS_NAMED = 3;
 
-/** Errors the user reads when a build cannot be shown or landed, and why a reference is no still. */
+/**
+ * Errors the user reads when a build cannot be shown or landed, and why a reference is no still.
+ * The entries that call `t()` are the person's words, in their language; the bench, window and
+ * still words are a worker's or the harness's and stay English, as do the landing refusals
+ * `problemWords` reads by their English (`notCommitHash`, `notInHistory`, `contractorBuilding`,
+ * `uncommittedEdits`, `landingConflicted`).
+ */
 const MESSAGE = {
   // Every copy holds the whole game, whatever the task, and the person reads it when a build
   // cannot start: so it names no worker and no smaller task. What to do comes first: a lead's
@@ -154,8 +161,9 @@ const MESSAGE = {
   benchAfter:
     "Read the image files above to actually look at them. The window shows the bench page now: the computer tool loads your game again on its next action. Capture the game itself before you finish.",
   profilingNeedsStage: "profiling requires a stage preview",
-  previewChanged: "The selected preview changed while this build was preparing. Open the build again when ready.",
-  noGameInSnapshot: "that snapshot has no game to play",
+  previewChanged: () =>
+    t("The selected preview changed while this build was preparing. Open the build again when ready."),
+  noGameInSnapshot: () => t("that snapshot has no game to play"),
   sessionEnded: "the session ended before its window opened",
   viewportNeedsLease: "preview.viewport sizes one leased window: name its handle (never Live or the stand-in)",
   viewportInSession: (handle: string) =>
@@ -165,15 +173,18 @@ const MESSAGE = {
   notCommitHash: (commit: string) => `"${commit}" is not a commit hash`,
   notInHistory: (commit: string, project: string) => `commit ${commit} is not in "${project}"'s history`,
   claudeFolder: (commit: string, files: string[]) =>
-    `build ${commit} changes the game's .claude folder (${files.join(", ")}), Claude Code's own settings, so it was not landed`,
+    t("build {commit} changes the game's .claude folder ({files}), Claude Code's own settings, so it was not landed", {
+      commit,
+      files: files.join(", "),
+    }),
   contractorBuilding: (project: string) =>
     `a contractor is building in "${project}" right now — wait for it to finish before landing a build`,
   uncommittedEdits: (files: number) =>
     `the game folder has uncommitted edits (${files} file(s)) — commit or discard them before landing a build`,
   landingConflicted: (revision: string, excerpt: string) =>
     `landing ${revision} conflicted with the game folder; nothing was changed (${excerpt})`,
-  noSuchGame: (project: string) => `there is no game called "${project}"`,
-  noPackages: "this game has no package.json, so there is nothing to install",
+  noSuchGame: (project: string) => t('there is no game called "{game}"', { game: project }),
+  noPackages: () => t("this game has no package.json, so there is nothing to install"),
   stillUnreadable: "unreadable",
   stillTooLarge: `larger than ${REFERENCE_MAX_MB} MB`,
   stillNotJudgeable: (what: string) => `${what} — the reviewers cannot read it; re-save as JPEG or PNG`,
@@ -530,6 +541,8 @@ export class PreviewService {
   readonly #sessionWindows = new Map<string, number>();
   /** The engine's web build Live last loaded with its game folder (`engineWebFolderOf`), and its files' print. */
   #liveWebBuild: WebBuildSeen | null = null;
+  /** The person stopped Live's game (`stopLive`): nothing loads into it until Play or a load of theirs. */
+  #liveStopped = false;
 
   constructor(core: StudioCore, x: CoreInternals) {
     this.#core = core;
@@ -745,10 +758,12 @@ export class PreviewService {
     try {
       const served = await this.servedEntry(p.project, checkedRoot, p.entry, port, { fallback: isLive });
       if (!served) return unservedUrl(p);
+      // A load starts the page again, whether or not it then arrives: Live's game is no longer stopped.
+      if (isLive) this.#liveStopped = false;
       const url = await port.load(p.project, served.entry, served.root, { loopback: served.loopback });
       // Only now is Live current: a load that failed leaves what waited for Reload waiting.
       if (isLive) await this.#live.loaded(p.project, { print, root: checkedRoot });
-      if (isLive) this.#liveWebBuild = webBuild;
+      if (isLive) this.#liveLoaded(webBuild);
       remembered.loaded = servedKey(served);
       if (isLive) await this.#identifyLoaded(p.project, checkedRoot, served.stale, revisionBefore);
       // Loading clears the port's error, and the build is still broken: the agent loop and the
@@ -1276,7 +1291,7 @@ export class PreviewService {
       const port = this.pool().port(lease.handle);
       const candidate = await this.loadServed(port, project, showDir);
       if (candidate.problem) throw new Error(candidate.problem);
-      if (this.#x.servedRoots.get(LIVE_HANDLE) !== previous) throw new Error(MESSAGE.previewChanged);
+      if (this.#x.servedRoots.get(LIVE_HANDLE) !== previous) throw new Error(MESSAGE.previewChanged());
       liveAttempted = true;
       await this.loadPreview({ project, root: showDir });
     } catch (error) {
@@ -1465,7 +1480,7 @@ export class PreviewService {
    */
   async playGameSnapshot(snapshotId: string, project: string): Promise<{ dir: string; snapshotId: string }> {
     const record = this.#core.snapshotIndex.get(snapshotId);
-    if (!record?.git.game) throw new Error(MESSAGE.noGameInSnapshot);
+    if (!record?.git.game) throw new Error(MESSAGE.noGameInSnapshot());
     await this.#core.assertProjectAllowed(this.#core.games.dirFor(project));
     this.#core.snapshots.register({ name: project, dir: this.#core.games.dirFor(project) });
     const playDir = path.join(this.#core.layout.scratch, "review-play", project);
@@ -1577,7 +1592,7 @@ export class PreviewService {
     const source = { project, dir: descriptor.dir, shape: descriptor.shape };
     const guarded = await this.#core.scriptsGuarded(project);
     const result = guarded
-      ? ((await this.#core.builds.installGuarded(source)) ?? { ok: false, lines: [MESSAGE.noPackages] })
+      ? ((await this.#core.builds.installGuarded(source)) ?? { ok: false, lines: [MESSAGE.noPackages()] })
       : await this.#core.builds.install(source);
     if (result.ok) this.#x.buildProblems.delete(project);
     return result;
@@ -1598,12 +1613,12 @@ export class PreviewService {
       const port = this.preview(p?.handle);
       const last = this.#x.servedRoots.get(handle);
       const print = handle === LIVE_HANDLE && last ? await this.#live.printBefore(last.project, last.root) : undefined;
-      const webBuild = await this.#webBuildBefore(handle, last);
+      const webBuild = await this.#reloadStarting(handle, last);
       // Reload means "what is on disk NOW" — for a game with its own build, that is a rebuild.
       const rebuilt = last ? await this.#rebuildServed(port, last, handle, p?.retry === true) : false;
       if (!rebuilt) await port.reload();
       if (last && handle === LIVE_HANDLE) await this.#live.loaded(last.project, { print, root: last.root });
-      if (handle === LIVE_HANDLE) this.#liveWebBuild = webBuild;
+      if (handle === LIVE_HANDLE) this.#liveLoaded(webBuild);
       return true;
     });
   }
@@ -1612,6 +1627,7 @@ export class PreviewService {
   stopLive(): Promise<void> {
     return serial(this.#x.previewOperations, LIVE_HANDLE, async () => {
       await this.#optionalPreview()?.stop?.();
+      this.#liveStopped = true;
     });
   }
 
@@ -1619,6 +1635,7 @@ export class PreviewService {
   playLive(): Promise<void> {
     return serial(this.#x.previewOperations, LIVE_HANDLE, async () => {
       await this.#optionalPreview()?.resume?.();
+      this.#liveStopped = false;
     });
   }
 
@@ -1631,34 +1648,68 @@ export class PreviewService {
    * the engine's own output, never edited, which Live loads at once.
    */
   async offerLive(offer: LiveOffer): Promise<void> {
-    const loaded = (await this.#bringsWebBuild(offer)) && (await this.#loadWebBuild(offer.project));
+    const folder = await this.#offersGameFolder(offer);
+    const loaded = folder && (await this.loadWebBuild(offer.project)) === WebBuildLoad.Loaded;
     if (!loaded) await this.#live.offer(offer);
   }
 
-  /** Live loads the game's new web build; false when the load failed, which leaves the offer to Reload. */
-  async #loadWebBuild(project: string): Promise<boolean> {
-    try {
-      await this.loadPreview({ project });
-      return true;
-    } catch {
-      return false;
-    }
+  /** Whether an offer is of the game folder itself: no build named by commit, no other folder. */
+  async #offersGameFolder(offer: LiveOffer): Promise<boolean> {
+    if (offer.commit) return false;
+    return offer.root === null || sameRealPath(offer.root, this.#core.games.dirFor(offer.project));
   }
 
-  /** Whether an offer of the game folder Live shows brings an engine's web build Live has not loaded. */
-  async #bringsWebBuild(offer: LiveOffer): Promise<boolean> {
+  /**
+   * Live loads the game's finished engine web build it lacks (`#missingWebBuild`). Asked first
+   * outside Live's queue, so an offer with no build to bring never waits behind a load; then again
+   * inside it, one decision per Live operation, so a checkpoint's offer and the Web game tab never
+   * load it twice. A load that fails keeps Live as it is.
+   */
+  async loadWebBuild(project: string): Promise<WebBuildLoad> {
+    const missing = await this.#missingWebBuild(project);
+    if (!missing) return WebBuildLoad.Kept;
+    if (!missing.finished) return WebBuildLoad.Unfinished;
+    return serial(this.#x.previewOperations, LIVE_HANDLE, async () => {
+      const now = await this.#missingWebBuild(project);
+      if (!now) return WebBuildLoad.Kept;
+      if (!now.finished) return WebBuildLoad.Unfinished;
+      try {
+        const checkedRoot = await this.#x.assertHarnessRoot(project, null);
+        this.#x.profileSources.delete(LIVE_HANDLE);
+        await this.#loadServedPreview({ project }, LIVE_HANDLE, checkedRoot, this.preview());
+        return WebBuildLoad.Loaded;
+      } catch {
+        return WebBuildLoad.Kept;
+      }
+    });
+  }
+
+  /**
+   * The game's engine web build Live lacks while it runs this game's own folder (never a build the
+   * person chose to view, never a stopped game): one Live has not loaded, finished or still being
+   * written, as when the game was opened before its export existed. Null when there is none.
+   */
+  async #missingWebBuild(project: string): Promise<WebBuildSeen | null> {
     const served = this.#x.servedRoots.get(LIVE_HANDLE);
-    if (offer.commit || served?.project !== offer.project || served.root !== null) return false;
-    const dir = this.#core.games.dirFor(offer.project);
-    if (offer.root !== null && !(await sameRealPath(offer.root, dir))) return false;
-    const now = await this.#webBuildSeen(offer.project);
-    if (now.folder === null || !now.finished) return false;
-    return !sameWebBuild(this.#liveWebBuild, now);
+    if (served?.project !== project || served.root !== null || this.#liveStopped) return null;
+    const now = await this.#webBuildSeen(project);
+    if (now.folder === null || sameWebBuild(this.#liveWebBuild, now)) return null;
+    return now;
   }
 
-  /** The engine web build a load of Live's game folder is about to show; null for any other load. */
-  async #webBuildBefore(handle: string, served: ServedRoot | undefined): Promise<WebBuildSeen | null> {
-    if (handle !== LIVE_HANDLE || !served || served.root !== null) return null;
+  /** A load reached Live: the engine web build it shows (null for none). */
+  #liveLoaded(webBuild: WebBuildSeen | null): void {
+    this.#liveWebBuild = webBuild;
+  }
+
+  /**
+   * A reload is starting: Live's game runs again, whether or not the page then arrives, and the
+   * engine web build a reload of Live's game folder is about to show (null for any other reload).
+   */
+  async #reloadStarting(handle: string, served: ServedRoot | undefined): Promise<WebBuildSeen | null> {
+    if (handle !== LIVE_HANDLE) return null;
+    this.#liveStopped = false;
+    if (!served || served.root !== null) return null;
     return this.#webBuildSeen(served.project);
   }
 

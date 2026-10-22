@@ -48,6 +48,10 @@ licenses and terms of included third-party software.
   13.21.0, CC0-1.0), only to identify Unity, which the Unity plugin runs. Unity and the Unity logo
   are trademarks or registered trademarks of Unity Technologies or its affiliates in the U.S. and
   elsewhere. Genex is not affiliated with or endorsed by Unity Technologies.
+- The `linux` glyph in `src/renderer/ui/icons.tsx` draws Tux, Linux's penguin (its path from
+  Simple Icons 16.35.0, CC0-1.0, without the feet lines), only to show that a game has a
+  Linux version. Tux was drawn by Larry Ewing with The GIMP. Linux is a registered trademark of
+  Linus Torvalds.
 
 ## Routed tool marks
 
@@ -65,9 +69,9 @@ text behind a Studio-written preface; `vendor.json` records each source, version
 `npm run genex:skills` refreshes them.
 
 - Eight platform cards and their references, copied unchanged from
-  `@genex-ai/cli-demo` 1.36.11 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
+  `@genex-ai/cli-demo` 1.36.13 `templates/skills` (MIT, Copyright (c) 2026 me-ai-org). The
   license text ships beside them as `skills/LICENSE-cards`, copied from the CLI's `LICENSE`.
-- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.11), which is not part of the npm
+- `genex/SKILL.md` wraps https://genex.games/SKILL.md (v1.36.13), which is not part of the npm
   package. It is attributed to Genex here; its license is not yet confirmed (see "Status not yet
   recorded" below).
 
@@ -184,9 +188,13 @@ SOFTWARE.
 
 ## Fonts
 
-Zalando Sans SemiExpanded, Geist and Geist Mono are used as published under the SIL Open Font
-License 1.1 (Geist Mono as its Google Fonts Latin subset). Their OFL texts ship beside them in
-`dist/renderer/fonts`. Copies with their OFL texts in `design/genex-promo-video/public/fonts` and
+Zalando Sans SemiExpanded, Geist Mono, LINE Seed JP, TikTok Sans, Pretendard and Noto Sans SC
+are licensed under the SIL Open Font License 1.1; their OFL texts ship beside them in
+`dist/renderer/fonts`. Zalando Sans SemiExpanded, Geist Mono and LINE Seed JP are as published.
+TikTok Sans is cut to its Cyrillic and Greek at one width as "TikTok Sans Genex"; Pretendard
+(Reserved Font Name "Pretendard") is cut to its Hangul as "Genex Hangul"; Noto Sans SC is cut to
+the characters of GB 2312 ([sources](src/renderer/ui/GENEX-SOURCES.md#font-licenses)). Geist, as
+published, renders design studies in `design/`. Copies with their OFL texts in `design/genex-promo-video/public/fonts` and
 `design/play-publish-video/public/fonts` render the promo films.
 
 ## Promo films

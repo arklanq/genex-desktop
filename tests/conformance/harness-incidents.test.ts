@@ -3975,6 +3975,33 @@ describe("a Loop asked for in words with Mode on Auto (auto-loop)", () => {
     assert.equal(launch?.onlyWhenAsked, true, "called only when asked: messages still join the turn");
   });
 
+  it("auto-loop. a direct engine's chat (its tool loop, Loop off) starts the Loop it is asked for, for the hours named; a run's own turn never does", async () => {
+    const { tools } = await import("../../src/harness-seed/tools/game-tools.ts");
+    const { ctxRecorder } = await import("../helpers/ctx-recorder.ts");
+    const startAutopilot = tools.find((tool) => tool.name === "start_autopilot");
+    assert.ok(startAutopilot);
+    const call = async (args: Record<string, unknown>, extra: Record<string, unknown>) =>
+      startAutopilot.execute({ goal: "g", direction: "d", ...args }, ctxRecorder({ extra }).ctx) as Promise<
+        Record<string, any>
+      >;
+    const rows = [
+      { label: "1h named", args: { hours: "1h" }, extra: { engine: "ollama" }, hours: 1 },
+      { label: "30m named", args: { hours: "30m" }, extra: { engine: "ollama" }, hours: 0.5 },
+      { label: "none named: until done", args: {}, extra: { engine: "ollama" }, hours: 24 },
+      { label: "a run's own turn", args: { hours: 1 }, extra: { engine: "ollama", runId: "run_x" }, hours: null },
+      { label: "a follow-up's turn", args: { hours: 1 }, extra: { engine: "ollama", followupOf: "m1" }, hours: null },
+    ];
+    const seen = [];
+    for (const { label, args, extra } of rows) {
+      const outcome = await call(args, extra);
+      seen.push({ label, hours: outcome.ok ? outcome.details?.run?.hours : null });
+    }
+    assert.deepEqual(
+      seen,
+      rows.map(({ label, hours }) => ({ label, hours })),
+    );
+  });
+
   it('auto-loop. "30m" is half an hour, never 30 hours', async () => {
     const { rig, thread } = await autoChat({ ...ask, hours: "30m" });
     await rig.core.sendUserMessage("Start a 30 minute Loop", { thread, engine: "vendor" });
@@ -9982,7 +10009,7 @@ const ENGINE_QUESTION = "FIRST, THE ENGINE:";
  * New game makes the game before the chat's first ask, as an empty folder with no kind; with the
  * Unreal plugin on, the delegated turn finds a project that already exists. A folder with no kind
  * yet (the host's facts) is asked with the question card, exactly as a game the turn makes itself,
- * and not again in the session that asked: the answer comes back to it.
+ * and not again in the session that asked: the answer comes back to it, the card still at hand.
  */
 describe("a game New game made is asked its engine on its chat's first ask", () => {
   it("with the Unreal plugin on, a game New game made is empty, its chat's first build asks web or Unreal with the question card, and its next does not", async () => {
@@ -10035,8 +10062,8 @@ describe("a game New game made is asked its engine on its chat's first ask", () 
     assert.ok(!asks(next.prompt), "a later message is never asked again");
     assert.deepEqual(
       next.interviewTools?.map((tool) => tool.name),
-      ["start_autopilot"],
-      "no card, only Auto's Loop start (flipped: auto-loop)",
+      ["start_autopilot", "ask_user"],
+      "the session that asked keeps its card while the game has no kind (flipped: resumed card)",
     );
   });
 });
@@ -14828,6 +14855,75 @@ describe("the user's ask to finish a running build (director/wrap-up.ts)", () =>
     assert.equal(loopRun.state.workers.size, 0, "no worker started");
   });
 
+  it('FA1b. "stop it and start a new one": wrap_up records the new Loop with the ask, and the studio starts it once the run closes, unless Stop came', async () => {
+    const STOP_AND_RESTART = "stop this loop and start a new 1h loop for the dragon attack";
+    const { host, loopRun } = await askedRun([STOP_AND_RESTART]);
+    const answer = String(
+      await loopRun.handler("wrap_up", {
+        user_asked: "stop this loop and start a new 1h loop",
+        next_goal: "A Skyrim-style dragon attack on the village",
+        next_hours: "1h",
+      }),
+    );
+    assert.match(answer, /new Loop starts by itself/, answer);
+    const [ask] = finishAsks(host);
+    assert.deepEqual(ask?.next, {
+      goal: "A Skyrim-style dragon attack on the village",
+      direction: "A Skyrim-style dragon attack on the village",
+      hours: 1,
+    });
+
+    const { nextLoopOf } = await import("../../src/harness-seed/loop/next-loop-record.ts");
+    const { startNextLoop } = await import("../../src/harness-seed/loop/next-loop.ts");
+    const custom = (eventType: string, payload: Record<string, unknown>) => ({
+      data: { type: "custom", event_type: eventType, payload },
+    });
+    const asked = custom(RunEvent.RunControl, ask as Record<string, unknown>);
+    const finished = custom(RunEvent.RunFinished, { runId: "run_j" });
+    const rows = [
+      { label: "finished after the ask", log: [asked, finished], hours: 1 },
+      { label: "not closed yet", log: [asked], hours: null },
+      {
+        label: "paused (a limit, a Stop): its resume goes on",
+        log: [asked, finished, custom(RunEvent.AutopilotPaused, { runId: "run_j" })],
+        hours: null,
+      },
+      {
+        label: "resumed or reopened since: the old ask is spent",
+        log: [asked, custom(RunEvent.RunRegistered, { runId: "run_j" }), finished],
+        hours: null,
+      },
+      {
+        label: "another run's ask",
+        log: [custom(RunEvent.RunControl, { ...ask, runId: "run_other" }), finished],
+        hours: null,
+      },
+      {
+        label: "a plain ask to finish",
+        log: [custom(RunEvent.RunControl, { ...ask, next: undefined }), finished],
+        hours: null,
+      },
+    ];
+    assert.deepEqual(
+      rows.map(({ label, log }) => ({ label, hours: nextLoopOf(log as never, "run_j")?.hours ?? null })),
+      rows.map(({ label, hours }) => ({ label, hours })),
+    );
+    const { nextLoopFrom } = await import("../../src/harness-seed/loop/next-loop-record.ts");
+    assert.equal(nextLoopFrom({ next_goal: "g", next_hours: "30m" })?.hours, 0.5, "30m is half an hour");
+    assert.equal(nextLoopFrom({ next_goal: "g", next_hours: "0" })?.hours, null, "0 is until done");
+    const log = [asked, finished];
+
+    // A Stop pressed since the ask wins: the log is not even read.
+    const calls: string[] = [];
+    const studio = {
+      cancels: new Set(["thread-1"]),
+      host: { call: async (method: string) => (calls.push(method), log) },
+      scoped: () => ({}),
+    };
+    await startNextLoop(studio as never, "thread-1", { runId: "run_j", project: "seyda-neen" } as never);
+    assert.deepEqual(calls, [], "nothing starts after Stop");
+  });
+
   it("FA2. a running worker ends the round it is in once the user asks to finish; only the lead's stop or the run's close ends it mid-round", async () => {
     const { workerStopAsk } = await import("../../src/harness-seed/loop/director/workers.ts");
     const { stopSignal, stopsThisRound } = await import("../../src/harness-seed/loop/facet/rules.ts");
@@ -15815,5 +15911,77 @@ describe("the reviewer's no's in a Loop that still has time", () => {
     const report = await host.start();
     assert.equal(report.executionStatus, "paused", "a Stop pauses the Loop for a Resume");
     assert.equal(report.stillToFix, undefined);
+  });
+});
+
+/**
+ * A request that names an engine none of the engine question's options covers is never asked that
+ * question: it goes through `plugins_find`, as the question's own words say before they ask.
+ */
+describe("a request naming an engine the engine question doesn't offer", () => {
+  it("with only Unity on, a request for a Godot game is sent to plugins_find before the question is asked, never offered Web or Unity", async () => {
+    const { engineChoiceRule } = await import("../../src/harness-seed/loop/unreal-prompts.ts");
+    const { toolCall } = await import("../../src/harness-seed/loop/model-roles.ts");
+    const unity = { plugin: "unity", name: "Unity", tool: "unity__new-game", makes: ["unity-project"] };
+    for (const engine of ["claude-code", "codex", undefined]) {
+      const rule = engineChoiceRule(engine, null, [unity]);
+      const find = rule.indexOf(toolCall(engine, "plugins_find"));
+      const ask = rule.indexOf(toolCall(engine, "ask_user"));
+      assert.ok(find >= 0, `${engine}: another engine goes through plugins_find`);
+      assert.ok(find < ask, `${engine}: before the question is asked`);
+    }
+  });
+});
+
+/**
+ * A resumed chat session whose game still has no kind keeps the question card its first brief named:
+ * a session that remembers the engine question would otherwise call a tool it no longer has.
+ */
+describe("a resumed chat session on a game with no kind yet", () => {
+  it("a resumed session was told to ask with ask_user on its first turn and lost the card on the next: it keeps the card while the game has no kind", async () => {
+    const { runDelegatedTurn } = await import("../../src/harness-seed/loop/delegated-turn.ts");
+    const { ctxRecorder } = await import("../helpers/ctx-recorder.ts");
+    const unity = { plugin: "unity", name: "Unity", tool: "unity__new-game", makes: ["unity-project"] };
+    const made = { name: "dodger", title: "Dodger", dir: "/games/dodger", shape: null, built: false, facts: [] };
+    const recorder = ctxRecorder({
+      unknown: { value: null },
+      handlers: {
+        "events.messages": () => [{ role: "user", content: "make a game in godot" }],
+        "game.contentStamp": () => ({ all: null, source: null }),
+        "game.list": () => [made],
+        "plugins.tools": () => ({ tools: [], guidance: "", revision: 1, kinds: [unity] }),
+        "engine.describe": () => [],
+        "preview.ready": () => ({ ready: false }),
+        "engine.delegate": () => ({
+          ok: true,
+          engine: "claude-code",
+          turns: 1,
+          usage: {},
+          sessionId: "s",
+          summary: "ok",
+        }),
+      },
+    });
+    const turn = { threadId: "t", turnId: "turn-2", text: "Godot is on now", engine: "claude-code", project: "dodger" };
+    await runDelegatedTurn(
+      recorder.ctx as never,
+      { ...turn, engineLabel: "Claude Code", resume: "session-1" } as never,
+    );
+    const [delegated] = recorder.paramsOf("engine.delegate");
+    const bridged = (delegated?.interviewTools as Array<{ name: string }> | undefined)?.map((tool) => tool.name) ?? [];
+    assert.ok(bridged.includes("ask_user"), "the card is still there to call");
+  });
+});
+
+describe("the language of Genex's own turns", () => {
+  it("AL1. a resume or continue is Genex's own English words, and the agent answered a Russian chat in English: the brief names the app's language as the fallback", async () => {
+    const { buildContractorBrief } = await import("../../src/harness-seed/loop/chat-session.ts");
+    const russian = { tag: "ru", name: "Русский" };
+    for (const resume of [false, true])
+      assert.match(
+        buildContractorBrief({ ask: "Continue", resume, appLanguage: russian }),
+        /Genex's own rather than the user's[\s\S]*Русский \(ru\)/,
+        resume ? "a resumed session" : "a new session",
+      );
   });
 });

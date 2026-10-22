@@ -1,6 +1,6 @@
 /**
  * The player builds a game folder holds, read from the binaries themselves: a Mac app's processors
- * from its Mach-O header, a Windows program's from its PE header. The folder is written by agents:
+ * from its Mach-O header, a Windows program's from its PE header, a Linux program's from its ELF one. The folder is written by agents:
  * a bundle reached through a link, a program that is a link or leads out of its bundle, a bundle
  * with no program, a file that only claims to be a program and an engine's cache are never builds.
  */
@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { findNativeBuilds, machOArch, peArch } from "../../src/main/core/native-builds.ts";
+import { elfArch, findNativeBuilds, machOArch, peArch } from "../../src/main/core/native-builds.ts";
 import { NativeArch, NativePlatform } from "../../src/shared/play-native.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 
@@ -40,6 +40,25 @@ function pe(machine: number): Buffer {
   bytes.write("PE\0\0", 0x80, "latin1");
   bytes.writeUInt16LE(machine, 0x84);
   return bytes;
+}
+
+/** An ELF header: 64-bit little-endian unless said, of `type` (2 a program, 3 position-independent, 1 an object). */
+function elf(machine: number, { type = 3, bits = 2 }: { type?: number; bits?: number } = {}): Buffer {
+  const bytes = Buffer.alloc(64);
+  bytes.writeUInt32BE(0x7f454c46, 0);
+  bytes[4] = bits;
+  bytes[5] = 1;
+  bytes.writeUInt16LE(type, 16);
+  bytes.writeUInt16LE(machine, 18);
+  return bytes;
+}
+const ELF_X64 = 0x3e;
+const ELF_ARM64 = 0xb7;
+
+/** `file` with `bytes`, its folders made. */
+async function put(file: string, bytes: Buffer | string): Promise<void> {
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeFile(file, bytes);
 }
 
 const PLIST = (program: string) =>
@@ -94,6 +113,58 @@ describe("a game folder's player builds", () => {
     assert.deepEqual(await findNativeBuilds(root), []);
   });
 
+  it("reads a Linux program as Unity, Godot and Unreal lay it out, and ships its whole build", async () => {
+    const root = await tmpDir("native-builds-");
+    // Unity: the player beside its data and engine library (an ELF too, never the game).
+    await put(path.join(root, "unity", "Builds", "Linux", "Dust.x86_64"), elf(ELF_X64, { type: 2 }));
+    await put(path.join(root, "unity", "Builds", "Linux", "UnityPlayer.so"), elf(ELF_X64));
+    await mkdir(path.join(root, "unity", "Builds", "Linux", "Dust_Data"), { recursive: true });
+    // Godot: an Arm build with its pack.
+    await put(path.join(root, "Builds", "LinuxArm", "Dust.arm64"), elf(ELF_ARM64));
+    await put(path.join(root, "Builds", "LinuxArm", "Dust.pck"), "GDPC");
+    // Unreal: the game's program under its package, beside its symbols; the engine's own programs.
+    const pack = path.join(root, "Packaged", "Linux");
+    await put(path.join(pack, "Dust.sh"), "#!/bin/sh\n");
+    await put(path.join(pack, "Dust", "Binaries", "Linux", "Dust-Linux-Shipping"), elf(ELF_X64));
+    await put(path.join(pack, "Dust", "Binaries", "Linux", "Dust-Linux-Shipping.debug"), elf(ELF_X64));
+    await put(path.join(pack, "Dust", "Binaries", "Linux", "libsteam_api.so"), elf(ELF_X64));
+    await put(path.join(pack, "Engine", "Binaries", "Linux", "CrashReportClient"), elf(ELF_X64));
+    await put(path.join(pack, "Engine", "Binaries", "Linux", "UnrealGame"), elf(ELF_X64));
+    const found = await findNativeBuilds(root);
+    assert.deepEqual(found.map((build) => [build.platform, build.arch, build.entry, build.folder]).sort(), [
+      [NativePlatform.Linux, NativeArch.Arm64, "Builds/LinuxArm/Dust.arm64", "Builds/LinuxArm"],
+      [
+        NativePlatform.Linux,
+        NativeArch.X64,
+        "Packaged/Linux/Dust/Binaries/Linux/Dust-Linux-Shipping",
+        "Packaged/Linux",
+      ],
+      [NativePlatform.Linux, NativeArch.X64, "unity/Builds/Linux/Dust.x86_64", "unity/Builds/Linux"],
+    ]);
+    const unreal = found.find((build) => build.folder === "Packaged/Linux");
+    const binaries = found.find((build) => build.folder === "Builds/LinuxArm");
+    assert.ok((unreal?.bytes ?? 0) > (binaries?.bytes ?? 0), "an Unreal package counts its engine and data too");
+  });
+
+  it("finds no Linux build in what only looks like one", async () => {
+    const root = await tmpDir("native-builds-");
+    const outside = await tmpDir("native-builds-outside-");
+    await put(path.join(outside, "Far.x86_64"), elf(ELF_X64));
+    await mkdir(path.join(root, "Builds", "Linked"), { recursive: true });
+    await symlink(path.join(outside, "Far.x86_64"), path.join(root, "Builds", "Linked", "Far.x86_64"));
+    await symlink(outside, path.join(root, "Builds", "LinkedFolder"));
+    await put(path.join(root, "Builds", "Script", "run.x86_64"), "#!/bin/sh\necho not a program\n");
+    await put(path.join(root, "Builds", "Old", "Dust.x86_64"), elf(ELF_X64, { bits: 1 }));
+    await put(path.join(root, "Builds", "Object", "Dust.x86_64"), elf(ELF_X64, { type: 1 }));
+    await put(path.join(root, "Builds", "Risc", "Dust.x86_64"), elf(0xf3));
+    // A tool's own program, named as any program is: never a game.
+    await put(path.join(root, "venv", "bin", "python3"), elf(ELF_X64, { type: 2 }));
+    // A program at the game folder's root: its folder would be the whole game.
+    await put(path.join(root, "Dust.x86_64"), elf(ELF_X64));
+    await put(path.join(root, ".godot", "exported", "Dust.x86_64"), elf(ELF_X64));
+    assert.deepEqual(await findNativeBuilds(root), []);
+  });
+
   it("answers the header readers nothing for a file that is not a program", async () => {
     const root = await tmpDir("native-builds-");
     const text = path.join(root, "notes.txt");
@@ -106,5 +177,9 @@ describe("a game folder's player builds", () => {
     const x86 = path.join(root, "old.exe");
     await writeFile(x86, pe(0x14c));
     assert.equal(await peArch(x86), null, "a 32-bit program is not a build Genex installs");
+    assert.equal(await elfArch(text), null);
+    const tux = path.join(root, "Dust.x86_64");
+    await writeFile(tux, elf(ELF_ARM64, { type: 2 }));
+    assert.equal(await elfArch(tux), NativeArch.Arm64);
   });
 });

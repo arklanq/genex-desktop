@@ -1,3 +1,4 @@
+import { t, tc } from "../shared/i18n.ts";
 import { providerInfo } from "../shared/providers.ts";
 import type { ExportReview } from "../shared/plugins.ts";
 import type { PluginSuggestedPayload } from "../shared/project-tools.ts";
@@ -42,7 +43,7 @@ import { GENEX_COVER_TOOL, GENEX_PLUGIN_ID, GenexCoverOperation } from "../share
 import { SteerDelivery } from "../shared/message-queue.ts";
 import { engineLabel, roleName } from "../shared/model-roles.ts";
 import { ExecutionStatus, RoundOutcome, roundOutcome } from "../shared/run-state.ts";
-import { plural, skillWords } from "../shared/skill-words.ts";
+import { skillUpdatedWords } from "../shared/skill-words.ts";
 import { MINUTE_MS } from "../shared/duration.ts";
 import { type ToolPermissionEvent, ToolPermissionState } from "../shared/permissions.ts";
 import { contractorIdentity } from "./chat-labels.ts";
@@ -71,7 +72,6 @@ import {
   decisionWords,
   fixWords,
   flagWords,
-  harnessLearnedWords,
   improvementWords,
   judgeRoundLine,
   judgeUnreachable,
@@ -338,6 +338,45 @@ export const SystemTag = {
   Engine: "ENGINE",
 } as const;
 export type SystemTag = (typeof SystemTag)[keyof typeof SystemTag];
+
+/** Each tag in the reader's words, in sentence case: what the transcript heads its line with. */
+export const SYSTEM_TAG_WORDS: Record<SystemTag, string> = {
+  [SystemTag.Error]: t("Error"),
+  [SystemTag.SignIn]: t("Sign in"),
+  [SystemTag.Restarted]: t("Restarted"),
+  [SystemTag.Failed]: t("Failed"),
+  [SystemTag.Seed]: t("Seed"),
+  [SystemTag.Compacted]: t("Compacted"),
+  [SystemTag.Better]: t("Better"),
+  [SystemTag.Run]: t("Run"),
+  [SystemTag.TheLead]: t("The lead"),
+  [SystemTag.TheBuild]: t("The build"),
+  [SystemTag.Part]: t("Part"),
+  [SystemTag.Move]: t("Move"),
+  [SystemTag.Blender]: "Blender",
+  [SystemTag.Fix]: t("Fix"),
+  [SystemTag.Alive]: t("Alive"),
+  [SystemTag.Waiting]: t("Waiting"),
+  [SystemTag.Update]: tc("tag", "Update"),
+  [SystemTag.Plan]: t("Plan"),
+  [SystemTag.Ask]: t("Ask"),
+  [SystemTag.Stopped]: t("Stopped"),
+  [SystemTag.Resumed]: t("Resumed"),
+  [SystemTag.Reviewer]: t("Reviewer"),
+  [SystemTag.Checked]: t("Checked"),
+  [SystemTag.Show]: tc("tag", "Show"),
+  [SystemTag.Checkpoint]: t("Checkpoint"),
+  [SystemTag.Engine]: t("Engine"),
+};
+
+const SYSTEM_TAGS: ReadonlySet<string> = new Set(Object.values(SystemTag));
+const isSystemTag = (tag: string): tag is SystemTag => SYSTEM_TAGS.has(tag);
+
+/** A line's tag as its heading says it: a known tag in the reader's words, any other in sentence case. */
+export function systemTagWords(tag: string): string {
+  if (isSystemTag(tag)) return SYSTEM_TAG_WORDS[tag];
+  return tag.charAt(0) + tag.slice(1).toLowerCase();
+}
 
 /** Routine narration: folded into one activity row unless it reports trouble. */
 const ROUTINE_TAGS = new Set<string>([
@@ -743,7 +782,7 @@ function readNoteLabel(chat: ChatDraft, data: EventData): boolean {
 }
 
 /** What a note's bubble says it was about until its record names it. */
-const NOTE_ABOUT = "Note to the build";
+const NOTE_ABOUT = t("Note to the build");
 
 /** A user bubble; a note sent to a build from its graph shows the words the user wrote, and what they were about. */
 function userEntry(id: string, content: string): Entry {
@@ -1129,7 +1168,7 @@ function narrateSignIn(chat: ChatDraft, event: EventEnvelope): void {
       chat,
       event.id,
       SystemTag.SignIn,
-      TRANSCRIPT_WORDS.signInAgain(providerInfo(failure.engine)?.label ?? "Your coding provider"),
+      TRANSCRIPT_WORDS.signInAgain(providerInfo(failure.engine)?.label ?? t("Your coding provider")),
     );
 }
 
@@ -1447,8 +1486,8 @@ function narrateSkillAccepted(chat: ChatDraft, event: EventEnvelope): void {
   // The instruction file and the proposer's notes live in Activity; the chat says it plainly.
   const title = skillAccepted.title?.trim().replace(/\.$/, "");
   const text = title
-    ? `Harness learned to ${title.charAt(0).toLowerCase()}${title.slice(1)}.`
-    : `Harness updated ${skillWords(skillAccepted.skill).replace(/^how Harness /, "how it ")}.`;
+    ? t("Harness learned to {skill}.", { skill: `${title.charAt(0).toLowerCase()}${title.slice(1)}` })
+    : skillUpdatedWords(skillAccepted.skill);
   chat.entries.push({ id: event.id, kind: EntryKind.Learning, text, link: TRANSCRIPT_WORDS.seeInHarness });
 }
 
@@ -1468,7 +1507,9 @@ function narrateRunStart(chat: ChatDraft, event: EventEnvelope): void {
   const judgeEngine = started.judgeEngine ?? started.engine ?? "";
   const judgeName = judge ? roleName(judgeEngine, judge) : null;
   const crossProvider = Boolean(judgeName && started.engine && judgeEngine !== started.engine);
-  const judgeWords = crossProvider ? `${judgeName} on ${providerName(judgeEngine)}` : judgeName;
+  const judgeWords = crossProvider
+    ? t("{model} on {provider}", { model: judgeName ?? "", provider: providerName(judgeEngine) })
+    : judgeName;
   say(chat, event.id, SystemTag.Run, runStartWords(started.reference ?? null, judgeWords));
 }
 
@@ -2084,7 +2125,10 @@ function narrateLearningPass(chat: ChatDraft, event: EventEnvelope): void {
   chat.entries.push({
     id: event.id,
     kind: EntryKind.Learning,
-    text: harnessLearnedWords(plural(learned, "thing")),
+    text: t(
+      "{count, plural, one {Harness learned # thing from this build.} other {Harness learned # things from this build.}}",
+      { count: learned },
+    ),
     link: staged > 0 ? TRANSCRIPT_WORDS.reviewInHarness : TRANSCRIPT_WORDS.seeInHarness,
   });
 }

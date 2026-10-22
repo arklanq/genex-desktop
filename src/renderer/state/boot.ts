@@ -31,11 +31,12 @@ import type { DataMoveProgress } from "../../shared/data-folder.ts";
 import { type ReadyUpdate, UpdateAction } from "../../shared/app-update.ts";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
+import { t } from "../../shared/i18n.ts";
 import type { StudioApi } from "../../shared/studio-api.ts";
 
 const MESSAGE = {
   /** The raw error under Details when an install went through and Windows still has no sandbox. */
-  stillNotSetUp: "The install finished, but Windows still reports the protected workspace as not set up.",
+  stillNotSetUp: t("The install finished, but Windows still reports the protected workspace as not set up."),
 } as const;
 
 /** How long a starting window waits before it asks main again which step the start is on. */

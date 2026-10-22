@@ -17,6 +17,7 @@ import {
 } from "../../shared/coordinator.ts";
 import { CustomEvent, customEventData, customRecord, type AnyCustomPayload } from "../../shared/custom-events.ts";
 import { EventKind, ThreadKind, type ConversationRecord, type EventEnvelope } from "../../shared/event-log.ts";
+import { t } from "../../shared/i18n.ts";
 import { crossesCompletionEngine } from "../../shared/model-roles.ts";
 import { ToolPermissionBy } from "../../shared/permissions.ts";
 import { RunState } from "../../shared/run-state.ts";
@@ -110,23 +111,26 @@ const PLACEHOLDER_TITLES: readonly string[] = [NEW_GAME_TITLE, NEW_CHAT_TITLE];
 /** Characters of a first message kept as the thread's title. */
 const THREAD_TITLE_CHARS = 56;
 
-/** User-facing copy of this module, and what the coordinator reads when a tool call is refused. */
+/**
+ * User-facing copy of this module, and what the coordinator reads when a tool call is refused.
+ * The tag line and the commission refusals (the chat's error, kept in its log) are said to the
+ * person in their language; the tag retry line is the agent's, and the rest are tool results.
+ */
 const MESSAGE = {
-  tagNoGame: "Tags belong to a game's chat",
+  tagNoGame: () => t("Tags belong to a game's chat"),
   tagRetried: (handle: string) => `@${handle} did not arrive with my last message; it is attached now.`,
-  autopilotOutdated:
-    "This build of the studio can't run a timed build yet — your brief is saved above, and sending it again once the " +
-    "studio has updated itself will start the build. (Its own loop code predates timed builds: the seed's " +
-    "harness-seed/loop needs to be merged into it, or the seed copies restored so the next launch upgrades them.)",
-  localRolesOutdated:
-    "This build's workers or reviewers run on a local model, which the studio's own loop code doesn't support yet — " +
-    "your brief is saved above. Pick every job on one kind of engine and send it again, or ask the studio to merge " +
-    "the seed's harness-seed/loop into its own loop code (or restore the seed copies) so the next launch upgrades them.",
-  loopOutdated:
-    "Loop can't start: the studio's own loop code predates the composer's Loop feature, so it doesn't know how to " +
-    "run a timed build. To fix it, ask the studio in chat to merge the seed's Loop handling " +
-    "(harness-seed/loop) into its own loop code and restart itself — or restore the seed copies so the next " +
-    "launch upgrades them. Your brief is saved above; send it again once the loop code is current.",
+  autopilotOutdated: () =>
+    t(
+      "This build of the studio can't run a timed build yet — your brief is saved above, and sending it again once the studio has updated itself will start the build. (Its own loop code predates timed builds: the seed's harness-seed/loop needs to be merged into it, or the seed copies restored so the next launch upgrades them.)",
+    ),
+  localRolesOutdated: () =>
+    t(
+      "This build's workers or reviewers run on a local model, which the studio's own loop code doesn't support yet — your brief is saved above. Pick every job on one kind of engine and send it again, or ask the studio to merge the seed's harness-seed/loop into its own loop code (or restore the seed copies) so the next launch upgrades them.",
+    ),
+  loopOutdated: () =>
+    t(
+      "Loop can't start: the studio's own loop code predates the composer's Loop feature, so it doesn't know how to run a timed build. To fix it, ask the studio in chat to merge the seed's Loop handling (harness-seed/loop) into its own loop code and restart itself — or restore the seed copies so the next launch upgrades them. Your brief is saved above; send it again once the loop code is current.",
+    ),
   unknownTool: (name: string) => `unknown coordinator tool: ${name}`,
   inPlan:
     "The chat is in Plan mode, so this did not run: starting, continuing, resuming or landing a build waits until the plan is approved. Put it in your plan instead.",
@@ -351,7 +355,7 @@ export class ConversationService {
     const record = await this.#core.store.getRecord(threadId);
     const meta = record.metadata as ThreadMeta;
     const project = meta?.kind === ThreadKind.Game ? meta.project : undefined;
-    if (!project) throw new Error(MESSAGE.tagNoGame);
+    if (!project) throw new Error(MESSAGE.tagNoGame());
     const recordTags = (tags: MentionOutcome[]) =>
       this.#core.append([customEventData(CustomEvent.MentionTagged, { messageId, tags })], threadId);
     if (action === MentionRetry.Remove) {
@@ -620,10 +624,10 @@ export class ConversationService {
   #commissionRefusal(options: ComposerSendOptions): string | null {
     const host = this.#core.host;
     if (host.state !== HarnessState.Ready) return null;
-    if (options.autopilot && !host.hasCapability(HarnessCapability.Autopilot)) return MESSAGE.autopilotOutdated;
-    if (options.loop && !host.hasCapability(HarnessCapability.Loop)) return MESSAGE.loopOutdated;
+    if (options.autopilot && !host.hasCapability(HarnessCapability.Autopilot)) return MESSAGE.autopilotOutdated();
+    if (options.loop && !host.hasCapability(HarnessCapability.Loop)) return MESSAGE.loopOutdated();
     const localRoles = crossesCompletionEngine(options.engine ?? "", options.autopilot?.roles);
-    if (localRoles && !host.hasCapability(HarnessCapability.LocalRoles)) return MESSAGE.localRolesOutdated;
+    if (localRoles && !host.hasCapability(HarnessCapability.LocalRoles)) return MESSAGE.localRolesOutdated();
     return null;
   }
 

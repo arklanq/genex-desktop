@@ -15,6 +15,7 @@ import { AboutSection } from "./AboutSection.tsx";
 import { AccountSection, AccountSignOut } from "./AccountSection.tsx";
 import { usePeople } from "../state/hooks.ts";
 import { ABOUT_WORDS, ACCOUNT_WORDS, PRIVACY_WORDS, STORAGE_WORDS } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
 
 interface SectionTab {
   id: SettingsSection;
@@ -24,13 +25,13 @@ interface SectionTab {
 
 const SECTIONS: readonly SectionTab[] = [
   { id: SettingsSection.Account, label: ACCOUNT_WORDS.tab, icon: "character" },
-  { id: SettingsSection.Providers, label: "Model Providers", icon: "globe" },
-  { id: SettingsSection.Local, label: "Local Models", icon: "box" },
-  { id: SettingsSection.Appearance, label: "Appearance", icon: "palette" },
-  { id: SettingsSection.Games, label: "Games", icon: "folder" },
+  { id: SettingsSection.Providers, label: t("Model Providers"), icon: "globe" },
+  { id: SettingsSection.Local, label: t("Local Models"), icon: "box" },
+  { id: SettingsSection.Appearance, label: t("Appearance"), icon: "palette" },
+  { id: SettingsSection.Games, label: t("Games"), icon: "folder" },
   { id: SettingsSection.Storage, label: STORAGE_WORDS.tab, icon: "drive" },
   { id: SettingsSection.Harness, label: "Harness", icon: "harness" },
-  { id: SettingsSection.Permissions, label: "Permissions", icon: "shield" },
+  { id: SettingsSection.Permissions, label: t("Permissions"), icon: "shield" },
   { id: SettingsSection.Privacy, label: PRIVACY_WORDS.tab, icon: "eye" },
   { id: SettingsSection.About, label: ABOUT_WORDS.tab, icon: "info" },
 ];
@@ -125,7 +126,7 @@ export function SettingsDialog({
   };
   return (
     <DialogSurface
-      title="Settings"
+      title={t("Settings")}
       size="2xl"
       testId="settings-dialog"
       headerHidden
@@ -136,13 +137,13 @@ export function SettingsDialog({
     >
       <div className="settings-layout flex min-h-0 min-w-0 max-sm:flex-col">
         <nav
-          aria-label="Settings sections"
+          aria-label={t("Settings sections")}
           className="flex shrink-0 gap-1 border-border/75 bg-(--sidebar) p-3 max-sm:overflow-x-auto max-sm:border-b max-sm:pr-14 sm:w-52 sm:flex-col sm:border-r sm:pb-6"
         >
-          <p className="px-3 pt-1 pb-2 font-mono text-micro text-muted-foreground max-sm:hidden">Settings</p>
+          <p className="px-3 pt-1 pb-2 font-mono text-micro text-muted-foreground max-sm:hidden">{t("Settings")}</p>
           <div
             role="tablist"
-            aria-label="Settings sections"
+            aria-label={t("Settings sections")}
             aria-orientation={horizontal ? "horizontal" : "vertical"}
             className="flex gap-1 sm:flex-col"
           >

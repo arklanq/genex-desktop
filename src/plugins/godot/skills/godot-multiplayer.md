@@ -30,9 +30,12 @@ Pass `matchmaking` when the game matches players into rooms:
   `firstToFinish`.
 - `private` gives invite-code lobbies.
 
-Pass `slug` once the game has a Genex project. After the first publish, `genex__publish-status`
-names it. Native builds need it to know which game to join; the web build reads it from its Genex
-page. Calling the tool again is safe.
+A game has no Genex project until its first publish, and its builds don't need one: Genex's Play
+names it to a native build (`GENEX_GAME`) and the published page to the web build
+(`window.__GENEX__.slug`), so the builds a publish sends join their rooms with no second build. Only
+the editor and a build you start yourself read `project.godot`: to test online there, publish
+first, then call `godot__multiplayer` again with `slug` (`genex__publish-status` names it). Calling
+the tool again is safe.
 
 ## 2. Join: one script owns the session
 
@@ -45,6 +48,9 @@ const TICK := 1.0 / 15.0          # publish own state 15 times a second; render 
 var identity                       # native only: Genex sign-in for the relay
 
 func slug() -> String:
+	var from_play := OS.get_environment("GENEX_GAME")   # Genex's Play starting a native build
+	if from_play != "":
+		return from_play
 	if OS.has_feature("web"):
 		var from_page = JavaScriptBridge.eval("(window.__GENEX__ && window.__GENEX__.slug) || ''", true)
 		if str(from_page) != "":
@@ -71,6 +77,8 @@ func start_online() -> bool:
 
 - On the web, the page's Genex player (a guest or a signed-in player) is used automatically. The
   `identity` and `urls` options are native-only.
+- Read the project only through `slug()` as above. A game that reads `project.godot` alone stays
+  offline in every native copy it publishes before the slug is written.
 - When Genex's Play starts the game on this Mac, the addon reaches Genex through Play's gateway
   (`GENEX_API_URL`) and signs the player in with Play's ticket. `from_launcher` takes it. Keep
   `from_launcher` first and `guest` second, as above.

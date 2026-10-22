@@ -5,6 +5,7 @@
  * reads the checkout's `scripts/studio-dev` files.
  */
 import { StudioPlatform } from "../../shared/boot.ts";
+import { Locale, LOCALES } from "../../shared/locale.ts";
 
 /** Every switch main and its runners read. Values are the argv spelling runners pass: never rename one. */
 export const StudioFlag = {
@@ -95,6 +96,26 @@ export function testLaunchChromiumSwitches(launch: {
 }): ChromiumSwitch[] {
   if (!launch.testLaunch || launch.platform !== StudioPlatform.Windows) return [];
   return [["disable-features", "CalculateNativeWinOcclusion"]];
+}
+
+/** The language a test or fixture launch pins, so its checks read the English they were written in. */
+const TEST_LANGUAGE = "en-US";
+/** Chromium's tag for an app language where it spells it differently. */
+const CHROMIUM_LANGUAGE: Partial<Record<Locale, string>> = { [Locale.ChineseSimplified]: "zh-CN" };
+
+/** `STUDIO_FIXTURE_LANGUAGE=system`: the launch finds its language as a person's does. */
+const FIXTURE_SYSTEM_LANGUAGE = "system";
+
+/**
+ * `--lang` for a test or fixture launch: English, which its checks read, unless the launch asks for
+ * one of the app's languages (`STUDIO_FIXTURE_LANGUAGE=ru`) to look at it, or for the computer's
+ * (`system`, with `STUDIO_FIXTURE_SYSTEM_LANGUAGES` standing in a list on macOS). A normal launch
+ * keeps the computer's.
+ */
+export function testLanguageSwitches(pinned: boolean, requested?: string): ChromiumSwitch[] {
+  if (!pinned || requested === FIXTURE_SYSTEM_LANGUAGE) return [];
+  const locale = LOCALES.find((candidate) => candidate === requested);
+  return [["lang", locale ? (CHROMIUM_LANGUAGE[locale] ?? locale) : TEST_LANGUAGE]];
 }
 
 /** Desktop names Chromium recognises ahead of KDE, or instead of it, in `XDG_CURRENT_DESKTOP`. */

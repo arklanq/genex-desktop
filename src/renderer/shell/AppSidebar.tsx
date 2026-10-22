@@ -1,5 +1,6 @@
 import type { JSX } from "react";
 import { useMemo } from "react";
+import { t } from "../../shared/i18n.ts";
 import type { AppDialogs as Dialogs } from "../panels/AppDialogs.tsx";
 import { feedbackAbout } from "../feedback-about.ts";
 import { BootstrapGate } from "../panels/BootstrapGate.tsx";
@@ -77,7 +78,7 @@ export function AppSidebar({
         failed={({ error, retry, retrying }) => (
           <div className={SIDEBAR_PANE}>
             <LoadFailed
-              what="games and chats"
+              message={t("Could not load games and chats.")}
               error={error ?? undefined}
               onRetry={retry}
               retrying={retrying}

@@ -21,6 +21,7 @@ import { PIPELINE_VERSION } from "../../src/plugins/unity/pipeline.ts";
 import { PLUGIN_CALL_TIMEOUT_MS } from "../../src/substrate/plugins/registry.ts";
 import { backendOn, look, ready, withProject } from "../helpers/unity-backend.ts";
 import { editorRow, type Reply, UNITY_PREFERENCES } from "../helpers/unity-editor-stand-in.ts";
+import { panelWordsScripts } from "../../src/plugin-sdk/inline-panel-sdk.mjs";
 
 const PANEL = path.resolve("src/plugins/unity/panel.html");
 const UNITY_6 = "6000.3.10f1";
@@ -145,7 +146,9 @@ describe("The Unity panel", { skip }, () => {
   let server: http.Server;
   let url = "";
   before(async () => {
-    const page = (await readFile(PANEL, "utf8")).replace("<!-- STUDIO_PANEL_SDK -->", BRIDGE);
+    // The stand-in bridge, then the SDK's own words (in English: the stand-in names no language).
+    const words = await panelWordsScripts();
+    const page = (await readFile(PANEL, "utf8")).replace("<!-- STUDIO_PANEL_SDK -->", () => BRIDGE + words);
     server = http.createServer((_request, response) =>
       response.writeHead(200, { "content-type": "text/html; charset=utf-8" }).end(page),
     );

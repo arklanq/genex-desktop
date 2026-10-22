@@ -16,10 +16,12 @@ import {
   type LaunchFailure,
   type NativeBuild,
   type NativeInstalls,
-  type NativePlatform,
+  NativePlatform,
   type NativeSession,
   NativeSessionPhase,
+  type NotHere,
   platformsOf,
+  whyNotHere,
 } from "../../shared/play-native.ts";
 
 /** Where a native game stands on this computer, as its page's primary block says. */
@@ -49,6 +51,10 @@ export interface GameStanding {
   /** Its session being played (or failed to start), or null. */
   session: NativeSession | null;
   failure: GameFailure | null;
+  /** The kind of computer this is, as the builds name it: what its words call it. */
+  here: NativePlatform;
+  /** Why no build installs here, once main has said what this computer is; null when one does. */
+  notHere: NotHere | null;
 }
 
 /** Whether an install is still going. */
@@ -83,7 +89,9 @@ export function gameStanding(
   const progress = installs.progress.find((one) => one.slug === game.slug) ?? null;
   const session = sessions.find((one) => one.slug === game.slug) ?? null;
   const failure = failureOf(progress, session);
-  const standing = { build, installed, progress, session, failure };
+  const here = installs.host?.platform ?? NativePlatform.Mac;
+  const notHere = installs.host ? whyNotHere(game.native?.builds ?? [], installs.host) : null;
+  const standing = { build, installed, progress, session, failure, here, notHere };
   if (live(session)) return { ...standing, phase: GamePhase.Playing };
   if (installing(progress)) return { ...standing, phase: GamePhase.Installing };
   if (failure) return { ...standing, phase: GamePhase.Failed };
@@ -108,7 +116,7 @@ export type CardBadge = (typeof CardBadge)[keyof typeof CardBadge];
 export type CardBadgeState =
   | { kind: typeof CardBadge.Platforms; platforms: NativePlatform[] }
   | { kind: typeof CardBadge.Downloading; percent: number; etaMs: number | null }
-  | { kind: typeof CardBadge.Installed }
+  | { kind: typeof CardBadge.Installed; platform: NativePlatform }
   | { kind: typeof CardBadge.Update; bytes: number };
 
 /**
@@ -124,7 +132,7 @@ export function cardBadge(game: Pick<PlayGame, "slug" | "native">, installs: Nat
   const build = installs.host ? buildFor(game.native.builds, installs.host) : null;
   if (installed && build && build.version !== installed.version)
     return { kind: CardBadge.Update, bytes: build.sizeBytes };
-  if (installed) return { kind: CardBadge.Installed };
+  if (installed) return { kind: CardBadge.Installed, platform: installed.platform };
   if (hasWebBuild(game)) return null;
   return { kind: CardBadge.Platforms, platforms: platformsOf(game) };
 }

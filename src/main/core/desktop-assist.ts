@@ -25,7 +25,7 @@
  */
 import { MINUTE_MS } from "../../shared/duration.ts";
 import {
-  COMPUTER_SETTING_QUESTION,
+  computerSettingQuestion,
   type EngineAssistAnswer,
   EngineAssistRefusal,
   type PluginBinding,
@@ -34,6 +34,7 @@ import {
   StudioConsentSource,
 } from "../../shared/plugins.ts";
 import type { EngineApps } from "../../shared/game-engine.ts";
+import { t } from "../../shared/i18n.ts";
 import { windowsAppId } from "../../substrate/desktop-driver.ts";
 import { shortId } from "../../substrate/ids.ts";
 import type { StudioCore } from "../studio-core.ts";
@@ -41,12 +42,16 @@ import type { StudioCore } from "../studio-core.ts";
 /** The longest an assist's grant lasts when the host cannot see its turn end (a resumed turn, the harness's own loop). */
 export const ASSIST_GRANT_MAX_MS = 20 * MINUTE_MS;
 
-/** What the person reads: the task's card, the setting's card, and the turn's message. */
+/**
+ * What the person reads: the task's card, the setting's card, and the turn's message. The cards'
+ * questions are in the person's language; the descriptions (never shown on a card) and the turn's
+ * message, which the chat's agent reads as the task, stay English.
+ */
 const MESSAGE = {
   task: (plugin: string, task: string) =>
-    `Let this chat's agent do this for you with computer control? ${plugin} asks: ${task}`,
+    t("Let this chat's agent do this for you with computer control? {plugin} asks: {task}", { plugin, task }),
   taskDescription: "a setup step done with computer control",
-  setting: COMPUTER_SETTING_QUESTION,
+  setting: computerSettingQuestion,
   settingDescription: "turning on computer control for every chat",
   asks: (plugin: string, task: string) => `${plugin} asks: ${task}`,
 } as const;
@@ -255,7 +260,7 @@ function consentOf(card: AssistCard) {
       tool: {
         name: "computer-control",
         description: MESSAGE.settingDescription,
-        confirmation: MESSAGE.setting,
+        confirmation: MESSAGE.setting(),
         parameters,
       },
       args: {},

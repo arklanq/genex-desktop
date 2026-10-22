@@ -56,6 +56,8 @@ import {
   GrantAccess,
 } from "./windows-folder-ace.ts";
 import { logonServiceStartType, ServiceStartType } from "./windows-logon-service.ts";
+import { atomicWriteText } from "./fsx.ts";
+import { SandboxLaunchCode, SandboxLaunchError } from "./sandbox-unavailable.ts";
 
 const win = path.win32;
 const run = promisify(execFile);
@@ -71,6 +73,19 @@ const TOOL_RUN = { timeout: TOOL_TIMEOUT_MS, windowsHide: true } as const;
  * that never answers to about four minutes in the background start.
  */
 const INITIALIZE_ATTEMPTS = 2;
+/**
+ * The waits before `initialize` is tried again after Windows refused to start srt-win as the
+ * sandbox user for its egress check (CreateProcessWithLogonW, ERROR_ACCESS_DENIED: that user could
+ * not open the program then). A first start from a new install can be refused once and start
+ * seconds later with nothing changed, so the start waits and tries again rather than fail.
+ */
+const LOGON_RETRY_MS = [5 * SECOND_MS, 10 * SECOND_MS] as const;
+/** sandbox-runtime's code for an egress check whose srt-win answered nothing it could read. */
+const WFP_VERIFY_UNPARSEABLE = "wfp_verify_unparseable";
+/** Windows' HRESULT for ERROR_ACCESS_DENIED, as srt-win prints it. */
+const ACCESS_DENIED_HRESULT = 0x80070005;
+/** srt-win's report of a start as the sandbox user that Windows refused: the call, then Windows' HRESULT. */
+const LOGON_REFUSAL = /CreateProcessWithLogonW\(srt-sandbox\):.*?\((0x[0-9A-Fa-f]{8})\)/s;
 /** sandbox-runtime's code for an srt-win call that ran out of time. */
 const SRT_WIN_TIMEOUT = "srt_win_timeout";
 /** The srt-win subcommands sandbox-runtime names on its errors (the first CLI argument). */
@@ -97,6 +112,14 @@ const GRANT_ATTEMPTS = 3;
 const GRANT_RETRY_MS = 1 * SECOND_MS;
 /** An own edit Windows took this long over is logged with its path: a first walk of a large folder. */
 const SLOW_OWN_EDIT_MS = 2 * SECOND_MS;
+/**
+ * How long a start waits for the grants it can do without for a while (a toolchain, a game, a
+ * linked project: {@link OwnAclDeps.urgent}) to pass their entries down. A first grant on a large
+ * folder can take longer than any start should wait; what is left is passed down after the start.
+ */
+const GRANT_BUDGET_MS = 30 * SECOND_MS;
+/** How long a walk after the start may run: it holds no start up, so a very large folder gets to finish. */
+const LATE_WALK_TIMEOUT_MS = 60 * MINUTE_MS;
 /**
  * How long after a start the walks it deferred begin ({@link OwnAclEntries.walkDeferred}): past the
  * harness's first boot, which they would otherwise slow on a two-core PC that Defender keeps busy.
@@ -162,6 +185,13 @@ const MESSAGE = {
     `could not set the sandbox user's entries on ${dir}: ${errorMessage(error)}`,
   SlowOwnEdit: (dir: string, ms: number) =>
     `own entries: ${dir} took ${Math.round(ms / SECOND_MS)} s (once; they stay)`,
+  /** A grant the start did not wait for in full; the walk after the start finishes it. */
+  GrantLater: (dir: string, why: string) => `own entries: ${dir} is passed down after the start (${why})`,
+  /** Windows refused to start srt-win as the sandbox user; `initialize` runs again after `ms`. */
+  LogonRefused: (ms: number, error: unknown) =>
+    `egress check: Windows refused to start srt-win as the sandbox user, trying again in ${Math.round(ms / SECOND_MS)} s: ${errorMessage(error)}`,
+  LogonRefusedAtLast: (error: unknown) =>
+    `egress check: Windows still refused to start srt-win as the sandbox user: ${errorMessage(error)}`,
   /** A deny Windows refused where the sandbox user can open nothing anyway ({@link FolderAceOutcome}). */
   UnneededDeny: (dir: string, refused: string) =>
     `own entries: left ${dir} as it is: Windows refused the deny (${refused}), and the sandbox user can open nothing in it`,
@@ -1090,6 +1120,95 @@ async function ownEach(
   return deferred;
 }
 
+/** The widest grant `records` hold for `sid` on each path, by path identity. */
+function grantsRecorded(sid: string, records: readonly (OwnRecord | null)[]): Map<string, GrantAccess> {
+  const held = new Map<string, GrantAccess>();
+  for (const record of records) {
+    if (record?.sid !== sid) continue;
+    for (const entry of record.entries) {
+      const wider = widerGrant(held.get(pathKey(entry.path)), entry.grant);
+      if (wider) held.set(pathKey(entry.path), wider);
+    }
+  }
+  return held;
+}
+
+/**
+ * Whether the start may leave an edit's walk unfinished: one that only adds a read grant (or keeps
+ * one), on a folder the start does not need ({@link OwnAclDeps.urgent}). Unfinished, such a grant
+ * opens less, never more. A write grant (a game, a linked project: where the agents work), a deny,
+ * a guard, a take-back and a write grant narrowed to reading are set in full.
+ */
+function grantsLater(
+  edit: FolderOwnEdit,
+  urgent: (dir: string) => boolean,
+  recorded: ReadonlyMap<string, GrantAccess>,
+): boolean {
+  const readOnly = edit.grant === GrantAccess.Read && edit.deny === null && !edit.guard;
+  const narrowed = recorded.get(pathKey(edit.dir)) === GrantAccess.Modify;
+  return readOnly && !narrowed && !urgent(edit.dir);
+}
+
+/**
+ * Set grants the start need not wait for in full, for at most `budgetMs`: answers the paths whose
+ * walk is left for after the start (one Windows was still on or never reached, or left for later)
+ * and the edits Windows refused, which are tried again in full; null where PowerShell could not
+ * run the batch.
+ */
+async function grantsWithin(
+  edit: FolderOwnEditor,
+  edits: readonly FolderOwnEdit[],
+  budgetMs: number,
+  log?: (line: string) => void,
+): Promise<{ later: string[]; refused: FolderOwnEdit[] } | null> {
+  if (edits.length === 0) return { later: [], refused: [] };
+  const outcomes = await edit(edits, { timeoutMs: budgetMs });
+  if (!outcomes) return null;
+  for (const line of editNotes(edits, outcomes)) log?.(line);
+  const later: string[] = [];
+  const refused: FolderOwnEdit[] = [];
+  for (const [i, one] of edits.entries()) {
+    const outcome = outcomes[i];
+    if (outcome?.ok) {
+      if (outcome.deferred) later.push(one.dir);
+    } else if (outcome?.timedOut) {
+      log?.(MESSAGE.GrantLater(one.dir, outcome.error));
+      later.push(one.dir);
+    } else {
+      refused.push(one);
+    }
+  }
+  return { later, refused };
+}
+
+/**
+ * The walks a sync leaves: those the record lists now (a walk after the start may have run since the
+ * sync read it) less the grants the budget finished, then those it `left` and each gone holder's.
+ */
+function walksAfterSync(
+  current: OwnRecord | null,
+  stale: readonly OwnRecord[],
+  later: readonly FolderOwnEdit[],
+  left: readonly string[],
+  wanted: readonly OwnAclEntry[],
+): string[] {
+  const finished = new Set(later.map((one) => pathKey(one.dir)));
+  for (const dir of left) finished.delete(pathKey(dir));
+  const carried = (current?.walks ?? []).filter((p) => !finished.has(pathKey(p)));
+  return pendingWalks([{ sid: current?.sid ?? "", entries: [], walks: carried }, ...stale], left, wanted);
+}
+
+/**
+ * The record once a walk after the start ran: what a sync recorded meanwhile, less the walks `done`.
+ * A path that sync took back while the walk set it again stays recorded, so the next sync takes it back.
+ */
+function recordAfterWalk(now: OwnRecord, walked: readonly OwnAclEntry[], done: ReadonlySet<string>): OwnRecord {
+  const named = new Set(now.entries.map((entry) => pathKey(entry.path)));
+  const setAgain = walked.filter((entry) => done.has(pathKey(entry.path)) && !named.has(pathKey(entry.path)));
+  const walks = (now.walks ?? []).filter((p) => !done.has(pathKey(p)));
+  return ownRecord(now.sid, mergeEntries([...now.entries, ...setAgain]), walks);
+}
+
 /** The walks still to run: those `records` left and those just `deferred`, on the paths `entries` still name. */
 function pendingWalks(
   records: readonly (OwnRecord | null)[],
@@ -1117,6 +1236,25 @@ export interface OwnAclDeps {
   retryDelayMs?: number;
   /** Where an edit Windows took long over is said, with its path (Genex's log). */
   log?: (line: string) => void;
+  /**
+   * Whether a start waits for a grant on `dir` to pass its entries down in full: the folders
+   * srt-win starts from and Genex's data folder, which the egress check and the harness need. Every
+   * other grant gets {@link grantBudgetMs}, and what is left is passed down after the start
+   * ({@link OwnAclEntries.walkDeferred}). Default: every grant.
+   */
+  urgent?: (dir: string) => boolean;
+  /** How long a start waits for the other grants (default {@link GRANT_BUDGET_MS}). */
+  grantBudgetMs?: number;
+  /** How long a walk after the start may run (default {@link LATE_WALK_TIMEOUT_MS}). */
+  walkTimeoutMs?: number;
+}
+
+/** How a walk after the start runs. */
+export interface OwnWalkRun {
+  /** Stops it (Genex quitting); what it did not finish stays recorded. */
+  signal?: AbortSignal;
+  /** Told the paths it is about to walk, in the caller's turn, before it edits anything. */
+  walking?: (paths: string[]) => void;
 }
 
 /** Genex's own grants and denies for this process, shared with every other Genex on the PC. */
@@ -1131,11 +1269,14 @@ export interface OwnAclEntries {
    */
   sync(entries: readonly OwnAclEntry[]): Promise<boolean>;
   /**
-   * Pass down the entries a sync set on their path alone ({@link OwnWalk.Later}), and those an
-   * ended Genex left so: off the start's path, since nothing under those paths was open to the
-   * sandbox user through them. A walk that fails stays recorded for the next call.
+   * Pass down the entries a sync set on their path alone ({@link OwnWalk.Later}) or did not finish
+   * within the start's budget, and those an ended Genex left so: off the start's path, since
+   * nothing under those paths was open to the sandbox user through them yet. A walk that fails,
+   * runs out of time or is stopped stays recorded for the next call.
    */
-  walkDeferred(): Promise<void>;
+  walkDeferred(run?: OwnWalkRun): Promise<void>;
+  /** The paths whose entries are still to be passed down ({@link walkDeferred}), as recorded. */
+  walks(): string[];
   /** Take back every entry this holder recorded, except what another running Genex needs (uninstall, tests). */
   revokeAll(): Promise<void>;
   /** The same synchronously. */
@@ -1157,16 +1298,30 @@ export function ownAclEntries(holders: string, deps: OwnAclDeps): OwnAclEntries 
   const self = deps.pid ?? process.pid;
   const alive = deps.alive ?? processAlive;
   const retryMs = deps.retryDelayMs ?? GRANT_RETRY_MS;
+  const urgent = deps.urgent ?? (() => true);
+  const budgetMs = deps.grantBudgetMs ?? GRANT_BUDGET_MS;
   const recordFile = path.join(holders, `${self}.json`);
-  const save = async (record: OwnRecord) => {
-    await mkdir(holders, { recursive: true });
-    await writeFile(recordFile, JSON.stringify(record));
+  // Whole or not at all: a walk reads the record while a sync may be writing it.
+  const save = (record: OwnRecord) => atomicWriteText(recordFile, JSON.stringify(record));
+  let recordTurn: Promise<unknown> = Promise.resolve();
+  /** Run `step` after every earlier read-and-write of the record: a sync and a walk after the start both rewrite it. */
+  const withRecord = <T>(step: () => Promise<T>): Promise<T> => {
+    const turn = recordTurn.then(step);
+    recordTurn = turn.catch(() => {});
+    return turn;
   };
-  /** Record, then set: a crash between the two leaves a record of what this holder set before too. */
-  const apply = async (sid: string, previous: OwnRecord | null, wanted: OwnAclEntry[], edits: FolderOwnEdit[]) => {
-    const before = previous?.sid === sid ? previous.entries : [];
-    await save(ownRecord(sid, mergeEntries([...before, ...wanted]), previous?.walks ?? []));
-    return ownEach(edit, edits, retryMs, deps.log);
+  /**
+   * Denies, guards, take-backs and the grants the start needs, in full; then the other grants within
+   * the budget, and in full again those Windows refused there. Answers the paths whose walk is left
+   * for later, or null where PowerShell cannot set them; throws when Windows refused one or ran out
+   * of time on one the start needs.
+   */
+  const setAll = async (edits: readonly FolderOwnEdit[], later: readonly FolderOwnEdit[]) => {
+    const now = edits.filter((one) => !later.includes(one));
+    const deferred = await ownEach(edit, now, retryMs, deps.log);
+    const late = deferred && (await grantsWithin(edit, later, budgetMs, deps.log));
+    const again = late && (await ownEach(edit, late.refused, retryMs, deps.log));
+    return deferred && late && again ? [...deferred, ...late.later, ...again] : null;
   };
   const takeBackAll = () => {
     const record = readOwnRecord(recordFile);
@@ -1180,43 +1335,53 @@ export function ownAclEntries(holders: string, deps: OwnAclDeps): OwnAclEntries 
       const sid = await deps.sid();
       if (!sid) return false;
       const wanted = mergeEntries(entries);
-      const previous = readOwnRecord(recordFile);
       const others = otherHolders(holders, self, alive, readOwnRecord);
       const stale = others.stale.flatMap((holder) => (holder.record ? [holder.record] : []));
-      // The walk under a path may wait where nothing it passes down reaches the sandbox user.
-      const edits = ownEdits({ sid, entries: wanted }, [previous, ...stale], others.live).map((one) => ({
-        ...one,
-        walk: OwnWalk.Later,
-      }));
-      const deferred = edits.length > 0 ? await apply(sid, previous, wanted, edits) : [];
-      if (!deferred) return false;
-      const walks = pendingWalks([previous, ...stale], deferred, wanted);
-      if (edits.length > 0 || walks.length > 0) await save(ownRecord(sid, wanted, walks));
+      // Record, then set: a crash between the two leaves a record of what this holder set before
+      // too, and of each grant the budget may leave part way, to be walked again.
+      const { previous, edits, later } = await withRecord(async () => {
+        const previous = readOwnRecord(recordFile);
+        // The walk under a path may wait where nothing it passes down reaches the sandbox user.
+        const edits = ownEdits({ sid, entries: wanted }, [previous, ...stale], others.live).map((one) => ({
+          ...one,
+          walk: OwnWalk.Later,
+        }));
+        const recorded = grantsRecorded(sid, [previous, ...stale]);
+        const later = edits.filter((one) => grantsLater(one, urgent, recorded));
+        const before = previous?.sid === sid ? previous.entries : [];
+        const walks = [...(previous?.walks ?? []), ...later.map((one) => one.dir)];
+        if (edits.length > 0) await save(ownRecord(sid, mergeEntries([...before, ...wanted]), walks));
+        return { previous, edits, later };
+      });
+      const left = edits.length > 0 ? await setAll(edits, later) : [];
+      if (!left) return false;
+      await withRecord(async () => {
+        const walks = walksAfterSync(readOwnRecord(recordFile) ?? previous, stale, later, left, wanted);
+        if (edits.length > 0 || walks.length > 0) await save(ownRecord(sid, wanted, walks));
+      });
       for (const holder of others.stale) rmSync(holder.file, { force: true });
       return true;
     },
-    async walkDeferred() {
+    async walkDeferred(run = {}) {
+      // Read and say what is walked in the caller's own turn, before anything else can edit the record.
       const record = readOwnRecord(recordFile);
-      if (!record?.walks?.length) return;
-      const keys = new Set(record.walks.map(pathKey));
+      const keys = new Set((record?.walks ?? []).map(pathKey));
+      run.walking?.([...(record?.walks ?? [])]);
+      if (!record || keys.size === 0) return;
       const walked = { sid: record.sid, entries: record.entries.filter((entry) => keys.has(pathKey(entry.path))) };
       const live = otherHolders(holders, self, alive, readOwnRecord).live;
       const edits = ownEdits(walked, [], live).map((one) => ({ ...one, walk: OwnWalk.Again }));
-      const outcomes = (await edit(edits)) ?? [];
+      const timeoutMs = deps.walkTimeoutMs ?? LATE_WALK_TIMEOUT_MS;
+      const outcomes = (await edit(edits, { timeoutMs, ...(run.signal ? { signal: run.signal } : {}) })) ?? [];
       for (const line of editNotes(edits, outcomes)) deps.log?.(line);
       const done = new Set(edits.filter((_, i) => outcomes[i]?.ok).map((one) => pathKey(one.dir)));
-      // A sync may have run meanwhile: keep what it recorded, less the walks that ran.
-      const now = readOwnRecord(recordFile) ?? record;
-      await save(
-        ownRecord(
-          now.sid,
-          now.entries,
-          (now.walks ?? []).filter((p) => !done.has(pathKey(p))),
-        ),
-      );
+      await withRecord(() => save(recordAfterWalk(readOwnRecord(recordFile) ?? record, walked.entries, done)));
+    },
+    walks() {
+      return readOwnRecord(recordFile)?.walks ?? [];
     },
     async revokeAll() {
-      const edits = takeBackAll();
+      const edits = await withRecord(async () => takeBackAll());
       if (edits.length > 0) await edit(edits).catch(() => null);
     },
     revokeAllSync() {
@@ -1270,7 +1435,7 @@ export interface WindowsSessionDeps {
    * Lets the sandbox user start srt-win, before an initialize ({@link grantLauncherFolders});
    * answers how to take that back, which a failed initialize does.
    */
-  launcher?: () => Promise<() => void | Promise<void>>;
+  launcher?: () => Promise<LauncherGrant>;
   /** Where the session says how long each step of a start took (Genex's log). */
   log?: (line: string) => void;
   /** Genex's own grants and denies for the paths that exist ({@link ownAclEntries}); without it srt-win sets them all. */
@@ -1286,12 +1451,37 @@ export interface WindowsSessionDeps {
   exists?: (p: string) => boolean;
   /** How long after an apply the walks it deferred begin (default {@link DEFERRED_WALK_DELAY_MS}). */
   walkDelayMs?: number;
+  /** The waits before each new try after Windows refused srt-win's start as the sandbox user (default {@link LOGON_RETRY_MS}). */
+  logonRetryMs?: readonly number[];
 }
 
 /** How many grants and denies a config hands srt-win. */
 function sentToSrt(config: SandboxRuntimeConfig): number {
   const { allowRead = [], allowWrite = [], denyRead = [], denyWrite = [] } = config.filesystem;
   return allowRead.length + allowWrite.length + denyRead.length + denyWrite.length;
+}
+
+/** The paths srt-win sets entries on for `config`: its grants and its denies. */
+function srtPaths(config: SandboxRuntimeConfig): string[] {
+  const { allowRead = [], allowWrite = [], denyRead = [], denyWrite = [] } = config.filesystem;
+  return [...allowRead, ...allowWrite, ...denyRead, ...denyWrite];
+}
+
+/** One own entry as comparable text: its path's identity and what it sets there. */
+function entryKey(entry: OwnAclEntry): string {
+  return [pathKey(entry.path), entry.deny, entry.guard, entry.grant ?? ""].join("|");
+}
+
+/**
+ * Whether Windows refused to start srt-win as the sandbox user for the egress check
+ * (CreateProcessWithLogonW, ERROR_ACCESS_DENIED): that user could not open the program then. A
+ * disabled Secondary Logon service answers another HRESULT, which Set up handles.
+ */
+export function sandboxUserRefused(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  if (!("code" in error) || error.code !== WFP_VERIFY_UNPARSEABLE) return false;
+  const hresult = LOGON_REFUSAL.exec(errorMessage(error))?.[1];
+  return hresult !== undefined && Number(hresult) === ACCESS_DENIED_HRESULT;
 }
 
 /** Whether sandbox-runtime failed because srt-win's egress check (`wfp`) ran out of time. */
@@ -1326,9 +1516,18 @@ export class WindowsSandboxSession {
   #started = false;
   /** The last apply left the grants and denies on paths that exist to Genex ({@link ownAclEntries}), not srt-win. */
   #ownRouted = false;
-  /** The timer that starts the deferred walks, and the walks while they run; an apply waits for them. */
+  /**
+   * The timer that starts the deferred walks, the walks while they run, and the paths they pass
+   * entries down: an apply that sets entries in or around those paths waits for them.
+   */
   #walkTimer: NodeJS.Timeout | null = null;
   #walking: Promise<void> | null = null;
+  #walkingPaths: string[] = [];
+  /** The walk after the start under way, past its wait; and what stops each walk not yet ended. */
+  #walkActive: Promise<void> | null = null;
+  readonly #walkStops = new Set<AbortController>();
+  /** The paths srt-win set entries on in the applied config: a reset takes them back. */
+  #srtPaths: string[] = [];
 
   constructor(deps: WindowsSessionDeps) {
     this.#deps = deps;
@@ -1463,26 +1662,55 @@ export class WindowsSandboxSession {
   }
 
   /**
-   * Initialize, again when only srt-win's egress check ran out of time; any other failure is final.
-   * A timed-out ACL step is not retried: it re-applies permissions below each granted folder and
-   * each denied path's parent folder, so a retry repeats that walk.
+   * Initialize, again when only srt-win's egress check ran out of time, and after a pause when
+   * Windows refused to start srt-win as the sandbox user for it ({@link sandboxUserRefused}); any
+   * other failure is final. A timed-out ACL step is not retried: it re-applies permissions below
+   * each granted folder and each denied path's parent folder, so a retry repeats that walk. A
+   * refusal that outlasts the pauses fails with plain words; the log keeps srt-win's.
    */
   async #initialize(config: SandboxRuntimeConfig): Promise<void> {
     // Genex's own entries already grant the folders srt-win starts from.
     const launcher = this.#started || this.#ownRouted ? undefined : this.#deps.launcher;
     const release = launcher ? await this.#timed("launcher folders", launcher) : undefined;
-    for (let attempt = 1; ; attempt++) {
+    // Waiting cannot open folders the launcher could not grant: that refusal is set up's to repair.
+    const launchOpen = release?.granted !== false;
+    const tryAgain = this.#retries(launchOpen);
+    for (;;) {
       try {
         await this.#timed("initialize", () => this.#deps.runtime.initialize(config));
         this.#started = true;
         return;
       } catch (error) {
-        if (egressCheckTimedOut(error) && attempt < INITIALIZE_ATTEMPTS) continue;
+        if (await tryAgain(error)) continue;
         // srt's reset takes back only what an initialize recorded; the launcher's grant is ours.
         await release?.();
-        throw error;
+        throw this.#startFailure(error, launchOpen);
       }
     }
+  }
+
+  /**
+   * Whether to initialize again after a failure: once more after an egress check that ran out of
+   * time, and after each pause while Windows refuses srt-win's start as the sandbox user.
+   */
+  #retries(launchOpen: boolean): (error: unknown) => Promise<boolean> {
+    const pauses = launchOpen ? [...(this.#deps.logonRetryMs ?? LOGON_RETRY_MS)] : [];
+    let timeouts = 0;
+    return async (error) => {
+      if (egressCheckTimedOut(error)) return ++timeouts < INITIALIZE_ATTEMPTS;
+      const pause = sandboxUserRefused(error) ? pauses.shift() : undefined;
+      if (pause === undefined) return false;
+      this.#deps.log?.(MESSAGE.LogonRefused(pause, error));
+      await sleep(pause);
+      return true;
+    };
+  }
+
+  /** What a failed start reports: plain words for a refusal that outlasted the pauses (the log keeps srt-win's), else the runtime's own error. */
+  #startFailure(error: unknown, launchOpen: boolean): unknown {
+    if (!sandboxUserRefused(error) || !launchOpen) return error;
+    this.#deps.log?.(MESSAGE.LogonRefusedAtLast(error));
+    return new SandboxLaunchError(SandboxLaunchCode.SandboxUserRefused, undefined, { cause: error });
   }
 
   /** Run `step`, logging how long it took whether it ends or throws. */
@@ -1515,10 +1743,12 @@ export class WindowsSandboxSession {
   #apply(): Promise<void> {
     this.#queued = false;
     const applying = (async () => {
-      // A walk rewrites the entries it passes down: an apply that sets them meanwhile could be undone.
-      await this.#walking;
-      if (this.#members.size === 0) return this.#release();
+      if (this.#members.size === 0) {
+        await this.#clearOfWalks(() => this.#srtPaths);
+        return this.#release();
+      }
       const grants = grantUnion([...this.#members.values()].map((member) => member.grants));
+      await this.#clearOfWalks(() => this.#changedPaths(grants));
       const wasApplied = this.#applied;
       this.#applied = null;
       if (wasApplied) await this.#deps.runtime.reset();
@@ -1529,6 +1759,7 @@ export class WindowsSandboxSession {
       this.#applied = grants;
       this.#appliedDenies = new Set(denies.map(pathKey));
       this.#ownEntries = plan.own;
+      this.#srtPaths = srtPaths(plan.config);
       if (this.#networkChanged) this.#deps.runtime.updateConfig(this.#config(grants));
       this.#networkChanged = false;
       if (this.#ownRouted) this.#walkLater();
@@ -1542,30 +1773,96 @@ export class WindowsSandboxSession {
     return applying;
   }
 
+  /**
+   * The paths an apply for `grants` would set entries on that the applied session did not: Genex's
+   * own entries that are new or changed, those it would take back, and every path srt-win sets
+   * (a reset and an initialize set those again).
+   */
+  #changedPaths(grants: WindowsGrants): string[] {
+    const plan = this.#plan(grants, this.#deps.own !== undefined);
+    const had = new Set(this.#ownEntries.map(entryKey));
+    const wanted = new Set(plan.own.map(entryKey));
+    const changed = [
+      ...plan.own.filter((entry) => !had.has(entryKey(entry))),
+      ...this.#ownEntries.filter((entry) => !wanted.has(entryKey(entry))),
+    ];
+    return [...changed.map((entry) => entry.path), ...srtPaths(plan.config), ...this.#srtPaths];
+  }
+
+  /**
+   * Wait for the walk after the start when the `paths` an apply sets reach into or around a path
+   * it passes entries down: the walk rewrites the entries of everything under its path, and could
+   * undo one set there meanwhile. An apply elsewhere goes ahead, so a long first walk of a large
+   * folder holds up no command that needs another folder.
+   */
+  async #clearOfWalks(paths: () => readonly string[]): Promise<void> {
+    // Only a walk under way: one still waiting to start waits for this apply instead.
+    const walking = this.#walkActive;
+    if (!walking) return;
+    // The paths being walked, and those still to walk, which the walk may have read already.
+    const walked = [...this.#walkingPaths, ...(this.#deps.own?.walks() ?? [])];
+    const near = (p: string) => walked.some((w) => insideWindowsPath(w, p) || insideWindowsPath(p, w));
+    if (paths().some(near)) await walking.catch(() => {});
+  }
+
   /** Start the walks the apply deferred once the start is past, off every command's path. */
   #walkLater(): void {
     const own = this.#deps.own;
     if (!own || this.#walkTimer) return;
+    // A grant left part way opens a folder a command may need: its walk starts at once.
+    const granted = new Set(this.#ownEntries.filter((entry) => entry.grant).map((entry) => pathKey(entry.path)));
+    const granting = own.walks().some((p) => granted.has(pathKey(p)));
+    const delayMs = granting ? 0 : (this.#deps.walkDelayMs ?? DEFERRED_WALK_DELAY_MS);
     this.#walkTimer = setTimeout(() => {
       this.#walkTimer = null;
-      // An apply already running is setting the entries a walk would rewrite: let it finish first.
-      const applying = this.#applying;
-      this.#walking = (async () => {
-        await applying?.catch(() => {});
-        await this.#timed("own entries passed down", () => own.walkDeferred());
-      })()
-        .catch((error: unknown) => this.#deps.log?.(MESSAGE.WalkFailed(error)))
-        .finally(() => {
-          this.#walking = null;
-        });
-    }, this.#deps.walkDelayMs ?? DEFERRED_WALK_DELAY_MS);
+      this.#walking = this.#walkAfter(own, this.#walking);
+    }, delayMs);
     this.#walkTimer.unref?.();
   }
 
-  /** No walk starts after this; one already running finishes (it stays recorded until it does). */
+  /**
+   * One walk after the start, once `before` (a walk an apply elsewhere left running) has finished
+   * and no apply is setting entries: it says the paths it walks in the same turn it reads them, so
+   * an apply that starts while it is under way waits for it where it is near.
+   */
+  #walkAfter(own: OwnAclEntries, before: Promise<void> | null): Promise<void> {
+    const stop = new AbortController();
+    this.#walkStops.add(stop);
+    const walking: Promise<void> = (async () => {
+      await before;
+      for (let running = this.#applying; running; running = this.#applying) await running.catch(() => {});
+      if (stop.signal.aborted) return;
+      const walked = (paths: string[]) => {
+        this.#walkingPaths = paths;
+      };
+      const active = this.#timed("own entries passed down", () =>
+        own.walkDeferred({ signal: stop.signal, walking: walked }),
+      );
+      this.#walkActive = active;
+      await active.finally(() => {
+        if (this.#walkActive === active) this.#walkActive = null;
+      });
+    })()
+      .catch((error: unknown) => this.#deps.log?.(MESSAGE.WalkFailed(error)))
+      .finally(() => {
+        this.#walkStops.delete(stop);
+        if (this.#walking !== walking) return;
+        this.#walking = null;
+        this.#walkingPaths = [];
+      });
+    return walking;
+  }
+
+  /** No walk starts after this, and one running stops: what it did not finish stays recorded for the next start. */
   #cancelWalks(): void {
     if (this.#walkTimer) clearTimeout(this.#walkTimer);
     this.#walkTimer = null;
+    for (const stop of this.#walkStops) stop.abort();
+  }
+
+  /** Stop the walks after the start, at once: Genex is quitting ({@link windowsSessionFor}). */
+  stopWalks(): void {
+    this.#cancelWalks();
   }
 
   /** No member is left: take back srt's grants and the folders above them; a later join starts again. */
@@ -1639,7 +1936,10 @@ export class WindowsSandboxSession {
         read,
       ),
     };
-    const routes = own ? this.#ownRoutes(grants, deny) : { grants, deny, own: [] };
+    // A reset replaces the launcher's entries too: srt-win's fallback must regrant those folders.
+    const routes = own
+      ? this.#ownRoutes(grants, deny)
+      : { grants: grantUnion([grants, { write: [], read: [...(this.#deps.launchDirs ?? [])] }]), deny, own: [] };
     const config = {
       ...latest,
       // srt-win marks its write grants safe for Git (dubious ownership); Genex's own need it said.
@@ -1826,6 +2126,9 @@ export function sandboxSidOnce(
   };
 }
 
+/** How to take a launcher grant back, and whether it was made (false: the log says why not). */
+export type LauncherGrant = (() => void | Promise<void>) & { granted?: boolean };
+
 /** How the launcher grant reaches srt-win ({@link grantLauncherFolders}); the session's are srt-win's own. */
 export interface LauncherGrantDeps {
   /** The sandbox user's SID, asked again while srt-win cannot say ({@link sandboxSidOnce}); null before it exists. */
@@ -1868,14 +2171,11 @@ export function srtLauncherGrants(srtWin: string): Pick<LauncherGrantDeps, "gran
  * initialize to report what that costs (an install outside the profile needs none); either way the
  * log says the folders were not granted, the cause of that refusal.
  */
-export async function grantLauncherFolders(
-  dirs: readonly string[],
-  deps: LauncherGrantDeps,
-): Promise<() => Promise<void>> {
+export async function grantLauncherFolders(dirs: readonly string[], deps: LauncherGrantDeps): Promise<LauncherGrant> {
   const sid = await deps.sid();
   if (!sid) {
     deps.log?.(MESSAGE.LauncherNotGranted(MESSAGE.NoLauncherSid));
-    return async () => {};
+    return Object.assign(async () => {}, { granted: false });
   }
   const release = async () => {
     // A read grant on the app's own files; the next start's grant replaces it.
@@ -1883,11 +2183,12 @@ export async function grantLauncherFolders(
   };
   try {
     await deps.grant(sid, dirs);
+    return Object.assign(release, { granted: true });
   } catch (error) {
     deps.log?.(MESSAGE.LauncherNotGranted(errorMessage(error)));
     await release();
+    return Object.assign(release, { granted: false });
   }
-  return release;
 }
 
 /** srt-win's `wfp status` answer for filters that were never installed (or were removed). */
@@ -1989,14 +2290,17 @@ export function windowsSessionFor(
   const holders = windowsGrantHolders(options.profile);
   const ancestors = ancestorGrants(holders, { sid: sandboxSidOnce(() => srtAncestorGrantee(options.srtWin)) });
   const log = options.log;
-  const own = ownAclEntries(windowsDenyHolders(options.profile), {
-    sid: groupSidOnce(() => srtSandboxGroup(options.srtWin)),
-    ...(log ? { log } : {}),
-  });
   const srtWinDir = win.dirname(options.srtWin);
   const launchDirs = insideWindowsPath(options.installDir, srtWinDir)
     ? [options.installDir]
     : [options.installDir, srtWinDir];
+  // The egress check runs srt-win from the launch folders, and the harness from Genex's data folder.
+  const needed = [...launchDirs, ...(options.dataRoot ? [options.dataRoot] : [])];
+  const own = ownAclEntries(windowsDenyHolders(options.profile), {
+    sid: groupSidOnce(() => srtSandboxGroup(options.srtWin)),
+    urgent: (dir) => needed.some((root) => insideWindowsPath(root, dir)),
+    ...(log ? { log } : {}),
+  });
   // Asked again while srt-win cannot say, and kept once found: one probe that timed out used to
   // skip the grant, and srt-win's egress check then could not start.
   const userSid = sandboxSidOnce(() => srtSandboxSid(options.srtWin));
@@ -2013,8 +2317,12 @@ export function windowsSessionFor(
     launcher,
     ...(log ? { log } : {}),
   });
-  // Genex's own grants and denies stay for the next start; the folder entries above them go.
-  process.once("exit", () => ancestors.revokeAllSync());
+  // Genex's own grants and denies stay for the next start; the folder entries above them go, and
+  // a walk after the start stops (what it did not finish stays recorded).
+  process.once("exit", () => {
+    session.stopWalks();
+    ancestors.revokeAllSync();
+  });
   sessions.set(runtime, session);
   return session;
 }

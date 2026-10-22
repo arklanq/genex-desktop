@@ -4,6 +4,7 @@ import { UserMessage } from "../chat/UserMessage.tsx";
 import { type Notify, notifyProblem } from "../state/toasts.ts";
 import type { ReferenceFrame } from "../../shared/protocol.ts";
 import { CHAT_WORDS } from "../words.ts";
+import { t } from "../../shared/i18n.ts";
 
 /** The line under a follow-up until the work reads it: Sending…, always 24px tall (Remove's height), so nothing moves. */
 function SendingLine({ children }: { children?: ReactNode }) {
@@ -69,7 +70,7 @@ export function QueuedMessage({
         {!sending && (
           <IconButton
             icon="trash"
-            label="Remove queued message"
+            label={t("Remove queued message")}
             size={12}
             className="chat-queued-remove"
             disabled={removing}

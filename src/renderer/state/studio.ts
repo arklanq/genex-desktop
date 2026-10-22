@@ -17,6 +17,7 @@ import type { ComposerSendOptions } from "../../shared/composer.ts";
 import type { GameUpdate } from "../../shared/game-library.ts";
 import { HarnessState } from "../../shared/protocol.ts";
 import type { GameName } from "../../shared/game-project.ts";
+import { t } from "../../shared/i18n.ts";
 import type { Bootstrap, ConversationRecord, GameProject, StudioApi } from "../../shared/studio-api.ts";
 import { UiEvent } from "../../shared/ui-events.ts";
 import { shouldWelcome } from "../onboarding/state.ts";
@@ -58,6 +59,7 @@ import {
 } from "./launch.ts";
 import { createLayoutStore, stageViewChosen, type LayoutStore } from "./layout.ts";
 import { createModelPickerStore, type ModelPickerStore } from "./model-picker.ts";
+import { createProviderUsageStore, type ProviderUsageStore, usageReported } from "./provider-usage.ts";
 import {
   createLibraryStore,
   delegationChanged,
@@ -115,7 +117,9 @@ export const EVENT_POLL_MS = 3 * SECOND_MS;
 /** What a launch says when it stops before making a game. */
 const MESSAGE = {
   outOfUsage: (why: string) =>
-    `${why.replace(/[\s.]+$/, "")}. No game was made: send it again after the reset, from another account or with another model.`,
+    t("{why}. No game was made: send it again after the reset, from another account or with another model.", {
+      why: why.replace(/[\s.]+$/, ""),
+    }),
 } as const;
 
 /** An agent screen that went away. */
@@ -157,6 +161,8 @@ export interface Studio {
   readonly launch: LaunchStore;
   /** Which subscription models the model picker lists, as set in Settings. */
   readonly modelPicker: ModelPickerStore;
+  /** The subscriptions' plan limits as main keeps and pushes them (`provider-usage.ts`). */
+  readonly providerUsage: ProviderUsageStore;
   /** A new version of the app waiting for a restart. */
   readonly update: UpdateStore;
   /** Whether the open studio's agents started, and the sidebar's Try again and report when not. */
@@ -237,6 +243,7 @@ interface Stores {
   readonly layout: LayoutStore;
   readonly launch: LaunchStore;
   readonly modelPicker: ModelPickerStore;
+  readonly providerUsage: ProviderUsageStore;
   readonly update: UpdateStore;
   readonly agentsStart: AgentsStartStore;
 }
@@ -271,6 +278,7 @@ function createStores(
     layout: createLayoutStore(storage),
     launch: createLaunchStore(),
     modelPicker: createModelPickerStore(storage),
+    providerUsage: createProviderUsageStore(api),
     update: createUpdateStore(),
     agentsStart: createAgentsStartStore(api),
   };
@@ -393,10 +401,13 @@ function bootstrapper(api: StudioApi, stores: Stores, storage: KeyValueStorage |
 
 /** The events that change a store directly, beyond the reads they ask for. */
 function applyUiEvent(
-  { agentScreens, threads, layout, library, update, play, agentsStart }: Stores,
+  { agentScreens, threads, layout, library, update, play, agentsStart, providerUsage }: Stores,
   event: UiEvent,
 ): void {
   switch (event.type) {
+    case UiEvent.ProviderUsage:
+      providerUsage.setState((state) => usageReported(state, event.payload.reports), true);
+      break;
     case UiEvent.PlayViewer:
       // The bar's Remix closed the viewer: the copy is made of the game it showed, as a card's is.
       if (remixClosed(play.getState().viewer, event.payload)) void play.remixViewed();
@@ -526,7 +537,7 @@ async function enterProject(
 }
 
 /** Untitled game: what a game is called when even naming it failed. */
-const UNTITLED_GAME = "Untitled game";
+const UNTITLED_GAME = t("Untitled game");
 let launches = 0;
 
 /**

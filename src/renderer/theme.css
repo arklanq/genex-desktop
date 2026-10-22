@@ -23,13 +23,16 @@
   font-display: swap;
   src: url("./fonts/ZalandoSansSemiExpanded-variable.woff2") format("woff2");
 }
+/* Zalando Sans has Latin only. Cyrillic and Greek come from TikTok Sans at Zalando's width, with
+   its weights shifted to Zalando's stems and its capitals to Zalando's height. */
 @font-face {
-  font-family: "Geist Fallback";
+  font-family: "TikTok Sans Genex";
   font-style: normal;
-  font-weight: 100 900;
+  font-weight: 275 792;
   font-display: swap;
-  src: url("./fonts/Geist-variable.woff2") format("woff2");
-  unicode-range: U+0301, U+0370-03FF, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+  size-adjust: 101.3%;
+  src: url("./fonts/TikTokSansGenex-variable.woff2") format("woff2");
+  unicode-range: U+0301, U+0370-03FF, U+0400-052F, U+1C80-1C88, U+1F00-1FFF, U+2116, U+2DE0-2DFF, U+A640-A69F;
 }
 @font-face {
   font-family: "Geist Mono";
@@ -38,12 +41,65 @@
   font-display: swap;
   src: url("./fonts/GeistMono-variable.woff2") format("woff2");
 }
+/* The app's language picks its script's face (--font-language below); LINE Seed JP has no middle
+   weights, so medium text is its Regular and bold its Bold. */
+@font-face {
+  font-family: "LINE Seed JP";
+  font-style: normal;
+  font-weight: 100 599;
+  font-display: swap;
+  src: url("./fonts/LINESeedJP-Regular.woff2") format("woff2");
+}
+@font-face {
+  font-family: "LINE Seed JP";
+  font-style: normal;
+  font-weight: 600 900;
+  font-display: swap;
+  src: url("./fonts/LINESeedJP-Bold.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Genex Hangul";
+  font-style: normal;
+  font-weight: 45 930;
+  font-display: swap;
+  src: url("./fonts/GenexHangul-variable.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Noto Sans SC";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/NotoSansSC-GB2312-variable.woff2") format("woff2");
+}
+/* The face for the app language's own script, after Zalando and TikTok Sans in every stack; a
+   generic family where the language needs none, so the stacks stay valid. */
+:root {
+  --font-language: ui-sans-serif;
+}
+:root:lang(ja) {
+  --font-language: "LINE Seed JP";
+}
+:root:lang(ko) {
+  --font-language: "Genex Hangul";
+}
+:root:lang(zh-Hans) {
+  --font-language: "Noto Sans SC";
+}
+/* Chinese, Japanese and Korean read badly squeezed: the app's tight Latin tracking stays off for
+   them, and Japanese breaks lines between phrases rather than anywhere. */
+:root:is(:lang(ja), :lang(ko), :lang(zh-Hans)) * {
+  letter-spacing: 0 !important;
+}
+:root:lang(ja) {
+  word-break: auto-phrase;
+}
 
 /* Genex dark fallback. appearance/store.ts applies the selected semantic palette before mount. */
 :root {
   color-scheme: dark;
-  --font-family-sans: "Geist Fallback", "Zalando Sans SemiExpanded", ui-sans-serif, system-ui, sans-serif;
-  --font-family-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --font-family-sans:
+    "Zalando Sans SemiExpanded", "TikTok Sans Genex", var(--font-language), ui-sans-serif, system-ui, sans-serif;
+  --font-family-mono: "Geist Mono", var(--font-language), ui-monospace, "SF Mono", Menlo, monospace;
   --background: #0e0d0f;
   --foreground: #dee0e2;
   --card: #141416;
@@ -354,6 +410,7 @@
 :is(
   .chat-status-shimmer,
   .usage-skeleton,
+  .skeleton,
   .app-loader-shine,
   .home-backdrop-glint,
   .animate-ping,
@@ -1134,6 +1191,62 @@
 :root[data-platform="win32"] .window-controls-end,
 :root[data-platform="linux"] .window-controls-end {
   padding-inline-end: calc(var(--window-controls-end) + 8px);
+}
+
+/* The stage strip (panels/stage/StageStrip.tsx): the views and the game's controls at its start, the
+ * plugin buttons at its end, on one row while they fit. Narrower, it makes room in steps
+ * (`strip-fold.ts`, `data-fold`): the views fold into one button, then the plugin buttons move to a
+ * second row, then Sound and Full screen join them there. Its last column keeps the first row clear
+ * of the window's own controls (Windows, Linux: `--window-controls-end`), so the second row, which
+ * spans it, runs to the strip's end; the line between the rows is the strip's own background. */
+.stage-strip {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr) auto var(--window-controls-end, 0px);
+  grid-template-rows: 47px;
+  grid-template-areas: "start game . end .";
+  column-gap: 8px;
+  align-items: center;
+  overflow: hidden;
+  /* A control's name never wraps to make room: the strip folds instead. */
+  white-space: nowrap;
+}
+.stage-strip-start {
+  grid-area: start;
+  justify-self: start;
+}
+.stage-strip-game {
+  grid-area: game;
+}
+.stage-strip-end {
+  grid-area: end;
+  justify-self: end;
+}
+.stage-strip[data-fold="plugins"],
+.stage-strip[data-fold="game"] {
+  grid-template-rows: 47px 1px minmax(47px, auto);
+  background-image: linear-gradient(var(--line), var(--line));
+  background-size: 100% 1px;
+  background-position: 0 47px;
+  background-repeat: no-repeat;
+}
+.stage-strip[data-fold="plugins"] {
+  grid-template-areas: "start game . . ." ". . . . ." "end end end end end";
+}
+.stage-strip[data-fold="game"] {
+  grid-template-areas: "start start start start ." ". . . . ." "game . end end end";
+}
+/* On the second row (`data-row`) the plugin buttons may wrap, and end 8px from the strip's edge. */
+.stage-strip-end[data-row="second"] {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 8px;
+  padding-block: 7px;
+  padding-inline-end: 8px;
+}
+/* A game with no plugin buttons has nothing for a second row: the strip stays one row. */
+.stage-strip[data-fold="plugins"]:has(> .stage-strip-end:empty) {
+  grid-template-rows: 47px 0 0;
+  background-image: none;
 }
 
 /* Conversation-led shell. */
@@ -4105,14 +4218,141 @@ button.chat-header-title:hover {
   border-radius: 99px;
 }
 
-/* A page's content on its way (Pending `spinner`): the working mark centred over the shimmering label. */
-.pending-page {
+/* Content on its way (ui/Pending.tsx): unseen for the first 0.4 s, when most local reads have
+   already answered, then faded in. */
+.pending-late {
+  animation: stage-loader-late 200ms ease-out 400ms both;
+}
+/* Real work starting (Pending `working`): the chat's orb beside one small shimmering line. */
+.pending-working {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 16px;
+}
+/* The shape of what is coming (ui/Skeleton.tsx): soft blocks the size of the lines, pictures and
+   controls, breathing slowly together; still under reduced motion. */
+.skeleton {
+  display: block;
+  flex: none;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--hover);
+  animation: skeleton-breathe 2.4s ease-in-out infinite;
+}
+@keyframes skeleton-breathe {
+  50% {
+    opacity: 0.45;
+  }
+}
+.skeleton-lines {
   display: flex;
   flex-direction: column;
+  gap: 12px;
+}
+.skeleton-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.skeleton-row {
+  display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 12px;
+}
+.skeleton-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+/* Builds on its way (RunGraph.tsx): what you asked, two parts and the build, on the graph's dots. */
+.skeleton-graph {
+  display: flex;
+  align-items: center;
+  justify-content: safe center;
+  gap: 48px;
+  height: 100%;
+  padding: 32px;
+  background-image: radial-gradient(var(--line-strong) 1px, transparent 1.25px);
+  background-size: 22px 22px;
+}
+.skeleton-graph-column {
+  display: flex;
+  flex-direction: column;
+  gap: 40px;
+}
+/* The Assets tab on its way (AssetsCanvas.tsx): a first screen of tiles, each with its name. */
+.skeleton-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 160px));
+  gap: 16px;
+  width: min(512px, 100%);
+}
+.skeleton-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+/* A picture on its way over the dark full-size backdrop (inspector/Lightbox.tsx). */
+.skeleton.skeleton-on-dark {
+  background: rgb(255 255 255 / 0.07);
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton {
+    animation: none;
+  }
+}
+
+/* A game's first message while it cannot go yet: the provider's mark, what it waits for, one action. */
+.held-send-card {
+  display: flex;
+  align-items: center;
   gap: 14px;
-  min-height: 200px;
+  padding: 14px 14px 14px 16px;
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.held-send-mark {
+  flex: none;
+  filter: drop-shadow(0 1px 2px rgb(0 0 0 / 0.35));
+}
+.held-send-title {
+  font-size: 14px;
+  line-height: 20px;
+  font-weight: 500;
+  color: var(--ink);
+}
+.held-send-line {
+  font-size: 12px;
+  line-height: 16px;
+  color: var(--ink-3);
+}
+.held-send-action {
+  flex: none;
+  height: 32px;
+  padding-inline: 14px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--ink) 9%, var(--control-hover, var(--hover)));
+  color: var(--ink);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 120ms;
+}
+.held-send-action:is(:hover, :focus-visible) {
+  background: color-mix(in oklab, var(--ink) 15%, var(--control-hover, var(--hover)));
+}
+.held-send-action[data-primary] {
+  background: var(--accent-fill);
+  color: var(--accent-foreground);
+}
+.held-send-action[data-primary]:is(:hover, :focus-visible) {
+  background: var(--accent-hover);
 }
 
 /* Only current work animates. History and disclosures mount without entrance choreography. */
@@ -5054,6 +5294,11 @@ a:focus-visible {
   max-width: 100%;
   height: 36px;
   font-size: 12px;
+}
+/* A language's own name can be long ("System (Português (Brasil))"): the language menu grows to it. */
+[data-language-setting] .appearance-choice {
+  width: auto;
+  min-width: 200px;
 }
 .appearance-menu {
   max-height: min(380px, var(--radix-dropdown-menu-content-available-height));
@@ -6047,11 +6292,8 @@ a:focus-visible {
   font-weight: 500;
   line-height: 20px;
 }
-/* A loader drawn by CSS alone (Builds' graph on its way) waits out the first moments, as the stage's
-   own loader does (`loader-presence.ts`): most loads finish before it would show. */
-.stage-loader-late {
-  animation: stage-loader-late 200ms ease-out 400ms both;
-}
+/* How content on its way fades in after the first moments (`.pending-late`), as the stage's own
+   loader does (`loader-presence.ts`): most loads finish before it would show. */
 @keyframes stage-loader-late {
   from {
     opacity: 0;
@@ -7957,6 +8199,40 @@ a:focus-visible {
 }
 p.usage-divider {
   padding-bottom: 6px;
+}
+/* A plan's one problem (signed out, couldn't check) in orange, with its one action beside it. */
+.usage-problem {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0 4px;
+  font-family: var(--font-family-content);
+  font-size: 13px;
+  line-height: 18px;
+  color: var(--orange);
+}
+.usage-problem-action {
+  flex: none;
+  height: 24px;
+  padding-inline: 10px;
+  border-radius: 8px;
+  /* Settings' grey a step above the panel: a filled button, quieter than the accent. */
+  background: color-mix(in oklab, var(--ink) 9%, var(--control-hover, var(--hover)));
+  color: var(--ink);
+  font-family: var(--font-family-mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 120ms;
+}
+.usage-problem-action:is(:hover, :focus-visible) {
+  background: color-mix(in oklab, var(--ink) 15%, var(--control-hover, var(--hover)));
+}
+.usage-problem-action[data-primary] {
+  background: var(--accent-fill);
+  color: var(--accent-foreground);
+}
+.usage-problem-action[data-primary]:is(:hover, :focus-visible) {
+  background: var(--accent-hover);
 }
 /* A plan's usage while it is read: bars the size of the text they stand in for, swept by the same
    soft light as current work (`chat-status-shimmer`), still under reduced motion. */

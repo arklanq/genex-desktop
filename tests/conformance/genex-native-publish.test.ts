@@ -1,8 +1,8 @@
 /**
  * A publish's apps, sent with `genex native publish` once the web build is public. Only a CLI new
  * enough to have the command sends any. The builds come from the dialog by their place in the game
- * folder, which agents write: only a real `.app`, or a Windows program's folder, inside the folder is
- * ever handed to the CLI. One app that fails is kept as that app's failure, in the CLI's own words.
+ * folder, which agents write: only a real `.app`, or a Windows or Linux program's folder, inside the
+ * folder is ever handed to the CLI, a Linux one with its platform and program named. One app that fails is kept as that app's failure, in the CLI's own words.
  */
 import assert from "node:assert/strict";
 import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
@@ -16,7 +16,13 @@ import { GenexTools } from "../../src/plugins/genex/adapter.ts";
 import { saveClip } from "../../src/plugins/genex/clip.ts";
 import { GENEX_COVERS_DIR } from "../../src/shared/genex.ts";
 import { type GenexFixtureApi, startGenexFixtureApi } from "../helpers/genex-fixture-api.ts";
-import { hasNativeCommand, nativeUploads, sendNativeBuild, sentBuild } from "../../src/plugins/genex/native-publish.ts";
+import {
+  hasNativeCommand,
+  nativePublishArgs,
+  nativeUploads,
+  sendNativeBuild,
+  sentBuild,
+} from "../../src/plugins/genex/native-publish.ts";
 import { tmpDir } from "../helpers/tmp.ts";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -92,7 +98,18 @@ describe("the CLI Studio ships", () => {
   });
 });
 
-/** A game folder with a Mac app, a Windows build and things that only look like builds. */
+/** A 64-bit x86 Linux program's ELF header. */
+function elf(): Buffer {
+  const bytes = Buffer.alloc(64);
+  bytes.writeUInt32BE(0x7f454c46, 0);
+  bytes[4] = 2;
+  bytes[5] = 1;
+  bytes.writeUInt16LE(3, 16);
+  bytes.writeUInt16LE(0x3e, 18);
+  return bytes;
+}
+
+/** A game folder with a Mac app, Windows and Linux builds and things that only look like builds. */
 async function gameFolder() {
   const root = await realpath(await tmpDir("native-publish-"));
   const game = path.join(root, "game");
@@ -100,6 +117,13 @@ async function gameFolder() {
   await mkdir(path.join(game, "Builds", "Windows"), { recursive: true });
   await writeFile(path.join(game, "Builds", "Windows", "Dust.exe"), "MZ");
   await writeFile(path.join(game, "Root.exe"), "MZ");
+  await mkdir(path.join(game, "Builds", "Linux", "Dust_Data"), { recursive: true });
+  await writeFile(path.join(game, "Builds", "Linux", "Dust.x86_64"), elf());
+  await writeFile(path.join(game, "Builds", "Linux", "Notes.x86_64"), "#!/bin/sh\necho not a program\n");
+  const unreal = path.join(game, "Builds", "LinuxPackage", "Dust", "Binaries", "Linux");
+  await mkdir(unreal, { recursive: true });
+  await writeFile(path.join(unreal, "Dust-Linux-Shipping"), elf());
+  await writeFile(path.join(game, "Root.x86_64"), elf());
   await writeFile(path.join(game, "notes.txt"), "words");
   const outside = path.join(root, "outside");
   await mkdir(path.join(outside, "Elsewhere.app"), { recursive: true });
@@ -107,6 +131,10 @@ async function gameFolder() {
   await mkdir(path.join(outside, "Win"), { recursive: true });
   await writeFile(path.join(outside, "Win", "Far.exe"), "MZ");
   await symlink(path.join(outside, "Win"), path.join(game, "Builds", "LinkedWin"));
+  await mkdir(path.join(outside, "Tux"), { recursive: true });
+  await writeFile(path.join(outside, "Tux", "Far.x86_64"), elf());
+  await symlink(path.join(outside, "Tux"), path.join(game, "Builds", "LinkedLinux"));
+  await symlink(path.join(outside, "Tux", "Far.x86_64"), path.join(game, "Builds", "Linux", "Linked.x86_64"));
   return { game, outside };
 }
 
@@ -120,6 +148,36 @@ describe("the apps a publish hands the CLI", () => {
     ]);
   });
 
+  it("takes a Linux program's folder with the program in it, and an Unreal package whole", async () => {
+    const { game } = await gameFolder();
+    const uploads = await nativeUploads(game, [
+      "Builds/Linux/Dust.x86_64",
+      "Builds/LinuxPackage/Dust/Binaries/Linux/Dust-Linux-Shipping",
+    ]);
+    assert.deepEqual(uploads, [
+      { target: path.join(game, "Builds", "Linux"), platform: "linux", entry: "Dust.x86_64" },
+      {
+        target: path.join(game, "Builds", "LinuxPackage"),
+        platform: "linux",
+        entry: "Dust/Binaries/Linux/Dust-Linux-Shipping",
+      },
+    ]);
+    assert.deepEqual(nativePublishArgs(uploads[0] ?? { target: "", platform: "mac" }), [
+      "native",
+      "publish",
+      path.join(game, "Builds", "Linux"),
+      "--platform",
+      "linux",
+      "--entry",
+      "Dust.x86_64",
+    ]);
+    assert.deepEqual(nativePublishArgs({ target: "/game/Builds/Windows", platform: "windows", entry: "x" }), [
+      "native",
+      "publish",
+      "/game/Builds/Windows",
+    ]);
+  });
+
   it("hands over nothing that is not a build inside the game folder", async () => {
     const { game, outside } = await gameFolder();
     const hostile: unknown[] = [
@@ -128,6 +186,10 @@ describe("the apps a publish hands the CLI", () => {
       "Builds/../../outside/Elsewhere.app",
       "Builds/Linked.app",
       "Builds/LinkedWin/Far.exe",
+      "Builds/LinkedLinux/Far.x86_64",
+      "Builds/Linux/Linked.x86_64",
+      "Builds/Linux/Notes.x86_64",
+      "Root.x86_64",
       "Root.exe",
       "notes.txt",
       "Builds/Missing.app",
@@ -141,7 +203,7 @@ describe("the apps a publish hands the CLI", () => {
     assert.deepEqual(await nativeUploads(path.join(game, "nowhere"), ["Builds/Mac/Dust Runners.app"]), []);
   });
 
-  it("sends each app once, and at most four", async () => {
+  it("sends each app once, and at most six", async () => {
     const { game } = await gameFolder();
     const twice = await nativeUploads(game, ["Builds/Mac/Dust Runners.app", "Builds/Mac/./Dust Runners.app"]);
     assert.equal(twice.length, 1);
@@ -246,7 +308,8 @@ const listing = !args.includes("--gallery")
     : target.includes("Held")
       ? { state: "held", category: null, detail: null }
       : { state: "published", slug: "dust-runners" };
-const build = { ...${JSON.stringify(answer)}, ...(windows ? { platform: "windows", arch: "x64" } : {}) };
+const system = args.includes("--platform") ? args[args.indexOf("--platform") + 1] : "windows";
+const build = { ...${JSON.stringify(answer)}, ...(windows ? { platform: system, arch: "x64" } : {}) };
 process.stdout.write(JSON.stringify({ build, engine: "unity", ...(listing ? { listing } : {}) }));
 process.exit(listing?.state === "refused" ? 1 : 0);
 `,
@@ -267,17 +330,20 @@ process.exit(listing?.state === "refused" ? 1 : 0);
 describe("a publish's apps sent through the CLI", () => {
   const MAC_APP = { target: "/game/Builds/Mac/Dust Runners.app", platform: "mac" as const };
   const BROKEN = { target: "/game/Builds/Windows Broken", platform: "windows" as const };
+  const LINUX = { target: "/game/Builds/Linux", platform: "linux" as const, entry: "Dust.x86_64" };
 
   it("sends each app with `genex native publish` in the publish workspace and records how it went", async () => {
     const { genex, runs } = await toolsWithStandIn();
-    await genex.publishApps("dust", "job-1", [MAC_APP, BROKEN]);
+    await genex.publishApps("dust", "job-1", [MAC_APP, BROKEN, LINUX]);
     const calls = await runs();
     assert.deepEqual(
-      calls.map((call) => call.args.slice(0, 3)),
+      calls.map((call) => call.args.slice(0, call.args.includes("--entry") ? 7 : 3)),
       [
         ["native", "publish", MAC_APP.target],
         ["native", "publish", BROKEN.target],
+        ["native", "publish", LINUX.target, "--platform", "linux", "--entry", "Dust.x86_64"],
       ],
+      "a Linux build names its platform and program: the CLI cannot tell them from the files",
     );
     assert.ok(calls.every((call) => call.args.includes("--json")));
     const workspace = path.join(genex.root, "publish", "dust");
@@ -288,7 +354,10 @@ describe("a publish's apps sent through the CLI", () => {
     assert.equal(native?.jobId, "job-1");
     assert.deepEqual(
       native?.sent.map((sent) => [sent.platform, sent.version]),
-      [["mac", "1.0+3f2a9c1d0e4b"]],
+      [
+        ["mac", "1.0+3f2a9c1d0e4b"],
+        ["linux", "1.0+3f2a9c1d0e4b"],
+      ],
     );
     assert.deepEqual(native?.failed, [
       { platform: "windows", arch: "", error: "Couldn't get an upload token (HTTP 413)." },
@@ -446,8 +515,8 @@ describe("a game with only apps, published", () => {
 
   it("refuses a publish with no app, or with a CLI that cannot send apps", async () => {
     const { genex } = await toolsWithStandIn(true, await fixtureApi());
-    await assert.rejects(genex.publishAppsOnly("dust", []), /no Mac or Windows app/);
+    await assert.rejects(genex.publishAppsOnly("dust", []), /no Mac, Windows or Linux app/);
     const older = await toolsWithStandIn(false, await fixtureApi());
-    await assert.rejects(older.genex.publishAppsOnly("dust", [app("Dust Runners")]), /no Mac or Windows app/);
+    await assert.rejects(older.genex.publishAppsOnly("dust", [app("Dust Runners")]), /no Mac, Windows or Linux app/);
   });
 });

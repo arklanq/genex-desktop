@@ -23,6 +23,7 @@ import {
 } from "../shared/boot.ts";
 import type { DataMoveProgress } from "../shared/data-folder.ts";
 import { errorMessage } from "../shared/errors.ts";
+import { t } from "../shared/i18n.ts";
 import { SandboxUnavailableError } from "../substrate/sandbox-unavailable.ts";
 
 /** What installing the sandbox answered: `cancelled` when the administrator prompt was dismissed. */
@@ -75,8 +76,9 @@ export interface BootGate {
   setUp(): Promise<SandboxSetupResult>;
 }
 
+/** What the setup screen shows when Set up has nothing to do. */
 const MESSAGE = {
-  nothingToSetUp: "There is nothing to set up: the protected workspace is not waiting on an install.",
+  nothingToSetUp: () => t("There is nothing to set up: the protected workspace is not waiting on an install."),
 } as const;
 
 /** The step a starting core is on once it passes each of its boot marks (`StudioCore.init`). */
@@ -199,7 +201,7 @@ export function createBootGate(platform: string, options: BootGateOptions = {}):
     setUp() {
       if (installing) return installing;
       const run = options.installSandbox;
-      if (!run || !waitsOnInstall(state)) return Promise.reject(new Error(MESSAGE.nothingToSetUp));
+      if (!run || !waitsOnInstall(state)) return Promise.reject(new Error(MESSAGE.nothingToSetUp()));
       tried = true;
       const problem = state.sandbox;
       installing = install(() => run(problem))

@@ -6,6 +6,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { SECOND_MS } from "../../shared/duration.ts";
 import { StudioPlatform } from "../../shared/boot.ts";
+import { isGenexSlug } from "../genex-game-settings.ts";
 import { killProcessTree } from "../process-tree.ts";
 import { type ProcessSandbox, shellQuote } from "../spawn.ts";
 import { mixedPath } from "../windows-sandbox.ts";
@@ -632,11 +633,13 @@ export interface NativeGameRequest {
 
 /**
  * What a launched game is told about Genex (CLI_INTEGRATION §6b): its API's address, which is its
- * gateway's, and a single-use sign-in ticket while the person is signed in.
+ * gateway's, a single-use sign-in ticket while the person is signed in, and its own project on
+ * Genex, so a build made before its first publish still knows which game's rooms to join.
  */
 export interface GameGenexEnv {
   GENEX_API_URL: string;
   GENEX_EMBED_TICKET?: string;
+  GENEX_GAME?: string;
 }
 /** A gateway address a game may be told: plain http on this Mac, an unprivileged port. */
 const GATEWAY_URL = /^http:\/\/127\.0\.0\.1:(\d{4,5})$/;
@@ -648,7 +651,12 @@ export function gameGenexEnv(env: GameGenexEnv | undefined): Record<string, stri
   const port = Number(GATEWAY_URL.exec(env?.GENEX_API_URL ?? "")?.[1]);
   if (!env || !isGatewayPort(port)) return {};
   const ticket = env.GENEX_EMBED_TICKET && TICKET.test(env.GENEX_EMBED_TICKET) ? env.GENEX_EMBED_TICKET : undefined;
-  return { GENEX_API_URL: env.GENEX_API_URL, ...(ticket ? { GENEX_EMBED_TICKET: ticket } : {}) };
+  const game = env.GENEX_GAME && isGenexSlug(env.GENEX_GAME) ? env.GENEX_GAME : undefined;
+  return {
+    GENEX_API_URL: env.GENEX_API_URL,
+    ...(ticket ? { GENEX_EMBED_TICKET: ticket } : {}),
+    ...(game ? { GENEX_GAME: game } : {}),
+  };
 }
 
 /**

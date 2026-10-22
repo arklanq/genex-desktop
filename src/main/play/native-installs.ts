@@ -27,7 +27,7 @@ import {
 import { atomicWriteJson, readJsonIfExists } from "../../substrate/fsx.ts";
 import { diskBytes, removeOwnedFolder } from "../../substrate/storage-folders.ts";
 import { downloadArchive, InstallError, verifyArchive } from "./native-download.ts";
-import { type ToolRun, type UnpackedApp, unpackMacBuild } from "./native-unpack.ts";
+import { type ToolRun, type UnpackedApp, unpackLinuxBuild, unpackMacBuild } from "./native-unpack.ts";
 import type { StallClock } from "./remix.ts";
 
 /** Free space kept beyond the download and the unpacked game. */
@@ -50,7 +50,7 @@ const MESSAGE = {
 
 /** What the launcher needs of an installed game: where it is and what it is called. */
 export interface InstallRecord extends InstalledGame, UnpackedApp {
-  /** The app bundle's name inside the version folder (`Dust Runners.app`). */
+  /** The app's folder inside the version folder: the bundle (`Dust Runners.app`), or `.` on Linux. */
   entry: string;
   /** The engine the catalog says it was made with (`unity`), or null: how the launcher opens it full screen. */
   engine: string | null;
@@ -321,8 +321,11 @@ export class NativeInstaller {
     this.#setProgress(job, { phase: InstallPhase.Unpacking });
     await this.#push();
     const unpacked = path.join(staging, "game");
-    const host = this.#deps.host;
-    const app = await unpackMacBuild(this.#deps.run, archive, unpacked, job.build, { slug: job.slug, host });
+    const game = { slug: job.slug, host: this.#deps.host };
+    const app =
+      job.build.platform === NativePlatform.Linux
+        ? await unpackLinuxBuild(archive, unpacked, job.build, game)
+        : await unpackMacBuild(this.#deps.run, archive, unpacked, job.build, game);
     job.stop.signal.throwIfAborted();
     await this.#settle(job, unpacked, app);
     await rm(archive, { force: true });

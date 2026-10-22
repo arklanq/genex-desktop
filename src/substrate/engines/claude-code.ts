@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { realpath } from "node:fs/promises";
 import { ModelCatalog, CatalogError, CATALOG_DEADLINE_MS } from "./model-catalog.ts";
 import { ModelCatalogSource, ModelCatalogProblemCode } from "../../shared/model-catalog.ts";
+import { t } from "../../shared/i18n.ts";
 import { validateClaudeModels } from "./claude-telemetry.ts";
 import { supportedPreferences, type ModelPreferences } from "../../shared/model-preferences.ts";
 import type { ProviderUsage } from "../../shared/provider-usage.ts";
@@ -78,6 +79,7 @@ import {
   CLAUDE_CAPTURE_TOOL,
   intakeToolReply,
   RUN_COMMAND_TOOL,
+  SHELL_THIS_TURN,
   STUDIO_MCP_SERVER,
   STUDIO_SHELL_TOOL,
   STUDIO_TOOL_PREFIX,
@@ -321,20 +323,31 @@ const JUDGE_DISALLOWED_TOOLS = [
   ...WEB_TOOLS,
 ];
 
-/** What this engine says to the user: statuses, remedies and errors. */
+/**
+ * What this engine says: statuses and remedies for Settings in the person's language (functions,
+ * since main sets its language after it starts), and errors in English, since the harness and the
+ * chat's model read them too.
+ */
 const MESSAGE = {
+  /** A sign-in error ends with it; Settings shows `SignInRemedy`, the same words translated. */
   LoginHint: "Sign in with your Claude subscription. The studio never sees your password.",
+  SignInRemedy: () => t("Sign in with your Claude subscription. The studio never sees your password."),
   AccessLostHint:
     "Sign in with a Claude account that has access, or ask your organization's admin to turn Claude Code back on.",
-  InstallRemedy: "Install Claude Code, then check again.",
-  SdkMissing: "the Claude Agent SDK is not installed",
-  SdkRemedy: "Reinstall the app; the SDK ships with it.",
-  FromEnvironment: "Claude Code is configured from the environment",
-  SystemLogin: "using your existing Claude Code sign-in on this Mac",
-  IsolatedLogin: "signed in for Studio only",
-  NotSignedIn: "Claude Code has not been signed in on this Mac",
-  CliNotSignedIn: "Claude Code is not signed in",
-  RecheckRemedy: "Recheck the external Claude CLI and sign-in.",
+  InstallRemedy: () => t("Install Claude Code, then check again."),
+  SdkMissing: () => t("the Claude Agent SDK is not installed"),
+  SdkRemedy: () => t("Reinstall the app; the SDK ships with it."),
+  FromEnvironment: () => t("Claude Code is configured from the environment"),
+  FromConfigDir: (home: string | null) => t("using CLAUDE_CONFIG_DIR ({home})", { home: String(home) }),
+  SystemLogin: () => t("using your existing Claude Code sign-in on this Mac"),
+  IsolatedLogin: () => t("signed in for Studio only"),
+  NotSignedIn: () => t("Claude Code has not been signed in on this Mac"),
+  CliNotSignedIn: () => t("Claude Code is not signed in"),
+  RecheckRemedy: () => t("Recheck the external Claude CLI and sign-in."),
+  /** The picker's row for whatever model the CLI picks itself. */
+  DefaultModel: () => t("{engine} default", { engine: "Claude Code" }),
+  DefaultModelNote: () => t("Uses the CLI default under Genex settings."),
+  DiscoverySlow: () => t("Model discovery timed out. Try again."),
   NoToolLoop: "Claude Code has no tool-loop completion; use engine.delegate to build",
   DiscoveryTimeout: "time budget exhausted during CLI discovery",
   JudgeLaunchTimeout: "time budget exhausted before judge launch",
@@ -723,17 +736,17 @@ export class ClaudeCodeEngine implements Engine {
     try {
       await this.#resolveCli(EngineId.ClaudeCode, this.#executable, undefined, false);
     } catch (error) {
-      return { code: EngineStatusCode.NotInstalled, detail: errorMessage(error), remedy: MESSAGE.InstallRemedy };
+      return { code: EngineStatusCode.NotInstalled, detail: errorMessage(error), remedy: MESSAGE.InstallRemedy() };
     }
     try {
       await import("@anthropic-ai/claude-agent-sdk");
     } catch {
-      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.SdkMissing, remedy: MESSAGE.SdkRemedy };
+      return { code: EngineStatusCode.NotInstalled, detail: MESSAGE.SdkMissing(), remedy: MESSAGE.SdkRemedy() };
     }
     // An ambient ANTHROPIC_API_KEY does NOT count as configured: D8 says subscription only, and
     // the key is stripped from every child environment anyway (subscriptionEnv).
     if (process.env.CLAUDE_CODE_OAUTH_TOKEN) {
-      return { code: EngineStatusCode.Ready, detail: MESSAGE.FromEnvironment };
+      return { code: EngineStatusCode.Ready, detail: MESSAGE.FromEnvironment() };
     }
     if (rememberFailure && this.#authFailure) {
       return { code: EngineStatusCode.NeedsLogin, detail: this.#authFailure, remedy: this.loginHint() };
@@ -741,19 +754,19 @@ export class ClaudeCodeEngine implements Engine {
     const login = await this.resolveLogin();
     switch (login.source) {
       case LoginSource.Env:
-        return { code: EngineStatusCode.Ready, detail: `using CLAUDE_CONFIG_DIR (${login.home})` };
+        return { code: EngineStatusCode.Ready, detail: MESSAGE.FromConfigDir(login.home) };
       case LoginSource.System:
-        return { code: EngineStatusCode.Ready, detail: MESSAGE.SystemLogin };
+        return { code: EngineStatusCode.Ready, detail: MESSAGE.SystemLogin() };
       case LoginSource.Isolated:
-        return { code: EngineStatusCode.Ready, detail: MESSAGE.IsolatedLogin };
+        return { code: EngineStatusCode.Ready, detail: MESSAGE.IsolatedLogin() };
       default:
-        return { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.NotSignedIn, remedy: this.loginHint() };
+        return { code: EngineStatusCode.NeedsLogin, detail: MESSAGE.NotSignedIn(), remedy: this.loginHint() };
     }
   }
 
   /** Shown in the UI. The login happens in Claude Code's own flow, with its own credential store. */
   loginHint(): string {
-    return MESSAGE.LoginHint;
+    return MESSAGE.SignInRemedy();
   }
 
   /**
@@ -784,8 +797,8 @@ export class ClaudeCodeEngine implements Engine {
       ((home) => claudeAuthStatus(home, { findBinary: async () => installation.path, env: installation.env }))
     )(cliHome);
     if (cli.loggedIn === null)
-      return { code: EngineStatusCode.Error, detail: cli.detail, remedy: MESSAGE.RecheckRemedy };
-    this.#authFailure = cli.loggedIn ? null : cli.detail || MESSAGE.CliNotSignedIn;
+      return { code: EngineStatusCode.Error, detail: cli.detail, remedy: MESSAGE.RecheckRemedy() };
+    this.#authFailure = cli.loggedIn ? null : cli.detail || MESSAGE.CliNotSignedIn();
     return this.status();
   }
 
@@ -835,8 +848,8 @@ export class ClaudeCodeEngine implements Engine {
 
   /**
    * The plan's limits for the composer. A reading from the last minute is fresh enough to reuse.
-   * A read that a login recheck overtook is dropped, and its callers wait for a read of the account
-   * signed in now.
+   * Null when the plan shares none; a throw when they could not be read. A read that a login
+   * recheck overtook is dropped, and its callers wait for a read of the account signed in now.
    */
   async readUsage(): Promise<ProviderUsage | null> {
     if (this.#usage && Date.now() - Date.parse(this.#usage.measuredAt) < USAGE_FRESH_MS) return this.#usage;
@@ -846,10 +859,13 @@ export class ClaudeCodeEngine implements Engine {
     const read: Promise<ProviderUsage | null> = this.#askUsage()
       .then((usage) => {
         if (!current()) return this.readUsage();
-        if (usage) this.#usage = usage;
-        return usage ?? this.#usage;
+        this.#usage = usage;
+        return usage;
       })
-      .catch(() => (current() ? this.#usage : this.readUsage()))
+      .catch((error: unknown) => {
+        if (current()) throw error;
+        return this.readUsage();
+      })
       .finally(() => {
         if (this.#usageRead === read) this.#usageRead = null;
       });
@@ -916,7 +932,7 @@ export class ClaudeCodeEngine implements Engine {
         ...model,
         ...reportedDefault,
         id: DEFAULT_MODEL,
-        label: "Claude Code default",
+        label: MESSAGE.DefaultModel(),
       })),
       ...concrete.map((model) => (model === named ? { ...model, providerDefault: true } : model)),
     ];
@@ -971,8 +987,7 @@ export class ClaudeCodeEngine implements Engine {
             stream.supportedModels(),
             new Promise<never>((_, reject) => {
               timer = setTimeout(
-                () =>
-                  reject(new CatalogError(ModelCatalogProblemCode.Timeout, "Model discovery timed out. Try again.")),
+                () => reject(new CatalogError(ModelCatalogProblemCode.Timeout, MESSAGE.DiscoverySlow())),
                 CATALOG_DEADLINE_MS,
               );
             }),
@@ -1254,7 +1269,8 @@ export class ClaudeCodeEngine implements Engine {
     // The running session, for what an answer asks of it after the answer (claude-permissions.ts).
     const running: RunningSession = { stream: null };
     const options = await this.#delegateOptions(request, { cliInstallation, login, controller, running, run });
-    const stream = query({ prompt: sessionPrompt(request, steer, run, controller.signal), options } as never);
+    const told = withShellLine(request, Boolean(run.shell), this.#platform);
+    const stream = query({ prompt: sessionPrompt(told, steer, run, controller.signal), options } as never);
     this.#catalogEpoch.set(stream, this.#catalog.epoch());
     running.stream = stream as RunningSession["stream"];
     // The mode picker reaches a running turn of a session that asks (the chat's own, a lead's, the
@@ -1575,7 +1591,7 @@ export class ClaudeCodeEngine implements Engine {
     if (aborted || run.deadlineHit) return this.#partial(interruption(aborted), partialState());
     const unboxed = sandboxRefusal(run, (err as Error)?.message);
     if (unboxed) return this.#partial(unboxed, partialState());
-    const classified = this.#classify(err as Error);
+    const classified = this.#delegateFailure(err, run);
     if (classified.kind === EngineFailureKind.Auth) this.#authFailure = classified.message;
     // A limit that arrived as an error result: the text names it, the throw does not. Read the
     // text before treating the throw as "some error" — a session limit must reach the run as
@@ -1669,6 +1685,14 @@ export class ClaudeCodeEngine implements Engine {
     return partialDelegateResult(this.id, ending, state);
   }
 
+  /** The CLI's error result carries the cause when the SDK only says that its process exited. */
+  #delegateFailure(error: unknown, run: RunState): EngineError {
+    if (error instanceof EngineError) return error;
+    const failure = this.#classify(error as Error);
+    if (failure.kind !== EngineFailureKind.Other || !run.errorText) return failure;
+    return this.#classify(new Error(run.errorText));
+  }
+
   #classify(err: Error): EngineError {
     const text = `${err.message}`;
     // A spawn that fails before Claude Code starts is an install problem, not a build failure:
@@ -1698,7 +1722,7 @@ export class ClaudeCodeEngine implements Engine {
 
   /** A sign-in failure in the CLI's words, with what the user can do about it. */
   #signInError(text: string): EngineError {
-    const hint = isAccessLost(text) ? MESSAGE.AccessLostHint : this.loginHint();
+    const hint = isAccessLost(text) ? MESSAGE.AccessLostHint : MESSAGE.LoginHint;
     return new EngineError(EngineFailureKind.Auth, this.id, `${text} — ${hint}`);
   }
 
@@ -2190,6 +2214,19 @@ function sessionPrompt(
   return run.feed.prompt;
 }
 
+/**
+ * The brief of a resumed Windows session with the line naming this turn's shell after it: its turns
+ * may run commands in Genex's sandbox or in Bash (`studioShell`), and it remembers the other. A new
+ * session's tools say it, a Mac's never changes, and a session with no shell has none to name.
+ */
+function withShellLine(request: DelegateRequest, genexShell: boolean, platform: NodeJS.Platform): DelegateRequest {
+  if (platform !== "win32" || !request.resume || request.blind) return request;
+  const bash = !disallowedToolsFor(request, genexShell).includes(SHELL_TOOL);
+  if (!genexShell && !bash) return request;
+  const line = genexShell ? SHELL_THIS_TURN.Studio : SHELL_THIS_TURN.Bash;
+  return { ...request, prompt: `${request.prompt}\n\n${line}` };
+}
+
 /** The stills a brief carries. */
 function briefImages(request: DelegateRequest): DelegateImage[] {
   return (request.images ?? []).filter((image) => image?.data);
@@ -2602,14 +2639,14 @@ function claudeModelCatalog(): EngineModel[] {
   return [
     {
       id: DEFAULT_MODEL,
-      label: "Claude Code default",
+      label: MESSAGE.DefaultModel(),
       contextWindow: 0,
       maxTokens: STANDARD_MAX_TOKENS,
       supportsTools: true,
       supportsVision: true,
       supportsThinking: true,
       efforts: [],
-      note: "Uses the CLI default under Genex settings.",
+      note: MESSAGE.DefaultModelNote(),
     },
   ];
 }

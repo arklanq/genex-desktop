@@ -17,8 +17,9 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { MINUTE_MS } from "../../shared/duration.ts";
 import { errorMessage } from "../../shared/errors.ts";
-import { isPlaySlug, type RemixProgress, RemixStep, remixTitle } from "../../shared/play.ts";
+import { isPlaySlug, PlayRemixRefusal, type RemixProgress, RemixStep, remixTitle } from "../../shared/play.ts";
 import { HOST_GIT_CONFIG, hostGitEnv } from "../../substrate/git-policy.ts";
+import { ENGINE_PROJECT_DEPTH, sourceHoldsGame } from "./game-source.ts";
 import type { PlayWorld } from "./gallery.ts";
 import { downloadLfsFiles, type LfsDownloadDeps } from "./lfs.ts";
 
@@ -47,13 +48,26 @@ const STAGING_PREFIX = ".remix-";
 const STAGING_NAME = /^\.remix-[a-z0-9][a-z0-9-]*-[0-9a-f]{6}$/;
 /** Random bytes in a hidden folder's name: six hex digits. */
 const STAGING_RANDOM_BYTES = 3;
+/** The most entries the look for a game's marks reads. */
+const ENGINE_LOOK_ENTRIES_MAX = 5_000;
 
 const MESSAGE = {
   NotRemixable: "This game can’t be remixed",
   NoFolder: "There is no free folder for the copy",
   Underway: "Another remix is being made",
   Stalled: "The download stopped moving",
+  NoProject: "The game's source holds no game: its creator hasn't shared its project",
 } as const;
+
+/** A remix refused before anything was made, with the code the renderer says it by. */
+export class RemixRefusedError extends Error {
+  readonly code: PlayRemixRefusal;
+  constructor(code: PlayRemixRefusal, message: string) {
+    super(message);
+    this.name = "RemixRefusedError";
+    this.code = code;
+  }
+}
 
 /**
  * Settings a clone runs under, after the host's own: https only (no `ext::` or `file://`
@@ -166,6 +180,76 @@ function routedIn(listing: string, byGitPath: Map<string, string>): Set<string> 
   return routed;
 }
 
+/** Folders never looked in for a game's marks: hidden ones and installed packages. */
+const passedOver = (name: string): boolean => name.startsWith(".") || name === "node_modules";
+
+/** One folder's files (relative, `/` between parts) and the folders under it to look in next; links are never followed. */
+async function folderEntries(dir: string, rel: string): Promise<{ files: string[]; folders: string[]; read: number }> {
+  const entries = await readdir(path.join(dir, rel), { withFileTypes: true }).catch(() => []);
+  const at = (name: string) => (rel ? `${rel}/${name}` : name);
+  return {
+    files: entries.filter((entry) => entry.isFile()).map((entry) => at(entry.name)),
+    folders: entries.filter((entry) => entry.isDirectory() && !passedOver(entry.name)).map((entry) => at(entry.name)),
+    read: entries.length,
+  };
+}
+
+/**
+ * The files of `dir` a few folders deep (`ENGINE_PROJECT_DEPTH`), `/` between parts: enough to
+ * find a game's marks. The look reads a bounded number of entries.
+ */
+async function topFiles(dir: string): Promise<string[]> {
+  const files: string[] = [];
+  let seen = 0;
+  let level: string[] = [""];
+  for (let depth = 0; depth <= ENGINE_PROJECT_DEPTH && level.length > 0; depth += 1) {
+    const next: string[] = [];
+    for (const rel of level) {
+      const found = await folderEntries(dir, rel);
+      seen += found.read;
+      if (seen > ENGINE_LOOK_ENTRIES_MAX) return files;
+      files.push(...found.files);
+      next.push(...found.folders);
+    }
+    level = next;
+  }
+  return files;
+}
+
+/**
+ * Whether a copy holds a game (`game-source.ts`): a Genex game's record, a page at its root,
+ * packages that build it, or an engine's project. Such a source with none of these is what a game
+ * whose creator never shared its project has on Genex.
+ */
+export async function holdsGame(dir: string): Promise<boolean> {
+  const files = await topFiles(dir);
+  const packageJson = files.includes("package.json")
+    ? await readFile(path.join(dir, "package.json"), "utf8").catch(() => null)
+    : null;
+  return sourceHoldsGame(files, packageJson);
+}
+
+/**
+ * Make the copy's `studio.json` the remix's own: what kind of game it is stays (its scaffold, engine,
+ * shape), under the remix's title and its own date, without the author's name for it; adoption keeps
+ * a record that is there, so the remix would otherwise list under the author's title. A record that
+ * is not a JSON object is left as it is.
+ */
+async function ownRecord(dir: string, title: string): Promise<void> {
+  const file = path.join(dir, "studio.json");
+  const text = await readFile(file, "utf8").catch(() => null);
+  if (text === null) return;
+  let record: unknown;
+  try {
+    record = JSON.parse(text);
+  } catch {
+    return;
+  }
+  if (typeof record !== "object" || record === null || Array.isArray(record)) return;
+  const { name: _name, title: _title, createdAt: _createdAt, ...kind } = record as Record<string, unknown>;
+  await writeFile(file, `${JSON.stringify({ ...kind, title, createdAt: new Date().toISOString() }, null, 2)}\n`);
+}
+
 /** Hears a clone's models download: bytes so far, and their total when it is known. */
 export type ModelsProgress = (done: number, total: number | null) => void;
 
@@ -251,6 +335,8 @@ async function makeRemix(world: PlayWorld, source: string, deps: RemixDeps): Pro
     await deps.clone(source, work, (done, total) => step(RemixStep.Models, done, total));
     // The copy starts its own history; the author's stays theirs.
     await rm(path.join(work, ".git"), { recursive: true, force: true });
+    if (!(await holdsGame(work))) throw new RemixRefusedError(PlayRemixRefusal.NoProject, MESSAGE.NoProject);
+    await ownRecord(work, remixTitle(world.title));
     step(RemixStep.Packages);
     await deps.install(work).catch(() => {});
     dest = await claimFolder(root, world.slug, (dir) => moveInto(work, dir));

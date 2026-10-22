@@ -21,7 +21,8 @@ import {
   DropdownMenuTrigger,
 } from "../../ui/dropdown-menu.tsx";
 import { Icon, type IconName } from "../../ui/icons.tsx";
-import { NATIVE_WORDS, PLAY_CARD_MENU_WORDS } from "../../words.ts";
+import { fileManagerWords, NATIVE_WORDS, nativeHereWords, PLAY_CARD_MENU_WORDS } from "../../words.ts";
+import { hostPlatform } from "../../platform.ts";
 import { sizeWords } from "../../../shared/byte-size.ts";
 import type { InstalledGame } from "../../../shared/play-native.ts";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
@@ -124,16 +125,16 @@ const LocalAction = { Reveal: "reveal", Remove: "remove" } as const;
 type LocalAction = (typeof LocalAction)[keyof typeof LocalAction];
 
 /** Remove a game from this computer, and say how it went; its saves stay. */
-async function removeInstalled(game: PlayGame): Promise<void> {
+async function removeInstalled(game: PlayGame, installed: InstalledGame): Promise<void> {
   try {
     await studio().play.uninstall(game.slug);
-    studio().notify(NATIVE_WORDS.removed(game.title), ToastTone.Ok);
+    studio().notify(nativeHereWords(installed.platform).removed(game.title), ToastTone.Ok);
   } catch {
     studio().notify(NATIVE_WORDS.removeFailed, ToastTone.Error);
   }
 }
 
-/** An installed game's rows: Show in Finder, and Remove from this Mac with the space it takes. */
+/** An installed game's rows: Show in Finder (or the folder), and Remove from this Mac (or computer) with the space it takes. */
 function LocalRows({
   game,
   installed,
@@ -148,7 +149,7 @@ function LocalRows({
       void studio()
         .api.playRevealInstall(game.slug)
         .catch(() => undefined);
-    else void removeInstalled(game);
+    else void removeInstalled(game, installed);
   };
   return (
     <>
@@ -159,7 +160,7 @@ function LocalRows({
         onSelect={() => select(LocalAction.Reveal)}
       >
         <Icon name="folder-open" />
-        <span className="min-w-0 flex-1 truncate">{NATIVE_WORDS.showInFinder}</span>
+        <span className="min-w-0 flex-1 truncate">{fileManagerWords(hostPlatform()).show}</span>
       </DropdownMenuItem>
       <DropdownMenuItem
         data-play-card-local={LocalAction.Remove}
@@ -167,7 +168,7 @@ function LocalRows({
         onSelect={() => select(LocalAction.Remove)}
       >
         <Icon name="trash" />
-        <span className="min-w-0 flex-1 truncate">{NATIVE_WORDS.removeFromMac}</span>
+        <span className="min-w-0 flex-1 truncate">{nativeHereWords(installed.platform).removeFrom}</span>
         <span className="play-card-menu-state">{sizeWords(installed.bytes)}</span>
       </DropdownMenuItem>
     </>

@@ -1,5 +1,5 @@
 /**
- * The Publish dialog's platforms (canvas board "Publish"): the web, Mac and Windows rows read from
+ * The Publish dialog's platforms (canvas board "Publish"): the web, Mac, Windows and Linux rows read from
  * the game folder, each with what its build runs on, when it was built and its size. An app not made
  * yet, and a Unity or Godot game's web version, offers "Make with agent", which sends the ask through
  * the game's chat at once and keeps the dialog open, the row then saying it was asked; an Unreal
@@ -11,6 +11,7 @@
 import type { JSX } from "react";
 import { useState } from "react";
 import type { GenexNativeRecord } from "../../../../shared/genex.ts";
+import { t } from "../../../../shared/i18n.ts";
 import { type PublishPlatform, PublishTarget } from "../../../../shared/publish-platforms.ts";
 import { composeInChat } from "../../../compose-in-chat.ts";
 import { useLibrary } from "../../../state/hooks.ts";
@@ -39,6 +40,7 @@ const MARK: Readonly<Record<PublishTarget, IconName>> = {
   [PublishTarget.Web]: "globe",
   [PublishTarget.Mac]: "apple",
   [PublishTarget.Windows]: "windows",
+  [PublishTarget.Linux]: "linux",
 };
 
 /** The game folder's platforms, read once as the dialog opens; null until read or when unreadable. */
@@ -62,9 +64,9 @@ export function usePublishPlatforms(project: string): PublishPlatform[] | null {
 /** The quiet words a row ends with, by what it says: each with its words for a screen reader. */
 const NOTE: Partial<Record<PlatformEnd, { text: string; label: (name: string) => string }>> = {
   [PlatformEnd.Soon]: { text: WORDS.soon, label: WORDS.soonLabel },
-  [PlatformEnd.Sending]: { text: WORDS.sending, label: (name) => `${name}: ${WORDS.sending}` },
+  [PlatformEnd.Sending]: { text: WORDS.sending, label: (name) => t("{name}: {state}", { name, state: WORDS.sending }) },
   [PlatformEnd.Sent]: { text: WORDS.sent, label: WORDS.sentLabel },
-  [PlatformEnd.Failed]: { text: WORDS.failed, label: (name) => `${name}: ${WORDS.failed}` },
+  [PlatformEnd.Failed]: { text: WORDS.failed, label: (name) => t("{name}: {state}", { name, state: WORDS.failed }) },
 };
 
 /** The agent's presses a row may end with: making an app, or building one again. */
