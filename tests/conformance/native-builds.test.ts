@@ -146,6 +146,38 @@ describe("a game folder's player builds", () => {
     assert.ok((unreal?.bytes ?? 0) > (binaries?.bytes ?? 0), "an Unreal package counts its engine and data too");
   });
 
+  it("reads an Unreal Windows package as one build: its starter at the package's root", async () => {
+    const root = await tmpDir("native-builds-");
+    const pack = path.join(root, "unreal", "Builds", "Windows");
+    await put(path.join(pack, "Dust", "Binaries", "Win64", "Dust-Win64-Shipping.exe"), pe(0x8664));
+    await put(path.join(pack, "Engine", "Binaries", "Win64", "CrashReportClient.exe"), pe(0x8664));
+    await put(path.join(pack, "Engine", "Binaries", "Win64", "EpicWebHelper.exe"), pe(0x8664));
+    await put(path.join(pack, "Engine", "Extras", "Redist", "en-us", "UEPrereqSetup_x64.exe"), pe(0x8664));
+    await put(path.join(pack, "Dust", "Content", "Paks", "Dust-Windows.pak"), "pak");
+    // The starter UAT writes last, at the package's root: what a player runs.
+    await put(path.join(pack, "Dust.exe"), pe(0x8664));
+    const found = await findNativeBuilds(root);
+    assert.deepEqual(
+      found.map((build) => [build.platform, build.arch, build.entry, build.folder]),
+      [[NativePlatform.Windows, NativeArch.X64, "unreal/Builds/Windows/Dust.exe", "unreal/Builds/Windows"]],
+    );
+  });
+
+  it("never takes an Unreal project's own build output for a build: it has no game content", async () => {
+    const root = await tmpDir("native-builds-");
+    const project = path.join(root, "unreal");
+    await put(path.join(project, "Dust.uproject"), "{}");
+    // UnrealBuildTool's program, before staging: no cooked content beside it.
+    await app(path.join(project, "Binaries", "Mac"), "Dust-Mac-Shipping", thinMachO(CPU_ARM64), "Dust-Mac-Shipping");
+    await put(path.join(project, "Binaries", "Win64", "Dust-Win64-Shipping.exe"), pe(0x8664));
+    await app(path.join(project, "Builds", "Mac"), "Dust-Mac-Shipping", thinMachO(CPU_ARM64), "Dust-Mac-Shipping");
+    const found = await findNativeBuilds(root);
+    assert.deepEqual(
+      found.map((build) => build.entry),
+      ["unreal/Builds/Mac/Dust-Mac-Shipping.app"],
+    );
+  });
+
   it("finds no Linux build in what only looks like one", async () => {
     const root = await tmpDir("native-builds-");
     const outside = await tmpDir("native-builds-outside-");

@@ -84,6 +84,10 @@ export const CORE_WORKSPACE = {
       "Intermediate/",
       "DerivedDataCache/",
       "Binaries/",
+      // Builds/ is where package-game archives the apps players install: output, never history.
+      "Builds/",
+      // A package's cook logs, written anew by every package.
+      "Build/*/FileOpenOrder/",
       "Plugins/*/Intermediate/",
       "Plugins/*/Binaries/",
     ],

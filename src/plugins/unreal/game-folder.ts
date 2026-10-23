@@ -17,6 +17,10 @@ const UNREAL_IGNORES = [
   `${GAME_PROJECT_FOLDER}/Intermediate/`,
   `${GAME_PROJECT_FOLDER}/DerivedDataCache/`,
   `${GAME_PROJECT_FOLDER}/Binaries/`,
+  // The apps package-game makes: what players install, never the game's history.
+  `${GAME_PROJECT_FOLDER}/Builds/`,
+  // A package's logs of the order the cook opened files in, written anew by every package.
+  `${GAME_PROJECT_FOLDER}/Build/*/FileOpenOrder/`,
   `${GAME_PROJECT_FOLDER}/Plugins/*/Intermediate/`,
   `${GAME_PROJECT_FOLDER}/Plugins/*/Binaries/`,
   "__pycache__/",

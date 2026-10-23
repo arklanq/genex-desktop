@@ -13,6 +13,7 @@ import { test } from "node:test";
 import { UnrealLivePluginTool, UnrealLoopTool } from "../../src/harness-seed/loop/unreal/live-contract.ts";
 import { MotionToolName } from "../../src/plugins/unreal/motion-tools.ts";
 import { EditorControlToolName } from "../../src/plugins/unreal/editor-control.ts";
+import { GamePackageToolName } from "../../src/plugins/unreal/game-package.ts";
 import { type PluginManifest, PluginToolAudience } from "../../src/shared/plugins.ts";
 import type { DelegateRequest } from "../../src/substrate/engines/types.ts";
 import { validateManifest } from "../../src/substrate/plugins/manifest.ts";
@@ -120,6 +121,7 @@ const UNREAL_PROJECT_TOOLS = [
   `unreal__${MotionToolName.Status}`,
   `unreal__${MotionToolName.Add}`,
   ...Object.values(EditorControlToolName).map((name) => `unreal__${name}`),
+  ...Object.values(GamePackageToolName).map((name) => `unreal__${name}`),
 ];
 /** The steps only the Unreal Loop's runner and the live builder's checkpoint take, through the harness's own plugin calls. */
 const RUNNER_TOOLS = [

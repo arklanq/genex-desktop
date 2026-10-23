@@ -211,6 +211,34 @@ test("Stop during CLI diagnostics kills the probe and never proceeds to executio
   }
   assert.equal(alive, false, "the local diagnostic process was released");
 });
+/**
+ * A CLI whose first start takes `slowMs` before it answers (Windows scanning a new binary), then
+ * answers at once; with `always`, every start is that slow.
+ */
+async function slowFirstStartCli(relative: string, slowMs: number, always = false): Promise<string> {
+  const binary = path.join(root, exe(relative));
+  const started = path.join(root, `${relative}.started`);
+  const body =
+    `const fs = require("fs"); const first = ${always} || !fs.existsSync(${JSON.stringify(started)}); fs.writeFileSync(${JSON.stringify(started)}, "");\n` +
+    `setTimeout(() => console.log(process.argv[2] === "--version" ? "fixture 1.0" : ${JSON.stringify(FLAGS)}), first ? ${slowMs} : 0);\n`;
+  await launcher(binary, `#!${process.execPath}\n${body}`, body);
+  return binary;
+}
+test("a CLI slow on its first start is asked again with a longer allowance before it is called incompatible", async () => {
+  const once = await slowFirstStartCli("first-start-once/codex", 1500);
+  const asked = await discoverCodingCli("codex", { ...options, override: once, probeTimeoutsMs: [300] });
+  assert.equal(asked.status.state, "incompatible", "one short allowance is not enough for this CLI");
+  const binary = await slowFirstStartCli("first-start/codex", 1500);
+  const found = await discoverCodingCli("codex", { ...options, override: binary, probeTimeoutsMs: [300, 10_000] });
+  assert.equal(found.status.state, "ready", found.status.detail);
+  assert.equal(found.status.version, "fixture 1.0");
+});
+test("a CLI that never answers within any allowance is incompatible and says how long it was given", async () => {
+  const binary = await slowFirstStartCli("never-answers/codex", 60_000, true);
+  const found = await discoverCodingCli("codex", { ...options, override: binary, probeTimeoutsMs: [200, 400] });
+  assert.equal(found.status.state, "incompatible");
+  assert.match(found.status.detail, /timed out after 0\.4 seconds/);
+});
 test("Stop while resolving Claude prevents both SDK entry points from launching", async () => {
   for (const operation of ["complete", "delegate"] as const) {
     let calls = 0;

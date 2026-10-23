@@ -40,6 +40,8 @@ export interface DiscoveryOptions {
   signal?: AbortSignal;
   /** The operating system whose file names and launchers apply; the host's by default. */
   platform?: NodeJS.Platform;
+  /** Each try's allowance for one `--version`/`--help` probe ({@link PROBE_TIMEOUTS_MS} by default). */
+  probeTimeoutsMs?: readonly number[];
 }
 /** The executable each coding CLI installs as. */
 const CLI_BINARY = {
@@ -80,9 +82,15 @@ const OPENCODE_FLAGS: Record<OpenCodeDialect, string[]> = {
   [OpenCodeDialect.V1]: ["--format", "--session", "--model", "--agent", "--file", "--variant", "--pure", "--dir"],
   [OpenCodeDialect.V2]: ["--format", "--session", "--model", "--file", "--standalone"],
 };
-/** How long reading the login shell's PATH, and each `--version`/`--help` probe, may take. */
+/** How long reading the login shell's PATH may take. */
 const LOGIN_PATH_TIMEOUT_MS = 8 * SECOND_MS;
-const PROBE_TIMEOUT_MS = 8 * SECOND_MS;
+/**
+ * Each try's allowance for a `--version`/`--help` probe. A probe that runs out of time is asked once
+ * more with the longer one: a CLI's first start just after it was installed or updated waits while
+ * Windows scans the new program, and on a slow PC (2 CPUs) that took more than 8 s, so a working
+ * CLI was called incompatible.
+ */
+const PROBE_TIMEOUTS_MS = [8 * SECOND_MS, 45 * SECOND_MS] as const;
 /** A probe keeps the last this-many characters of what the CLI printed. */
 const PROBE_OUTPUT_CHARS = 32_768;
 /** How long a discovery result serves UI and model-list reads. */
@@ -107,7 +115,7 @@ const MESSAGE = {
   UnknownProvider: "Unknown coding provider",
   SettingsUninitialized: "Coding CLI settings are not initialized",
   Stopped: "Stopped",
-  ProbeTimedOut: `CLI diagnostic timed out after ${PROBE_TIMEOUT_MS / SECOND_MS} seconds`,
+  ProbeTimedOut: (ms: number) => `CLI diagnostic timed out after ${ms / SECOND_MS} seconds`,
   NoVersion: "CLI did not report a version",
   MissingOptions: (missing: string[]) => `Required CLI options are unavailable: ${missing.join(", ")}`,
   OpenCodeUnreadable: "Genex can't tell which OpenCode version this is. Install a released OpenCode, then check again.",
@@ -271,12 +279,34 @@ function within(file: string, root: string): boolean {
   const rel = path.relative(root, file);
   return !rel || (!rel.startsWith(`..${path.sep}`) && rel !== ".." && !path.isAbsolute(rel));
 }
+/** A probe that ran out of its allowance, which a longer one may still answer. */
+class ProbeTimeout extends Error {}
+
+/** One probe, asked again with the next allowance each time it runs out of time; the last timeout throws. */
 async function probe(
   file: string,
   args: string[],
   env: NodeJS.ProcessEnv,
-  signal: AbortSignal | undefined,
-  platform: NodeJS.Platform,
+  context: Pick<CheckContext, "signal" | "platform" | "probeTimeoutsMs">,
+): Promise<string> {
+  const allowances = context.probeTimeoutsMs.length > 0 ? context.probeTimeoutsMs : PROBE_TIMEOUTS_MS;
+  for (const [i, timeoutMs] of allowances.entries()) {
+    try {
+      return await probeOnce(file, args, env, context, timeoutMs);
+    } catch (error) {
+      const last = i === allowances.length - 1;
+      if (last || !(error instanceof ProbeTimeout)) throw error;
+    }
+  }
+  throw new ProbeTimeout(MESSAGE.ProbeTimedOut(0));
+}
+
+async function probeOnce(
+  file: string,
+  args: string[],
+  env: NodeJS.ProcessEnv,
+  { signal, platform }: Pick<CheckContext, "signal" | "platform">,
+  timeoutMs: number,
 ): Promise<string> {
   signal?.throwIfAborted();
   const launch = commandLaunch(file, args, platform);
@@ -302,8 +332,8 @@ async function probe(
     else signal?.addEventListener("abort", abort, { once: true });
     const timer = setTimeout(() => {
       stop();
-      reject(new Error(MESSAGE.ProbeTimedOut));
-    }, PROBE_TIMEOUT_MS);
+      reject(new ProbeTimeout(MESSAGE.ProbeTimedOut(timeoutMs)));
+    }, timeoutMs);
     for (const stream of [child.stdout, child.stderr])
       stream?.on("data", (chunk) => {
         output = (output + chunk).slice(-PROBE_OUTPUT_CHARS);
@@ -476,7 +506,9 @@ export async function discoverCodingCli(
   let first: CodingCliStatus | undefined;
   for (const selected of found) {
     const checked: CodingCliStatus = { ...status, path: selected };
-    await checkSelectedCli(provider, selected, { dirs, env, signal: options.signal, platform, generation }, checked);
+    const probeTimeoutsMs = options.probeTimeoutsMs ?? PROBE_TIMEOUTS_MS;
+    const context = { dirs, env, signal: options.signal, platform, generation, probeTimeoutsMs };
+    await checkSelectedCli(provider, selected, context, checked);
     if (checked.state === CodingCliState.Ready) return { status: checked, env };
     first ??= checked;
   }
@@ -583,6 +615,7 @@ interface CheckContext {
   signal: AbortSignal | undefined;
   platform: NodeJS.Platform;
   generation: number;
+  probeTimeoutsMs: readonly number[];
 }
 
 /** Whether the chosen CLI can run here and speaks what we need; the verdict lands in `status`. */
@@ -705,17 +738,16 @@ async function checkCliCapabilities(
   context: CheckContext,
   status: CodingCliStatus,
 ): Promise<void> {
-  const { signal, platform } = context;
+  const { platform } = context;
   // M6: a version and a help text need no credential; the CLI is asked with none.
   const probeEnv = childEnv(context.env, { base: "contractor", vendor: CLI_BINARY[provider] });
   const identity = await cliIdentity(provider, file, platform);
   await answersRead;
   const known = identity ? answered.get(identity) : undefined;
-  status.version =
-    known?.version ?? (await probe(file, ["--version"], probeEnv, signal, platform)).split("\n")[0]?.trim();
+  status.version = known?.version ?? (await probe(file, ["--version"], probeEnv, context)).split("\n")[0]?.trim();
   if (!status.version) throw new Error(MESSAGE.NoVersion);
   const required = requiredFlags(provider, status.version);
-  const help = known?.help ?? (await probe(file, HELP_ARGS[provider], probeEnv, signal, platform));
+  const help = known?.help ?? (await probe(file, HELP_ARGS[provider], probeEnv, context));
   const missing = required.filter((flag) => !help.includes(flag));
   if (missing.length) throw new Error(MESSAGE.MissingOptions(missing));
   const keepNewAnswer = identity && !known && context.generation === discoveryGeneration(provider);

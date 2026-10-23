@@ -4,7 +4,7 @@
 
 A project is any folder, several kinds at once: web, Unreal game or plugin, Roblox, Godot, Unity,
 Blender assets or a plugin's kind. Facts suggest; the first message or you decide. The
-sidebar names a non-game's kind (**Unreal plugin**, **Blender assets**).
+sidebar names a non-game's kind.
 
 New game makes an empty folder; the first message picks its kind. A vague ask builds a web game;
 with an engine plugin on, a kindless game asks which engine. A port snapshots first, keeping
@@ -33,7 +33,7 @@ game; Unreal and Godot projects outside it get no Loop or Rewind.
 The lead works in the open editor through Genex's helper, one holder at a time; while you play
 the chat reads “Waiting for you to finish in Unreal”. Rewind saves, closes and reopens Unreal.
 Agents and blind judges play it. Mac games skip hardware ray tracing. Agents set up linked projects;
-Undo reverts both. An **Unreal plugin** project
+Undo reverts both. Agents package its apps. An **Unreal plugin** project
 is a host project with the plugin in `Plugins/`; its tools build, test and package it.
 
 ## Godot, Roblox, Unity

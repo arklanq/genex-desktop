@@ -20,6 +20,7 @@ import {
   PublishTarget,
 } from "../../src/shared/publish-platforms.ts";
 import {
+  appsMadeOnly,
   appsLabel,
   failureLines,
   gateByPlugin,
@@ -265,6 +266,45 @@ describe("Publish's platform rows as the dialog says them", () => {
     assert.equal(stale?.detail, "Built before your last change");
     const sent = platformRows([{ ...MAC, uploads: true }], NOW)[0];
     assert.equal(sent?.end, PlatformEnd.None, "an app Publish sends offers nothing more");
+  });
+
+  it("says where an Unreal game's app for another system is packaged, and offers no agent for it", () => {
+    const unreal = [{ id: CoreFact.UnrealProject, path: "unreal" }];
+    assert.equal(appsMadeOnly(unreal, "darwin"), PublishTarget.Mac);
+    assert.equal(appsMadeOnly(unreal, "win32"), PublishTarget.Windows);
+    assert.equal(appsMadeOnly([{ id: CoreFact.UnityProject, path: "unity" }], "darwin"), null, "Unity builds any");
+    const missingMac = { ...MAC, state: PublishPlatformState.Missing, arch: null, bytes: 0, builtAt: null };
+    const staleLinux = { ...LINUX, state: PublishPlatformState.Stale };
+    const onMac = platformRows(
+      [WEB, missingMac, WINDOWS, staleLinux],
+      NOW,
+      undefined,
+      WebOffer.Unavailable,
+      PublishTarget.Mac,
+    );
+    assert.deepEqual(
+      onMac.slice(1).map((row) => [row.name, row.detail, row.end]),
+      [
+        ["Mac app", "Not made yet", PlatformEnd.Make],
+        ["Windows app", "Package it on a Windows PC", PlatformEnd.None],
+        ["Linux app", "Built before your last change", PlatformEnd.None],
+      ],
+    );
+    const onWindows = platformRows(
+      [missingMac, WINDOWS_READY],
+      NOW,
+      undefined,
+      WebOffer.Unavailable,
+      PublishTarget.Windows,
+    );
+    assert.deepEqual(
+      onWindows.map((row) => [row.detail, row.end]),
+      [
+        ["Package it on a Mac", PlatformEnd.None],
+        ["64-bit PCs · built 5 min ago", PlatformEnd.None],
+      ],
+      "this computer's own app goes as before",
+    );
   });
 
   it("names a Linux app, what it runs on and its players", () => {

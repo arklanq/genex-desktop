@@ -3694,6 +3694,12 @@ export const PUBLISH_PLATFORM_WORDS = {
   },
   stale: t("Built before your last change"),
   missing: t("Not made yet"),
+  /** An Unreal game's app for another system: Unreal packages it only on that system. */
+  elsewhere: {
+    [PublishTarget.Mac]: t("Package it on a Mac"),
+    [PublishTarget.Windows]: t("Package it on a Windows PC"),
+    [PublishTarget.Linux]: t("Package it on a Linux PC"),
+  } satisfies Record<Exclude<PublishTarget, typeof PublishTarget.Web>, string>,
   /** A built app genex.games does not take yet: it shows, and Publish sends the web version. */
   soon: t("Coming soon"),
   soonLabel: (name: string) => t("{name}: publishing it is coming soon", { name }),

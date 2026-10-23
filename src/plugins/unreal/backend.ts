@@ -355,8 +355,8 @@ export type UnrealBackendDeps = {
   processes?: ProcessEnv;
   /** Aborts once the backend stops: its running jobs (a plugin's build, tests and package) end with it. */
   stopped?: AbortSignal;
-  /** The programs a plugin's build, tests and package run; UBT, the headless editor and UAT unless a test stands in. */
-  programs?: Pick<LoopToolsDeps, "compile" | "runProgram" | "runCommand" | "prepareSandbox">;
+  /** The programs a plugin's build, tests and package and a game's package run; UBT, the headless editor and UAT unless a test stands in. */
+  programs?: Pick<LoopToolsDeps, "compile" | "runProgram" | "runCommand" | "prepareSandbox" | "runUat">;
 };
 
 type ProjectError = { code: SetupErrorCode | null; message: string };

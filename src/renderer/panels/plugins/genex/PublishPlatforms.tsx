@@ -3,7 +3,7 @@
  * the game folder, each with what its build runs on, when it was built and its size. An app not made
  * yet, and a Unity or Godot game's web version, offers "Make with agent", which sends the ask through
  * the game's chat at once and keeps the dialog open, the row then saying it was asked; an Unreal
- * game's web row says it has none. A ready app goes with Publish once its web build is
+ * game's web row says it has none, and its rows for other systems say where they are packaged. A ready app goes with Publish once its web build is
  * public: the line under the rows says so, and its row then says it is being sent, is on Genex, or
  * was not sent (with why, under the rows). While Studio's Genex CLI cannot send apps, a built one
  * says "Coming soon" and its players get the web version. A web game with no app shows none of this.
@@ -14,11 +14,13 @@ import type { GenexNativeRecord } from "../../../../shared/genex.ts";
 import { t } from "../../../../shared/i18n.ts";
 import { type PublishPlatform, PublishTarget } from "../../../../shared/publish-platforms.ts";
 import { composeInChat } from "../../../compose-in-chat.ts";
+import { hostPlatform } from "../../../platform.ts";
 import { useLibrary } from "../../../state/hooks.ts";
 import { Icon, type IconName } from "../../../ui/icons.tsx";
 import { useAsyncEffect } from "../../../use-async-effect.ts";
 import { PUBLISH_PLATFORM_WORDS } from "../../../words.ts";
 import {
+  appsMadeOnly,
   failureLines,
   listingLine,
   listsPlatforms,
@@ -185,7 +187,7 @@ export function PublishPlatforms({
   return (
     <div className="genex-publish-platforms" data-genex-publish-platforms>
       <ul aria-label={WORDS.label}>
-        {platformRows(platforms, Date.now(), native, webOffer).map((row) => (
+        {platformRows(platforms, Date.now(), native, webOffer, appsMadeOnly(facts ?? [], hostPlatform())).map((row) => (
           <Row key={row.target} row={row} asked={asked.has(row.target)} onMake={make} />
         ))}
       </ul>

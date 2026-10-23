@@ -74,6 +74,7 @@ import { createReopenTools, type ProcessEnv } from "./editor-reopen.ts";
 import type { RunProgram } from "./automation-tests.ts";
 import { createMotionTools, MotionToolName } from "./motion-tools.ts";
 import { createShipTools, type ShipToolName } from "./plugin-ship.ts";
+import { createGamePackageTools, type GamePackageToolName, type RunUat } from "./game-package.ts";
 import type { EditorRestart } from "./editor-restart.ts";
 import { EditorStart } from "./editor-status.ts";
 import { inRun, logAnswer, probeAnswer, shotsAnswer } from "./hook-answers.ts";
@@ -391,6 +392,8 @@ export type LoopToolsDeps = {
   /** Runs RunUAT in its sandbox, and makes the sandbox, for a plugin's package; the product's own unless a test stands in. */
   runCommand?: RunCommand;
   prepareSandbox?: PrepareSandbox;
+  /** Runs RunUAT for a game's package; the product's own unless a test stands in. */
+  runUat?: RunUat;
   /** Aborts once the backend stops: a plugin's running jobs end with it. */
   stopped?: AbortSignal;
 };
@@ -742,6 +745,7 @@ export function createLoopTools(deps: LoopToolsDeps) {
     ...liveHandlers(set, queueFor, reopen, moments),
     ...leadHandlers(set, moments),
     ...ship.handlers,
+    ...packageHandlers(deps),
     [MomentToolName.OpenForRun]: async (_args, context, storage) => openForRun(moments.ops(context, storage)),
     [MotionToolName.Status]: (_args, context, storage) => motion.status(storage, game(context)),
     [MotionToolName.Add]: (_args, context, storage) => motion.add(storage, game(context), context.directory),
@@ -754,6 +758,13 @@ export function createLoopTools(deps: LoopToolsDeps) {
       every[name](args, context, storage),
   };
 }
+
+/** `package-game` and `package-status`, saving the game's open Unreal with the agent's own save. */
+const packageHandlers = (deps: LoopToolsDeps) =>
+  createGamePackageTools({
+    ...deps,
+    save: (storage, game, timeoutMs) => saveAll(deps, storage, game, { saveMs: timeoutMs }),
+  }).handlers;
 
 /** `open-editor`'s set-up of a project this profile has no record of: it holds the editor lock, so it may quit Unreal. */
 const setUpThenOpen =
@@ -793,6 +804,7 @@ export type AnyLoopToolName =
   | MomentToolName
   | EditorControlToolName
   | ShipToolName
+  | GamePackageToolName
   | MotionToolName
   | EnginePlayTool;
 

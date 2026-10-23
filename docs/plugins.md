@@ -2478,7 +2478,26 @@ backend's channel there instead of a SIGTERM, which would end the backend before
 its report is a failed run, its summary naming the exit code, the counts so far and its last lines.
 `unreal__plugin-status` answers each job's state and results and `proof`: the summary, the note and
 `unreal/Saved/Genex/Shots/<Plugin>-window.jpg` (kept by `app_look`'s `save`) that exist, the summary
-and note only for a run that finished, relative to the game, read from disk after a restart. A chat build of a game still with no kind, with the plugin on, first asks the
+and note only for a run that finished, relative to the game, read from disk after a restart.
+Any Unreal game also gets `unreal__package-game {stop?}` and `unreal__package-status`
+(`game-package.ts`): the app players install, for this computer's system only (Unreal makes no app
+for another one). The person's open Unreal saves first (play ended; one that answers but can't save
+leaves nothing packaged), then `RunUAT BuildCookRun -platform=Mac|Win64 -clientconfig=Shipping -build
+-cook -stage -pak -stagingdirectory=…` stages into `unreal/Builds/<Mac|Windows>/` (emptied first, never
+through a link; ignored by the game's history; never `-archive`, which copies a Mac app without its
+cooked content), the cook run by the engine's `UnrealEditor-Cmd`, within 120
+minutes. A Mac needs Xcode: a template's plugins make even a Blueprint game build code there. Like
+`plugin-test` it runs outside ProcessSandbox, with the small environment and its own process group:
+AutomationTool rewrites its per-user config cache for each new project and the cook needs the
+editor's derived data, Zen store and shader workers, all of which UnrealBuildTool's profile denies.
+On Windows `RunUAT.bat` runs through cmd.exe with every path whole in quotes (`quotedScriptLine`); a
+path with a quote, `%` or `!`, or on a network share, is refused first. `package-status` answers the
+state, the app relative to the game, the seconds and a failure's first error lines with the
+computer's paths taken out; after a restart, idle with the app found on disk. Publish then finds the
+app: `main/core/native-builds.ts` takes an Unreal Windows package's starter at its root as the whole
+build (no program inside a Windows build's folder is a build of its own, and Unreal's
+`UEPrereqSetup` is a helper) and never a project's own `Binaries` beside its `.uproject`, which hold
+no cooked content. A chat build of a game still with no kind, with the plugin on, first asks the
 user Web or Unreal Engine with `ask_user`, unless the message names one
 (`loop/unreal-prompts.ts` `engineChoiceRule`: one option per scaffold, else per plugin, among
 `plugins.tools`'s `kinds` (Unreal's are `Unreal game` and `Unreal plugin`), each in its plugin's

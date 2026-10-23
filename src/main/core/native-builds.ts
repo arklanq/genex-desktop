@@ -2,7 +2,7 @@
  * The player builds a game folder holds: a Mac app (a `.app` with an Info.plist and a Mach-O program
  * inside), a Windows program (a PE `.exe` beside its data) and a Linux program (a 64-bit ELF named
  * as Unity and Godot name it, `<Game>.x86_64`, or in an Unreal package's `<Game>/Binaries/Linux`),
- * wherever Unity, Godot or Unreal put them. Platform and processor are read from the binary itself, never from a name or the author's
+ * wherever Unity, Godot or Unreal put them (never an Unreal project's own `Binaries`, which hold no game content). Platform and processor are read from the binary itself, never from a name or the author's
  * words. The folder is written by agents: nothing is followed through a link, a bundle whose program
  * is a link or is not a binary is not a build, and the walk stops at a cap however large the folder.
  */
@@ -30,8 +30,14 @@ const SKIPPED = new Set([
   "DerivedDataCache",
   "Saved",
 ]);
-/** Programs an engine ships beside a game's own: never the game. */
-const HELPER_EXE = /^(UnityCrashHandler|CrashReportClient|unins|setup)/i;
+/**
+ * An Unreal project's own build output, beside its `.uproject`: UnrealBuildTool's programs there
+ * have no cooked content and never run as the game (a package keeps its `Binaries` under `<Game>/`).
+ */
+const UNREAL_PROJECT_BINARIES = "Binaries";
+const UNREAL_PROJECT = /\.uproject$/i;
+/** Programs an engine ships beside a game's own (Unreal's prerequisites installer among them): never the game. */
+const HELPER_EXE = /^(UnityCrashHandler|CrashReportClient|unins|setup|UEPrereqSetup)/i;
 /** The name Unity and Godot give a Linux player: `<Game>.x86_64`, `<Game>.arm64`. */
 const LINUX_PLAYER = /\.(x86_64|arm64|aarch64)$/i;
 /** The folders an Unreal package keeps a Linux game's program in, under `<Game>/Binaries/`. */
@@ -242,7 +248,14 @@ export async function findNativeBuilds(root: string): Promise<FoundBuild[]> {
     if (windows) found.push(windows);
     const linux = await linuxBuild(root, next.dir, files);
     if (linux) found.push(linux);
-    const folders = entries.filter((entry) => entry.isDirectory() && !SKIPPED.has(entry.name));
+    // A Windows build's folder ships whole: the programs inside it (an Unreal package's game and
+    // engine binaries under its starter) are its own, never builds of their own.
+    if (windows && next.depth > 0) continue;
+    const project = files.some((name) => UNREAL_PROJECT.test(name));
+    const folders = entries.filter(
+      (entry) =>
+        entry.isDirectory() && !SKIPPED.has(entry.name) && !(project && entry.name === UNREAL_PROJECT_BINARIES),
+    );
     for (const entry of folders) await lookIn(root, next, entry.name, found, pending);
   }
   return found.sort((a, b) => b.builtAt - a.builtAt);

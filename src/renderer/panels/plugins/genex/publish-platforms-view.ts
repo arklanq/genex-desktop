@@ -52,6 +52,23 @@ export function webOfferFor(facts: readonly FactRef[]): WebOffer {
   return facts.some((fact) => fact.id === CoreFact.UnrealProject) ? WebOffer.Unavailable : WebOffer.Quiet;
 }
 
+/** The rows of each computer's own system, in `process.platform` spelling. */
+const HOST_TARGET: Readonly<Record<string, PublishTarget>> = {
+  darwin: PublishTarget.Mac,
+  win32: PublishTarget.Windows,
+  linux: PublishTarget.Linux,
+};
+
+/**
+ * The only system a game's apps are made on here, or null when the agent makes any: an Unreal game
+ * is packaged on the system it is for (Unreal makes no Mac app on Windows, nor a Windows or Linux one
+ * on a Mac), so the other rows say where it is made instead of offering "Make with agent".
+ */
+export function appsMadeOnly(facts: readonly FactRef[], hostPlatform: string): PublishTarget | null {
+  if (!facts.some((fact) => fact.id === CoreFact.UnrealProject)) return null;
+  return HOST_TARGET[hostPlatform] ?? null;
+}
+
 /** One platform's row as the dialog draws it. */
 export interface PlatformRow {
   target: PublishTarget;
@@ -107,15 +124,27 @@ function webWords(row: PublishPlatform, offer: WebOffer): { detail: string; end:
   return { detail, end: PlatformEnd.None };
 }
 
+/** Whether a native row is an app this computer can't make (`appsMadeOnly`) and has none ready to send. */
+const madeElsewhere = (row: PublishPlatform, madeOnly: PublishTarget | null): boolean =>
+  madeOnly !== null && row.target !== madeOnly && row.state !== PublishPlatformState.Ready;
+
+/** A native row this computer can't make: where it is made while missing, else why it is old; no press. */
+const elsewhereWords = (row: PublishPlatform & { target: NativeTarget }, now: number) => ({
+  detail: row.state === PublishPlatformState.Missing ? WORDS.elsewhere[row.target] : nativeDetail(row, now),
+  end: PlatformEnd.None,
+});
+
 /**
  * The rows in the order they come, each as words; `native` is how the last Publish's apps went,
- * `webOffer` what a game with no web version is offered for one.
+ * `webOffer` what a game with no web version is offered for one, `madeOnly` the one system this
+ * computer makes the game's apps for (`appsMadeOnly`).
  */
 export function platformRows(
   platforms: readonly PublishPlatform[],
   now: number,
   native?: GenexNativeRecord,
   webOffer: WebOffer = WebOffer.Quiet,
+  madeOnly: PublishTarget | null = null,
 ): PlatformRow[] {
   return platforms.map((row) => {
     if (!isNative(row))
@@ -126,13 +155,15 @@ export function platformRows(
         size: null,
         state: row.state,
       };
+    const words = madeElsewhere(row, madeOnly)
+      ? elsewhereWords(row, now)
+      : { detail: nativeDetail(row, now), end: nativeEnd(row, native) };
     return {
       target: row.target,
       name: WORDS.name[row.target],
-      detail: nativeDetail(row, now),
+      ...words,
       size: row.bytes > 0 && row.state !== PublishPlatformState.Missing ? sizeWords(row.bytes) : null,
       state: row.state,
-      end: nativeEnd(row, native),
     };
   });
 }

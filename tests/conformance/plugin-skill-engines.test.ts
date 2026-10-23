@@ -172,6 +172,8 @@ const UNREAL_EDITOR_TOOLS = [
   "unreal__add-cpp-module",
   "unreal__motion-status",
   "unreal__add-motion-matching",
+  "unreal__package-game",
+  "unreal__package-status",
   "unreal__open-editor",
   "unreal__quit-editor",
   "unreal__editor-status",
