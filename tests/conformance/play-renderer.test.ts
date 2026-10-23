@@ -234,7 +234,6 @@ function fakeApi(handlers: Partial<PlayApi> = {}) {
     playInstallCancel: async (slug) => {
       calls.cancel.push(slug);
     },
-    playForgetIdentity: async () => {},
     playUninstall: async (slug) => {
       calls.uninstall.push(slug);
     },

@@ -585,8 +585,6 @@ export interface PlayStore extends StoreApi<PlayState> {
   cancelInstall(slug: string): Promise<void>;
   /** Remove a game from this computer; its saves stay. */
   uninstall(slug: string): Promise<void>;
-  /** Stop sharing who the player is with an installed game, on Genex and here. */
-  forgetIdentity(slug: string): Promise<void>;
   /** Play an installed game in its own window. */
   launch(slug: string): Promise<void>;
   /** Bring a running game forward. */
@@ -639,7 +637,6 @@ type PlayApi = Pick<
   | "playInstall"
   | "playInstallCancel"
   | "playUninstall"
-  | "playForgetIdentity"
   | "playLaunch"
   | "playSession"
 >;
@@ -911,7 +908,6 @@ function nativeActions(
     | "playInstall"
     | "playInstallCancel"
     | "playUninstall"
-    | "playForgetIdentity"
     | "playLaunch"
     | "playSession"
   >,
@@ -948,7 +944,6 @@ function nativeActions(
     install: (slug: string) => api.playInstall(slug),
     cancelInstall: (slug: string) => api.playInstallCancel(slug),
     uninstall: (slug: string) => api.playUninstall(slug),
-    forgetIdentity: (slug: string) => api.playForgetIdentity(slug),
     launch: (slug: string) => api.playLaunch(slug),
     showWindow: (slug: string) => api.playSession(slug, SessionAction.Show),
     quitGame: (slug: string) => api.playSession(slug, SessionAction.Quit),

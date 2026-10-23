@@ -406,11 +406,6 @@ export interface InstalledGame {
   installedAt: string;
   /** The last time it was played here, ISO 8601, or null. */
   lastPlayedAt: string | null;
-  /**
-   * The Genex project the player agreed, from Play, may know who they are in this game (App Review
-   * 4.7.3); absent when it knows nobody. Settings offers to stop sharing.
-   */
-  identityProject?: string;
 }
 
 /** An install under way, or how the last one ended when it did not finish. */

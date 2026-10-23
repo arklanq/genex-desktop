@@ -383,8 +383,12 @@ jobs:
           name: regression-evidence-rig-${{ matrix.shard }}
           path: .studio-dev/evidence
           if-no-files-found: ignore
+  # The harness shards are short (1-4 min) and the rig shards long (6-11 min). Released together,
+  # the macOS queue took them in mixed order and long rig shards started last, ending the
+  # regression ~3 min after the queue drained (v0.1.16-17). Waiting on linux-static, which the
+  # draft needs anyway, queues the rig shards first so the harness shards fill the tail.
   regression-harness:
-    needs: plan
+    needs: [plan, linux-static]
     if: vars.RELEASE_REGRESSION != 'skip'
     strategy:
       fail-fast: false

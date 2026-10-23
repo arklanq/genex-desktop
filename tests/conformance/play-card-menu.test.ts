@@ -167,7 +167,6 @@ describe("Play card menu: the store's manage", () => {
         playInstall: async () => {},
         playInstallCancel: async () => {},
         playUninstall: async () => {},
-        playForgetIdentity: async () => {},
         playLaunch: async () => {},
         playSession: async () => {},
         playManage: (gameId, change) => {

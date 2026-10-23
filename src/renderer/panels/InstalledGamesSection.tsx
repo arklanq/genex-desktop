@@ -15,33 +15,6 @@ import { INSTALLED_GAMES_WORDS, NATIVE_WORDS, nativeHereWords } from "../words.t
 
 const WORDS = INSTALLED_GAMES_WORDS;
 
-/** Stop sharing who the player is with the game, when they let it know: Genex first, then this Mac. */
-function StopSharing({ game }: { game: InstalledGame }): JSX.Element {
-  const [stopping, setStopping] = useState(false);
-  const stop = async () => {
-    setStopping(true);
-    try {
-      await studio().play.forgetIdentity(game.slug);
-      studio().notify(WORDS.stopped(game.title), ToastTone.Ok);
-    } catch {
-      studio().notify(WORDS.stopFailed, ToastTone.Error);
-    } finally {
-      setStopping(false);
-    }
-  };
-  return (
-    <Button
-      variant="secondary"
-      busy={stopping}
-      aria-label={WORDS.stopSharingLabel(game.title)}
-      data-installed-forget-identity={game.slug}
-      onClick={() => void stop()}
-    >
-      {WORDS.stopSharing}
-    </Button>
-  );
-}
-
 /** One installed game. */
 function InstalledRow({ game, now }: { game: InstalledGame; now: number }): JSX.Element {
   const [removing, setRemoving] = useState(false);
@@ -65,14 +38,9 @@ function InstalledRow({ game, now }: { game: InstalledGame; now: number }): JSX.
       </span>
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-sm text-ink">{game.title}</span>
-        <span className="truncate font-mono text-xs text-ink-3">
-          {game.identityProject
-            ? `${WORDS.played(game.lastPlayedAt, now)} · ${WORDS.knowsYou}`
-            : WORDS.played(game.lastPlayedAt, now)}
-        </span>
+        <span className="truncate font-mono text-xs text-ink-3">{WORDS.played(game.lastPlayedAt, now)}</span>
       </span>
       <span className="shrink-0 font-mono text-xs text-ink-3">{sizeWords(game.bytes)}</span>
-      {game.identityProject && <StopSharing game={game} />}
       <Button variant="secondary" busy={removing} data-installed-remove={game.slug} onClick={() => void remove()}>
         {WORDS.remove}
       </Button>

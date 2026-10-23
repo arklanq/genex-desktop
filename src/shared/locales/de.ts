@@ -935,7 +935,6 @@ export default {
   "Context · {percent}% used": "Kontext · {percent} % genutzt",
   "Context: {used} tokens": "Kontext: {used} Tokens",
   Continue: "Weiter",
-  "Continue as me": "Als ich fortfahren",
   "Continue on this Mac": "Auf diesem Mac weitermachen",
   "Continue to confirmation": "Weiter zur Bestätigung",
   Contractor: "Auftragnehmer",
@@ -1065,8 +1064,6 @@ export default {
   "Couldn't start the sign-in on this Mac. Paste a key instead.":
     "Die Anmeldung ließ sich auf diesem Mac nicht starten. Füge stattdessen einen Schlüssel ein.",
   "Couldn't stop play": "Konnte das Spiel nicht stoppen",
-  "Couldn't stop sharing who you are. Try again in a moment.":
-    "Das Teilen, wer du bist, ließ sich nicht beenden. Versuch es gleich noch mal.",
   "Couldn't take a motion strip": "Konnte keine Bewegungsfolge aufnehmen",
   "Couldn't take a picture of {asset}": "Konnte {asset} nicht fotografieren",
   "Couldn't take a play-view shot": "Konnte die Spielansicht nicht aufnehmen",
@@ -1544,8 +1541,6 @@ export default {
   "Genex couldn't download the Luau checks. Check the connection and press Add Luau checks again.":
     "Genex konnte die Luau-Prüfungen nicht herunterladen. Prüfe die Verbindung und klicke erneut auf „Luau-Prüfungen hinzufügen“.",
   "Genex couldn't get Roblox Studio.": "Genex konnte Roblox Studio nicht holen.",
-  "Genex couldn't stop sharing who you are with this game. Try again in a moment.":
-    "Genex konnte nicht aufhören, mit diesem Spiel zu teilen, wer du bist. Versuch es gleich noch mal.",
   "Genex couldn't tell whether {app} was free, so nothing was rewound. Rewind again in a moment.":
     "Genex konnte nicht erkennen, ob {app} frei war, deshalb wurde nichts zurückgespult. Spul gleich noch mal zurück.",
   "Genex couldn't tell whether {app} was free, so the newer version didn't come back. Try again in a moment.":
@@ -1960,8 +1955,6 @@ export default {
   "It turns on when installed: agents in all your games can use it from your next message.":
     "Es ist nach der Installation aktiv: Agenten in all deinen Spielen können es ab deiner nächsten Nachricht nutzen.",
   "It was paused before it could write up the build.": "Es wurde pausiert, bevor es den Build zusammenfassen konnte.",
-  "It will see your display name and avatar, so your progress and scores can be saved to your account. Games are code written by other people, not by Genex. You can stop sharing any time in Settings › Storage.":
-    "Es sieht deinen Anzeigenamen und deinen Avatar, damit dein Fortschritt und deine Punkte in deinem Konto gespeichert werden. Spiele sind Code, den andere Leute schreiben, nicht Genex. Du kannst das Teilen jederzeit unter Einstellungen › Speicher beenden.",
   "It's no longer there.": "Es ist nicht mehr da.",
   "It's switched on in Studio's settings. Studio answers once a place is open: open one in Studio, or press New Roblox game.":
     "Er ist in den Einstellungen von Studio eingeschaltet. Studio antwortet, sobald ein Ort offen ist: Öffne einen in Studio oder drücke „Neues Roblox-Spiel“.",
@@ -1980,8 +1973,8 @@ export default {
   "Its packages aren’t installed yet.": "Die Pakete sind noch nicht installiert.",
   "Its project didn’t go, so no one can remix it yet.":
     "Das Projekt wurde nicht gesendet, deshalb kann es noch niemand remixen.",
-  "Its project is too big to remix: Genex keeps up to 2 GB and 5,000 files.":
-    "Das Projekt ist zu groß zum Remixen: Genex speichert bis zu 2 GB und 5.000 Dateien.",
+  "Its project is too big to remix: Genex keeps up to 5 GB and 5,000 files.":
+    "Das Projekt ist zu groß zum Remixen: Genex speichert bis zu 5 GB und 5.000 Dateien.",
   "Its session failed before it delivered anything.": "Die Sitzung ist fehlgeschlagen, bevor etwas geliefert wurde.",
   "Its source is your own repository: run genex make-remixable in the game’s folder to allow remixing.":
     "Der Quellcode liegt in deinem eigenen Repository: Führe genex make-remixable im Ordner des Spiels aus, um Remixe zu erlauben.",
@@ -2028,7 +2021,6 @@ export default {
     "Behalten. {count, plural, one {# Prüfung, die vorher fehlschlug, besteht jetzt} other {# Prüfungen, die vorher fehlschlugen, bestehen jetzt}}, nichts, was vorher bestand, ist kaputtgegangen, und der Prüfer im direkten Vergleich hatte keine Einwände.",
   Kind: "Art",
   "Kinds of asset": "Asset-Arten",
-  "Knows who you are": "Weiß, wer du bist",
   "Koi drifting through a neon night market, seen from above":
     "Kois treiben über einen Neon-Nachtmarkt, von oben gesehen",
   "Laid the terrain": "Gelände angelegt",
@@ -2069,7 +2061,6 @@ export default {
     "Soll der Agent dieses Chats diese App nutzen? Er kann klicken, tippen und lesen, was diese App zeigt.",
   "Let this chat's agent use {app}? It can click, type and read what {app} shows.":
     "Soll der Agent dieses Chats {app} nutzen? Er kann klicken, tippen und lesen, was {app} zeigt.",
-  "Let {game} know who you are?": "{game} wissen lassen, wer du bist?",
   "Letters a–z, digits and dashes.": "Buchstaben a–z, Ziffern und Bindestriche.",
   "Letting go of every input": "Lässt alle Eingaben los",
   "Letting the game settle": "Wartet, bis sich das Spiel beruhigt",
@@ -2809,7 +2800,6 @@ export default {
   "Plans first, asks to proceed": "Plant zuerst, fragt vor dem Loslegen",
   Platforms: "Plattformen",
   Play: "Spielen",
-  "Play as guest": "Als Gast spielen",
   "Play build": "Build spielen",
   "Play game": "Spiel starten",
   "Play latest": "Neuesten Build spielen",
@@ -3600,7 +3590,6 @@ export default {
   "Stop game": "Spiel stoppen",
   "Stop replying about {about}": "Nicht mehr auf {about} antworten",
   "Stop sharing": "Nicht mehr teilen",
-  "Stop sharing who you are with {game}": "Nicht mehr mit {game} teilen, wer du bist",
   "Stop this background work": "Diese Hintergrundarbeit stoppen",
   "Stop this game's build before removing it.": "Stoppe den Build dieses Spiels, bevor du es entfernst.",
   "Stop this terminal before closing its session.": "Stoppe dieses Terminal, bevor du seine Sitzung schließt.",
@@ -5012,7 +5001,6 @@ export default {
   "how well the screen reads": "wie gut der Bildschirm lesbar ist",
   "how well the screen reads {score}": "wie gut der Bildschirm lesbar ist: {score}",
   "how well the screen reads {score} out of {max}": "wie gut der Bildschirm lesbar ist: {score} von {max}",
-  "identity\u0004Stop sharing": "Nicht mehr teilen",
   "in hand": "in Arbeit",
   "in {game}": "in {game}",
   "in {game} and {count} more": "in {game} und {count} weiteren",
@@ -5656,8 +5644,6 @@ export default {
   "{game} cover preview": "Cover-Vorschau von {game}",
   "{game} has your receipt.": "{game} hat deinen Beleg.",
   "{game} in play": "{game} in Aktion",
-  "{game} no longer knows who you are. It asks again next time you play.":
-    "{game} weiß nicht mehr, wer du bist. Beim nächsten Spielen fragt es wieder.",
   "{game} now builds in {engine} · {project}": "{game} wird jetzt in {engine} gebaut · {project}",
   "{game} {number}": "{game} {number}",
   "{game} · started {time}": "{game} · gestartet am {time}",

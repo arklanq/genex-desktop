@@ -416,54 +416,19 @@ describe("Play gallery calls", () => {
     assert.equal(calls.length, 1, "a slug that is not a game is never sent");
   });
 
-  it("mints a native ticket for a game Play starts on this Mac", async () => {
+  it("mints a desktop ticket for a game Play starts on this computer, and a refusal plays as a guest", async () => {
+    // The desktop delivery signs the player in without a per-game question; a refusal of any
+    // kind, the phone app's consent answer included, is a guest this once.
     const { gallery, calls } = rig(() => ok({ ticket: "N1" }));
-    assert.deepEqual(await gallery.ticket("lost-cathedral", TicketDelivery.Native), {
+    assert.deepEqual(await gallery.ticket("lost-cathedral", TicketDelivery.Desktop), {
       status: TicketStatus.Minted,
       ticket: "N1",
     });
-    assert.deepEqual(calls[0]?.body, { slug: "lost-cathedral", delivery: "native", channel: "production" });
-  });
-
-  it("says when a native ticket waits for the player to let the game know who they are, naming its project", async () => {
-    // Genex mints a native ticket only for a game the player agreed may know who they are (App
-    // Review 4.7.3); its refusal names the project the agreement is recorded against.
+    assert.deepEqual(calls[0]?.body, { slug: "lost-cathedral", delivery: "desktop", channel: "production" });
     const refused = rig(() => ({ status: 403, body: { error: "consent_required", projectId: "cm1" } }));
-    assert.deepEqual(await refused.gallery.ticket("lost-cathedral", TicketDelivery.Native), {
-      status: TicketStatus.ConsentRequired,
-      projectId: "cm1",
+    assert.deepEqual(await refused.gallery.ticket("lost-cathedral", TicketDelivery.Desktop), {
+      status: TicketStatus.NotMinted,
     });
-    const odd: Array<[string, unknown]> = [
-      ["no project", { error: "consent_required" }],
-      ["a project that is a path", { error: "consent_required", projectId: "../cm1" }],
-      ["another refusal", { error: "forbidden", projectId: "cm1" }],
-    ];
-    for (const [name, body] of odd)
-      assert.deepEqual(
-        await rig(() => ({ status: 403, body })).gallery.ticket("lost-cathedral", TicketDelivery.Native),
-        { status: TicketStatus.NotMinted },
-        name,
-      );
-  });
-
-  it("records and withdraws the player's agreement for one game's project, and sends no project that is not one", async () => {
-    const { gallery, calls } = rig(() => ok({ projectId: "cm1" }));
-    assert.equal(await gallery.shareIdentity("cm1"), true);
-    assert.equal(await gallery.forgetIdentity("cm1"), true);
-    assert.deepEqual(
-      calls.map((call) => [call.method, call.route, call.token]),
-      [
-        ["PUT", "/api/embed/consent/cm1", TOKEN],
-        ["DELETE", "/api/embed/consent/cm1", TOKEN],
-      ],
-    );
-    for (const projectId of ["../x", "cm1/../../admin", "", "a b"]) {
-      assert.equal(await gallery.shareIdentity(projectId), false, projectId);
-      assert.equal(await gallery.forgetIdentity(projectId), false, projectId);
-    }
-    assert.equal(calls.length, 2, "nothing else was sent");
-    assert.equal(await rig(() => ({ status: 404, body: null })).gallery.shareIdentity("cm1"), false);
-    assert.equal(await rig(() => ok({}), { token: undefined }).gallery.shareIdentity("cm1"), false);
   });
 
   it("reads the search catalog once however many searches wait on it", async () => {

@@ -869,7 +869,6 @@ export default {
   "Context · {percent}% used": "コンテキスト · {percent}%使用",
   "Context: {used} tokens": "コンテキスト：{used}トークン",
   Continue: "続ける",
-  "Continue as me": "自分として続ける",
   "Continue on this Mac": "このMacで続ける",
   "Continue to confirmation": "確認に進む",
   Contractor: "外部エージェント",
@@ -997,8 +996,6 @@ export default {
   "Couldn't start the sign-in on this Mac. Paste a key instead.":
     "このMacでサインインを開始できませんでした。代わりにキーを貼り付けてください。",
   "Couldn't stop play": "プレイを停止できませんでした",
-  "Couldn't stop sharing who you are. Try again in a moment.":
-    "あなたの情報の共有をやめられませんでした。少し待ってからもう一度お試しください。",
   "Couldn't take a motion strip": "動きの連続画像を撮れませんでした",
   "Couldn't take a picture of {asset}": "{asset}の画像を撮れませんでした",
   "Couldn't take a play-view shot": "プレイ画面を撮れませんでした",
@@ -1476,8 +1473,6 @@ export default {
   "Genex couldn't download the Luau checks. Check the connection and press Add Luau checks again.":
     "GenexはLuauチェックをダウンロードできませんでした。接続を確認して、もう一度「Luauチェックを追加」を押してください。",
   "Genex couldn't get Roblox Studio.": "GenexはRoblox Studioを入手できませんでした。",
-  "Genex couldn't stop sharing who you are with this game. Try again in a moment.":
-    "Genexはこのゲームとのあなたの情報の共有をやめられませんでした。少し待ってからもう一度お試しください。",
   "Genex couldn't tell whether {app} was free, so nothing was rewound. Rewind again in a moment.":
     "Genexは{app}が空いているか確認できなかったため、何も巻き戻していません。少ししてからもう一度巻き戻してください。",
   "Genex couldn't tell whether {app} was free, so the newer version didn't come back. Try again in a moment.":
@@ -1890,8 +1885,6 @@ export default {
   "It turns on when installed: agents in all your games can use it from your next message.":
     "インストールするとオンになります。次のメッセージから、すべてのゲームのエージェントが使えます。",
   "It was paused before it could write up the build.": "ビルドのまとめを書く前に一時停止されました。",
-  "It will see your display name and avatar, so your progress and scores can be saved to your account. Games are code written by other people, not by Genex. You can stop sharing any time in Settings › Storage.":
-    "ゲームはあなたの表示名とアバターを見られるようになり、進行状況やスコアがあなたのアカウントに保存されます。ゲームはGenexではなく、ほかの人が書いたコードです。共有は「設定 › ストレージ」でいつでもやめられます。",
   "It's no longer there.": "もう存在しません。",
   "It's switched on in Studio's settings. Studio answers once a place is open: open one in Studio, or press New Roblox game.":
     "Studioの設定でオンになっています。プレイスが開くとStudioが応答します。Studioでプレイスを開くか、「新しいRobloxゲーム」を押してください。",
@@ -1910,8 +1903,8 @@ export default {
   "Its packages aren’t installed yet.": "パッケージがまだインストールされていません。",
   "Its project didn’t go, so no one can remix it yet.":
     "プロジェクトが送れなかったので、まだ誰もリミックスできません。",
-  "Its project is too big to remix: Genex keeps up to 2 GB and 5,000 files.":
-    "プロジェクトが大きすぎてリミックスできません。Genex に置けるのは 2 GB・5,000 ファイルまでです。",
+  "Its project is too big to remix: Genex keeps up to 5 GB and 5,000 files.":
+    "プロジェクトが大きすぎてリミックスできません。Genex に置けるのは 5 GB・5,000 ファイルまでです。",
   "Its session failed before it delivered anything.": "何も提出しないうちにセッションが失敗しました。",
   "Its source is your own repository: run genex make-remixable in the game’s folder to allow remixing.":
     "ソースはあなた自身のリポジトリにあります。リミックスを許可するには、ゲームのフォルダーでgenex make-remixableを実行してください。",
@@ -1957,7 +1950,6 @@ export default {
     "採用。前は失敗していたチェックのうち{count, plural, other {#件}}が合格になり、前に合格していたものは壊れず、並べて比べるレビュアーからの異論もありませんでした。",
   Kind: "種類",
   "Kinds of asset": "アセットの種類",
-  "Knows who you are": "あなたを知っています",
   "Koi drifting through a neon night market, seen from above": "ネオンの夜市の上を漂う鯉を真上から",
   "Laid the terrain": "地形を作成しました",
   Language: "言語",
@@ -1997,7 +1989,6 @@ export default {
     "このチャットのエージェントにこのアプリを使わせますか？このアプリに表示される内容を読み、クリックや入力ができます。",
   "Let this chat's agent use {app}? It can click, type and read what {app} shows.":
     "このチャットのエージェントに{app}を使わせますか？{app}に表示される内容を読み、クリックや入力ができます。",
-  "Let {game} know who you are?": "{game}にあなたが誰かを伝えますか？",
   "Letters a–z, digits and dashes.": "a–zの英字、数字、ハイフンが使えます。",
   "Letting go of every input": "すべての入力を離しています",
   "Letting the game settle": "ゲームが落ち着くのを待っています",
@@ -2733,7 +2724,6 @@ export default {
   "Plans first, asks to proceed": "先に計画し、進める前に確認します",
   Platforms: "プラットフォーム",
   Play: "プレイ",
-  "Play as guest": "ゲストとして遊ぶ",
   "Play build": "ビルドをプレイ",
   "Play game": "ゲームをプレイ",
   "Play latest": "最新版をプレイ",
@@ -3516,7 +3506,6 @@ export default {
   "Stop game": "ゲームを停止",
   "Stop replying about {about}": "{about}への返信をやめる",
   "Stop sharing": "共有をやめる",
-  "Stop sharing who you are with {game}": "{game}とのあなたの情報の共有をやめる",
   "Stop this background work": "このバックグラウンド作業を止める",
   "Stop this game's build before removing it.": "削除する前に、このゲームのビルドを停止してください。",
   "Stop this terminal before closing its session.": "セッションを閉じる前に、このターミナルを停止してください。",
@@ -4907,7 +4896,6 @@ export default {
   "how well the screen reads": "画面がどれだけわかりやすいか",
   "how well the screen reads {score}": "画面がどれだけわかりやすいか：{score}",
   "how well the screen reads {score} out of {max}": "画面がどれだけわかりやすいか：{max}点中{score}点",
-  "identity\u0004Stop sharing": "共有をやめる",
   "in hand": "作業中",
   "in {game}": "{game}でプレイ中",
   "in {game} and {count} more": "{game}ほか{count}本でプレイ中",
@@ -5515,8 +5503,6 @@ export default {
   "{game} cover preview": "{game}のカバーのプレビュー",
   "{game} has your receipt.": "{game}にレシートが届きました。",
   "{game} in play": "プレイ中の{game}",
-  "{game} no longer knows who you are. It asks again next time you play.":
-    "{game}はもうあなたが誰かを知りません。次に遊ぶときにまた確認されます。",
   "{game} now builds in {engine} · {project}": "{game}は{engine}でつくるようになりました · {project}",
   "{game} {number}": "{game} {number}",
   "{game} · started {time}": "{game} · {time}に開始",

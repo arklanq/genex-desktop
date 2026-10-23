@@ -21,6 +21,7 @@ import {
 } from "../../src/shared/publish-platforms.ts";
 import {
   appsMadeOnly,
+  appsUpToDate,
   appsLabel,
   failureLines,
   gateByPlugin,
@@ -391,6 +392,29 @@ describe("Publish's platform rows as the dialog says them", () => {
       "Couldn’t send the Mac app: Couldn't get an upload token (HTTP 413).",
     ]);
     assert.deepEqual(failureLines([WEB, ready, WINDOWS], record({})), []);
+  });
+
+  it("has nothing new to send for a game whose apps are all on Genex already", () => {
+    const noWeb = { ...WEB, state: PublishPlatformState.Missing, uploads: false };
+    const ready = { ...MAC, uploads: true };
+    const live = { platform: "mac", arch: "universal", version: "1.0+3f2a9c1d0e4b", sizeBytes: 1 };
+    const native = (publishedAt: number, over: Partial<GenexNativeRecord> = {}): GenexNativeRecord => ({
+      supported: true,
+      sending: false,
+      sent: [{ ...live, publishedAt: new Date(publishedAt).toISOString() }],
+      failed: [],
+      ...over,
+    });
+    assert.equal(appsUpToDate([noWeb, ready, WINDOWS], native(T0 + MINUTE_MS)), true);
+    assert.equal(appsUpToDate([noWeb, ready, WINDOWS], native(T0 - MINUTE_MS)), false, "a newer build waits to go");
+    assert.equal(appsUpToDate([noWeb, ready, WINDOWS], native(T0 + MINUTE_MS, { sending: true })), false);
+    assert.equal(
+      appsUpToDate([noWeb, ready, WINDOWS_READY], native(T0 + MINUTE_MS)),
+      false,
+      "the Windows app is not sent",
+    );
+    assert.equal(appsUpToDate([WEB, ready], native(T0 + MINUTE_MS)), false, "a web game always publishes its build");
+    assert.equal(appsUpToDate([noWeb, ready], undefined), false, "never published");
   });
 
   it("publishes a game that has only apps as its apps, and says how its listing went", () => {

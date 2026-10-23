@@ -211,6 +211,17 @@ export function listingLine(
   return native.listing ? null : WORDS.notListed;
 }
 
+/**
+ * Whether Publish has nothing new to send for a game with only apps: every app it would send is on
+ * Genex already, built no later than it went. Its press would only send them again, so it is hidden.
+ */
+export function appsUpToDate(platforms: readonly PublishPlatform[], native: GenexNativeRecord | undefined): boolean {
+  if (!onlyApps(platforms) || !native || native.sending) return false;
+  return platforms
+    .filter((row) => isNative(row) && row.uploads)
+    .every((row) => sendEnd(row, native) === PlatformEnd.Sent);
+}
+
 /** Whether the game has no web build. */
 const noWebBuild = (platforms: readonly PublishPlatform[]): boolean =>
   platforms.some((row) => row.target === PublishTarget.Web && row.state === PublishPlatformState.Missing);

@@ -154,7 +154,12 @@ What Play sends is in [PRIVACY](../PRIVACY.md#play).
   A game reaches Genex with its project only from a Publish that allowed remixing (the dialog's
   Allow remixing, ticked by default; Rights says what remixers may do): Studio stages the files the
   game's git keeps, without history, packages, agent settings, secrets or an engine's caches and
-  builds, an Unreal plugin's too (`remix-source.ts`), and the CLI pushes that folder as the source
+  builds, an Unreal plugin's too, its packaged apps (`Builds/`) included; an engine game whose project
+sits in a folder of its own also leaves out `assets/` (its models, already imported) and `docs/proof/`
+screenshots (`remix-source.ts`; at most
+5 GB and 5,000 files, as genex.games keeps; every model, picture, sound, video and Unreal package, and
+any file of 50 MB or more, goes to Git LFS, whose blobs Genex keeps in R2 rather than on the git
+server's disk), and the CLI pushes that folder as the source
   (`--source`; a game with only apps sends it with `make-remixable` once they are live). The copy
   goes once its push is over, and a draft carries none. Otherwise, or when the project can't
   go (too big, no repository), the publish turns remixing off on Genex.
@@ -246,16 +251,10 @@ is.
   - **What the game is told.** Its environment carries `GENEX_API_URL` (the gateway), `GENEX_GAME`
     (its slug, so a build made before its first publish knows which rooms to join) and, while the
     Genex account is unlocked, `GENEX_EMBED_TICKET`. That is a single-use ticket minted with
-    `delivery: "native"` (`gallery.ticket`); otherwise the game plays as a guest. Genex's Godot
-    addon and Unity package read both (CLI_INTEGRATION §6b).
-  - **The player's yes** (`main/play/native-identity.ts`). Genex mints a native ticket only for a game
-    the player agreed may know who they are (App Review 4.7.3, per game and account): it answers
-    `consent_required` with the game's project. Play then asks once, as a sheet on Studio's window
-    in Genex's own words (Continue as me, Play as guest); a yes is recorded on Genex
-    (`PUT /api/embed/consent/<project>`) and in the install record (`identityProject`), and the
-    ticket is minted again. A no, a refusal or a failure plays as a guest and records nothing.
-    Settings › Storage marks such a game "Knows who you are" with Stop sharing, which withdraws it on
-    Genex first (`DELETE`, `studio:play.forget-identity`) and then here; the next launch asks again.
+    `delivery: "desktop"` (`gallery.ticket`); otherwise the game plays as a guest. Genex signs the
+    player in without asking first: its per-game question (App Review 4.7.3) gates only the phone
+    app's `native` delivery, and the desktop app ships outside the App Store. Genex's Godot addon
+    and Unity package read both (CLI_INTEGRATION §6b).
   - **Failure and shutdown.** A gateway that can't open leaves the game offline, not unplayable. The
     gateway closes when the game ends. A fixture launch opens none.
   - **Its play count** (`main/play/native-plays.ts`). Most native builds never redeem the ticket, so

@@ -538,8 +538,6 @@ export interface StudioApi {
   playInstalls(): Promise<NativeInstalls>;
   /** Play: remove a game from this computer; its saves stay. */
   playUninstall(slug: string): Promise<void>;
-  /** Play: stop sharing who the player is with an installed game, on Genex and here. */
-  playForgetIdentity(slug: string): Promise<void>;
   /** Play: play an installed game in its own window (a running one comes forward); how it goes arrives as `UiEvent.PlaySessions`. */
   playLaunch(slug: string): Promise<void>;
   /** Play: bring a running game forward, quit it, or forget how it failed to start. */

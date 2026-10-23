@@ -115,14 +115,12 @@ async function systemFreeBytes(dir: string): Promise<number> {
 const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 const STRING_FIELDS = ["title", "version", "entry", "executable", "bundleId", "bundleName", "installedAt"] as const;
-/** A Genex project id as the API hands them out: letters and digits, never a path. */
-const PROJECT_ID = /^[A-Za-z0-9]{1,64}$/;
 
 /** One index record as the installer wrote it, or null when anything in it is off. */
 function readRecord(slug: string, value: unknown): InstallRecord | null {
   if (!isPlaySlug(slug) || !isRecord(value) || value.slug !== slug) return null;
   if (!STRING_FIELDS.every((field) => typeof value[field] === "string" && value[field] !== "")) return null;
-  const { platform, arch, bytes, coverUrl, lastPlayedAt, identityProject } = value;
+  const { platform, arch, bytes, coverUrl, lastPlayedAt } = value;
   if (!isNativePlatform(platform) || !isNativeArch(arch)) return null;
   if (typeof bytes !== "number" || !Number.isFinite(bytes) || bytes < 0) return null;
   return {
@@ -142,7 +140,6 @@ function readRecord(slug: string, value: unknown): InstallRecord | null {
     // A record from before these were kept: an engine nobody named, and full screen.
     engine: typeof value.engine === "string" ? value.engine : null,
     windowed: value.windowed === true,
-    ...(typeof identityProject === "string" && PROJECT_ID.test(identityProject) ? { identityProject } : {}),
   };
 }
 
@@ -159,9 +156,8 @@ function readIndex(value: unknown): InstallIndex {
 
 /** The installed game as Play shows it: the record without the launcher's own fields. */
 function shownGame(record: InstallRecord): InstalledGame {
-  const { slug, title, coverUrl, version, platform, arch, bytes, installedAt, lastPlayedAt, identityProject } = record;
-  const shown = { slug, title, coverUrl, version, platform, arch, bytes, installedAt, lastPlayedAt };
-  return identityProject ? { ...shown, identityProject } : shown;
+  const { slug, title, coverUrl, version, platform, arch, bytes, installedAt, lastPlayedAt } = record;
+  return { slug, title, coverUrl, version, platform, arch, bytes, installedAt, lastPlayedAt };
 }
 
 /**
@@ -305,8 +301,6 @@ export class NativeInstaller {
         bytes,
         installedAt: at,
         lastPlayedAt: games[slug]?.lastPlayedAt ?? null,
-        // An update keeps what the player agreed this game may know.
-        ...(games[slug]?.identityProject ? { identityProject: games[slug].identityProject } : {}),
         entry: build.entry,
         engine: game.native?.engine ?? null,
         ...app,
@@ -422,21 +416,6 @@ export class NativeInstaller {
   /** The launcher's record of an installed game, or null. */
   async record(slug: string): Promise<InstallRecord | null> {
     return (await this.#indexNow()).games[slug] ?? null;
-  }
-
-  /**
-   * Remember (`projectId`) or forget (null) that the player agreed this installed game may know who
-   * they are; a game that is not installed is left alone.
-   */
-  async knowsYou(slug: string, projectId: string | null): Promise<void> {
-    if (projectId !== null && !PROJECT_ID.test(projectId)) return;
-    await this.#changeIndex((games) => {
-      const game = games[slug];
-      if (!game) return;
-      if (projectId) game.identityProject = projectId;
-      else delete game.identityProject;
-    });
-    await this.#push();
   }
 
   /** Note that `slug` was just played. */

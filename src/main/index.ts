@@ -156,11 +156,18 @@ import { type LibrarySharing, librarySharing } from "./core/library-sharing.ts";
 import { registerAssetLibraryIpc } from "./ipc/asset-library.ts";
 import { readAssetPreview } from "./asset-preview.ts";
 import { fixtureDownload, fixtureFileResponse } from "./dev/fixture-asset-library.ts";
-import { buildHostsFor, networkRequest, type PlayGallery, playGallery, type PlayWorld } from "./play/gallery.ts";
+import {
+  buildHostsFor,
+  mintedTicket,
+  networkRequest,
+  type PlayGallery,
+  playGallery,
+  type PlayWorld,
+  TicketDelivery,
+} from "./play/gallery.ts";
 import { relayHostsOf, startGenexGateway } from "./play/genex-gateway.ts";
 import { GAME_LINK_SCHEME, gameLinkIn, gameLinks } from "./play/game-links.ts";
 import { thisComputer } from "./play/native-host.ts";
-import { IDENTITY_QUESTION, nativeTicket } from "./play/native-identity.ts";
 import { type InstallOutcome, type NativeInstaller, nativeInstalls } from "./play/native-installs.ts";
 import { checkNativeUpdates } from "./play/native-updates.ts";
 import { runTool } from "./play/native-unpack.ts";
@@ -1192,38 +1199,9 @@ async function openGameGenex(studio: StudioCore, slug: string): Promise<GameGene
     api: playOrigin.api,
     relay: relayHostsOf(new URL(playOrigin.api).hostname),
   });
-  const catalog = playCatalogFor(studio);
-  const installs = playInstallsFor(studio);
-  const ticket = await nativeTicket(
-    {
-      ticket: (game, delivery) => catalog.ticket(game, delivery),
-      ask: async ({ slug: game }) => askNativeIdentity((await installs?.record(game))?.title ?? game),
-      share: (projectId) => catalog.shareIdentity(projectId),
-      shared: async (game, projectId) => installs?.knowsYou(game, projectId),
-    },
-    slug,
-  );
+  const ticket = mintedTicket(await playCatalogFor(studio).ticket(slug, TicketDelivery.Desktop));
   const env = { GENEX_API_URL: gateway.apiUrl, ...(ticket ? { GENEX_EMBED_TICKET: ticket } : {}) };
   return { ports: gateway.ports, env, close: gateway.close };
-}
-
-/**
- * Ask the player, once per game, whether a native game may know who they are, as a sheet on
- * Studio's window: the game would see their Genex name and avatar (App Review 4.7.3).
- */
-async function askNativeIdentity(game: string): Promise<boolean> {
-  const words = IDENTITY_QUESTION;
-  const options = {
-    type: "question" as const,
-    message: words.title(game),
-    detail: words.detail(),
-    buttons: [words.accept(), words.decline()],
-    defaultId: 0,
-    cancelId: 1,
-  };
-  const parent = window && !window.isDestroyed() ? window : null;
-  const { response } = parent ? await dialog.showMessageBox(parent, options) : await dialog.showMessageBox(options);
-  return response === 0;
 }
 
 /**

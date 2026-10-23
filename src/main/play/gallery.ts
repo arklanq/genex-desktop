@@ -50,11 +50,6 @@ const QUERY_MAX = 80;
 const FIRST_PAGE_TTL_MS = MINUTE_MS;
 /** HTTP statuses Play reads. A game page that answered without a game reads as a bad gateway. */
 const HTTP_OK = 200;
-const HTTP_FORBIDDEN = 403;
-/** The refusal Genex answers a native ticket with until the player agrees the game may know them. */
-const CONSENT_REQUIRED = "consent_required";
-/** A Genex project id as the API hands them out: letters and digits, never a path. */
-const PROJECT_ID = /^[A-Za-z0-9]{1,64}$/;
 export const HTTP_UNAUTHORIZED = 401;
 const BAD_GATEWAY = 502;
 /** The longest cursor the gallery hands out (an id), with room to spare; ids and codes are held to it too. */
@@ -98,8 +93,6 @@ export const PlayRoute = {
   Referral: "/api/referrals/me",
   world: (slug: string) => `/api/gallery/world/${encodeURIComponent(slug)}`,
   like: (id: string) => `/api/projects/${encodeURIComponent(id)}/like`,
-  /** The player's agreement that one game's project may know who they are. */
-  consent: (projectId: string) => `/api/embed/consent/${encodeURIComponent(projectId)}`,
   assetManifest: (slug: string) => `/api/projects/asset-manifest/${encodeURIComponent(slug)}`,
 } as const;
 
@@ -161,35 +154,21 @@ export const TicketStatus = {
   SignedOut: "signed-out",
   /** An account is there but no ticket came (refused, rejected token, offline): a guest this once. */
   NotMinted: "not-minted",
-  /**
-   * A native ticket waits for the player to agree that this game may know who they are (App Review
-   * 4.7.3, per game and account): Play asks, records the agreement against `projectId`, and mints again.
-   */
-  ConsentRequired: "consent-required",
 } as const;
 export type TicketStatus = (typeof TicketStatus)[keyof typeof TicketStatus];
 
 /**
  * How a ticket reaches the game, as Genex mints it: in a web page's address (`redirect`), or in a
- * native game's environment when Play starts it on this Mac (`native`). Wire values: never rename.
+ * native game's environment when Play starts it on this computer (`desktop`, which Genex signs in
+ * without a per-game question: only the phone app's `native` asks). Wire values: never rename.
  */
-export const TicketDelivery = { Redirect: "redirect", Native: "native" } as const;
+export const TicketDelivery = { Redirect: "redirect", Desktop: "desktop" } as const;
 export type TicketDelivery = (typeof TicketDelivery)[keyof typeof TicketDelivery];
 
 /** A ticket, or why there is none. */
 export type PlayTicket =
   | { status: typeof TicketStatus.Minted; ticket: string }
-  | { status: typeof TicketStatus.ConsentRequired; projectId: string }
   | { status: typeof TicketStatus.SignedOut | typeof TicketStatus.NotMinted };
-
-/** The project a native ticket's refusal names when it waits for the player's agreement, else undefined. */
-function consentProject(answer: GalleryAnswer): string | undefined {
-  if (answer.status !== HTTP_FORBIDDEN || !isRecord(answer.body)) return undefined;
-  const { error, projectId } = answer.body;
-  return error === CONSENT_REQUIRED && typeof projectId === "string" && PROJECT_ID.test(projectId)
-    ? projectId
-    : undefined;
-}
 
 /** The ticket a game's address carries, or undefined to play as a guest. */
 export const mintedTicket = (result: PlayTicket): string | undefined =>
@@ -633,29 +612,6 @@ function updatedAtOf(item: Record<string, unknown>, game: PlayGame): string | nu
   return published.at(-1) ?? null;
 }
 
-/**
- * Record (`shareIdentity`, a `PUT`) or withdraw (`forgetIdentity`, a `DELETE`) the player's
- * agreement that a game's project may know who they are. True once Genex took it; false signed
- * out, for a project id that is not one, or on any failure.
- */
-function identityCalls({ request, token }: GalleryDeps) {
-  const consentCall = async (method: "PUT" | "DELETE", projectId: string): Promise<boolean> => {
-    if (!PROJECT_ID.test(projectId)) return false;
-    const auth = await token();
-    if (!auth) return false;
-    try {
-      const answer = await request(PlayRoute.consent(projectId), { method, token: auth });
-      return answer.status === HTTP_OK;
-    } catch {
-      return false;
-    }
-  };
-  return {
-    shareIdentity: (projectId: string) => consentCall("PUT", projectId),
-    forgetIdentity: (projectId: string) => consentCall("DELETE", projectId),
-  };
-}
-
 /** What the signed-in account adds: a game's likes, a like, a sign-in ticket and an invite code. */
 function accountCalls(deps: GalleryDeps) {
   const { request, token } = deps;
@@ -723,7 +679,7 @@ function accountCalls(deps: GalleryDeps) {
 
   /**
    * A single-use ticket that signs the player in: when the game's page loads with it in its address
-   * fragment, or (`native`) when Play starts the game with it in its environment. Else whether that
+   * fragment, or (`desktop`) when Play starts the game with it in its environment. Else whether that
    * is for want of an account (signed out) or because none could be minted for the one there.
    * Either way the game plays as a guest.
    */
@@ -734,8 +690,6 @@ function accountCalls(deps: GalleryDeps) {
     try {
       const body = { slug, delivery, channel: "production" };
       const answer = await request(PlayRoute.Ticket, { method: "POST", token: auth, body });
-      const projectId = consentProject(answer);
-      if (projectId) return { status: TicketStatus.ConsentRequired, projectId };
       const minted = isRecord(answer.body) ? answer.body.ticket : undefined;
       if (answer.status !== HTTP_OK || typeof minted !== "string" || !minted) return NOT_MINTED;
       return { status: TicketStatus.Minted, ticket: minted };
@@ -760,7 +714,7 @@ function accountCalls(deps: GalleryDeps) {
     }
   };
 
-  return { world, game, setLiked, ticket, ...identityCalls(deps), inviteCode };
+  return { world, game, setLiked, ticket, inviteCode };
 }
 
 /** Play's gallery over `deps`. */

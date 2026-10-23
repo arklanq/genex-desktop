@@ -62,7 +62,14 @@ import { CoverKind } from "./cover-asks.ts";
 import { type PublishCover, useElapsed, usePublishCover } from "./use-publish-cover.ts";
 import { Pressing, usePublishRecord } from "./use-publish-record.ts";
 import { PublishPlatforms, usePublishPlatforms } from "./PublishPlatforms.tsx";
-import { appsLabel, gateByPlugin, makesApps, nothingToPublish, onlyApps } from "./publish-platforms-view.ts";
+import {
+  appsLabel,
+  appsUpToDate,
+  gateByPlugin,
+  makesApps,
+  nothingToPublish,
+  onlyApps,
+} from "./publish-platforms-view.ts";
 import type { PublishPlatform } from "../../../../shared/publish-platforms.ts";
 import { PublishShareLine } from "./PublishShare.tsx";
 import { useShareWhenLive } from "./use-publish-share.ts";
@@ -742,6 +749,8 @@ function useAppsPublish(
   behind: boolean;
   apps: string | null;
   waiting: boolean;
+  /** Every app Publish would send is on Genex already: the press has nothing new to do. */
+  upToDate: boolean;
 } {
   const read = usePublishPlatforms(project);
   // An app goes only through a Genex plugin that can send it: an older one is updated first.
@@ -752,6 +761,7 @@ function useAppsPublish(
     apps: platforms && onlyApps(platforms) ? appsLabel(platforms) : null,
     // A game made in an engine with nothing to send yet: the rows say why, and the press waits.
     waiting: platforms !== null && nothingToPublish(platforms),
+    upToDate: platforms !== null && appsUpToDate(platforms, native),
   };
 }
 
@@ -833,8 +843,9 @@ function PublishBody({
   const failure = record.error ? { text: record.error, details: record.error } : view.failure;
   const open = () => void record.act(GenexAction.PublishOpen, { target: LinkTarget.Gallery });
   const opening = record.pressing === Pressing.Action;
-  const { platforms, behind, apps, waiting } = useAppsPublish(project, record.state?.native);
+  const { platforms, behind, apps, waiting, upToDate } = useAppsPublish(project, record.state?.native);
   const pressShown = !celebrate || renamed;
+  const pressNeeded = pressHasWork(pressShown, view, publishing, { upToDate, renamed });
   return (
     <div
       className="genex-publish-body"
@@ -874,7 +885,8 @@ function PublishBody({
           project={project}
           shown={pressShown && saysWhoPlays(view, publishing, Boolean(cover.making), Boolean(view.testLink))}
         />
-        {pressShown && (
+        {!publishing && <Links view={view} project={project} onOpen={open} opening={opening} />}
+        {pressNeeded && (
           <Presses
             view={view}
             record={record}
@@ -895,14 +907,28 @@ function PublishBody({
             onRights={remix.onRights}
           />
         )}
-        {!publishing && <Links view={view} project={project} onOpen={open} opening={opening} />}
         <Hint view={view} publishing={publishing} making={Boolean(cover.making)} record={record} name={name} />
       </div>
     </div>
   );
 }
 
-/** The public link, then the tested draft players do not have yet: shown together, under the presses. */
+/**
+ * Whether the press shows and has anything to do: not on a live game whose apps are all on Genex already,
+ * where its link takes the press's place, unless a new name waits to be saved.
+ */
+const pressHasWork = (
+  shown: boolean,
+  view: PublishView,
+  publishing: boolean,
+  { upToDate, renamed }: { upToDate: boolean; renamed: boolean },
+): boolean => shown && (renamed || !upToDate || !liveAndQuiet(view, publishing));
+
+/** Whether a game is live and nothing is going on: no publish runs, nothing failed, no terms to accept. */
+const liveAndQuiet = (view: PublishView, publishing: boolean): boolean =>
+  view.stage === PublishStage.Public && !publishing && !view.failure && !view.terms;
+
+/** The public link, then the tested draft players do not have yet: shown together, right above the press. */
 function Links({
   view,
   project,

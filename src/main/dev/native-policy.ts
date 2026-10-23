@@ -7,8 +7,6 @@ import type { StudioInvokeChannel } from "../../shared/ipc-channels.ts";
  * At runtime an unclassified channel is still refused in fixtures.
  */
 const NATIVE_CHANNELS = [
-  // Stopping an installed game knowing who the player is withdraws it on Genex with the account.
-  "studio:play.forget-identity",
   "studio:terminal.open",
   // A command a chat reply offered runs in the user's own shell, like the project terminal.
   "studio:terminal.run",

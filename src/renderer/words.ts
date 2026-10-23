@@ -3615,13 +3615,6 @@ export const INSTALLED_GAMES_WORDS = {
   },
   remove: t("Remove"),
   savesStay: t("Saves stay when you remove a game. Getting it again starts where you left off."),
-  /** The row of a game the player let know who they are (App Review 4.7.3), and how to take it back. */
-  knowsYou: t("Knows who you are"),
-  stopSharing: tc("identity", "Stop sharing"),
-  stopSharingLabel: (title: string) => t("Stop sharing who you are with {game}", { game: title }),
-  stopped: (title: string) =>
-    t("{game} no longer knows who you are. It asks again next time you play.", { game: title }),
-  stopFailed: t("Couldn't stop sharing who you are. Try again in a moment."),
 } as const;
 
 /** The Publish dialog's Allow remixing, and its page on what remixers can do (`panels/plugins/genex/PublishRemix.tsx`). */
@@ -3646,7 +3639,7 @@ export const PUBLISH_REMIX_WORDS = {
   terms: t("Genex terms, section 4"),
   gotIt: t("Got it"),
   /** Why the last publish's project didn't go: remixing then stays off. */
-  tooBig: t("Its project is too big to remix: Genex keeps up to 2 GB and 5,000 files."),
+  tooBig: t("Its project is too big to remix: Genex keeps up to 5 GB and 5,000 files."),
   notSent: t("Its project didn’t go, so no one can remix it yet."),
 } as const;
 

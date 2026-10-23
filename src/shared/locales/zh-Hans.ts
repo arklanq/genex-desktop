@@ -827,7 +827,6 @@ export default {
   "Context · {percent}% used": "上下文 · 已用 {percent}%",
   "Context: {used} tokens": "上下文：{used} token",
   Continue: "继续",
-  "Continue as me": "以我的身份继续",
   "Continue on this Mac": "在这台 Mac 上继续",
   "Continue to confirmation": "继续确认",
   Contractor: "外部智能体",
@@ -945,7 +944,6 @@ export default {
   "Couldn't start sign-in": "无法开始登录",
   "Couldn't start the sign-in on this Mac. Paste a key instead.": "无法在这台 Mac 上开始登录。请改为粘贴密钥。",
   "Couldn't stop play": "无法停止试玩",
-  "Couldn't stop sharing who you are. Try again in a moment.": "无法停止分享你的身份。请稍后再试。",
   "Couldn't take a motion strip": "无法拍摄动作序列图",
   "Couldn't take a picture of {asset}": "无法为 {asset} 拍照",
   "Couldn't take a play-view shot": "无法截取游玩画面",
@@ -1393,8 +1391,6 @@ export default {
   "Genex couldn't download the Luau checks. Check the connection and press Add Luau checks again.":
     "Genex 无法下载 Luau 检查。请检查网络连接，然后再次点击“添加 Luau 检查”。",
   "Genex couldn't get Roblox Studio.": "Genex 未能获取 Roblox Studio。",
-  "Genex couldn't stop sharing who you are with this game. Try again in a moment.":
-    "Genex 无法停止向这个游戏分享你的身份。请稍后再试。",
   "Genex couldn't tell whether {app} was free, so nothing was rewound. Rewind again in a moment.":
     "Genex 无法判断 {app} 是否空闲，因此没有回退任何内容。请稍后再回退。",
   "Genex couldn't tell whether {app} was free, so the newer version didn't come back. Try again in a moment.":
@@ -1775,8 +1771,6 @@ export default {
   "It turns on when installed: agents in all your games can use it from your next message.":
     "安装后即开启：从你的下一条消息起，所有游戏中的智能体都能使用它。",
   "It was paused before it could write up the build.": "在写出构建总结前就被暂停了。",
-  "It will see your display name and avatar, so your progress and scores can be saved to your account. Games are code written by other people, not by Genex. You can stop sharing any time in Settings › Storage.":
-    "它将看到你的显示名称和头像，这样你的进度和分数就能保存到你的账户。游戏是其他人编写的代码，不是 Genex 写的。你可以随时在“设置 › 存储”中停止分享。",
   "It's no longer there.": "它已经不在了。",
   "It's switched on in Studio's settings. Studio answers once a place is open: open one in Studio, or press New Roblox game.":
     "已在 Studio 的设置中开启。打开一个地点后 Studio 才会响应：在 Studio 中打开一个，或点击“新建 Roblox 游戏”。",
@@ -1793,8 +1787,8 @@ export default {
   "Its packages aren’t installed yet — “{install}” runs on one press.": "依赖包还没安装——点一下即可运行“{install}”。",
   "Its packages aren’t installed yet.": "依赖包尚未安装。",
   "Its project didn’t go, so no one can remix it yet.": "项目没有发送成功，所以暂时没人能改编它。",
-  "Its project is too big to remix: Genex keeps up to 2 GB and 5,000 files.":
-    "项目太大，无法改编：Genex 最多保存 2 GB、5,000 个文件。",
+  "Its project is too big to remix: Genex keeps up to 5 GB and 5,000 files.":
+    "项目太大，无法改编：Genex 最多保存 5 GB、5,000 个文件。",
   "Its session failed before it delivered anything.": "它的会话在交付任何内容之前就失败了。",
   "Its source is your own repository: run genex make-remixable in the game’s folder to allow remixing.":
     "它的源码在你自己的仓库里：在游戏文件夹中运行 genex make-remixable 即可允许改编。",
@@ -1839,7 +1833,6 @@ export default {
     "已保留。{count, plural, other {# 项之前失败的检查现在通过了}}，之前通过的都没有出问题，并排对比的审查员也没有异议。",
   Kind: "类型",
   "Kinds of asset": "素材类型",
-  "Knows who you are": "知道你是谁",
   "Koi drifting through a neon night market, seen from above": "锦鲤游过霓虹夜市上空，俯视视角",
   "Laid the terrain": "已铺设地形",
   Language: "语言",
@@ -1879,7 +1872,6 @@ export default {
     "允许这个对话的智能体使用这个应用吗？它可以点击、输入，并读取这个应用显示的内容。",
   "Let this chat's agent use {app}? It can click, type and read what {app} shows.":
     "允许这个对话的智能体使用 {app} 吗？它可以点击、输入，并读取 {app} 显示的内容。",
-  "Let {game} know who you are?": "让 {game} 知道你是谁？",
   "Letters a–z, digits and dashes.": "字母 a–z、数字和短横线。",
   "Letting go of every input": "正在松开所有输入",
   "Letting the game settle": "正在等待游戏稳定",
@@ -2575,7 +2567,6 @@ export default {
   "Plans first, asks to proceed": "先做计划，再询问是否继续",
   Platforms: "平台",
   Play: "游玩",
-  "Play as guest": "以访客身份游玩",
   "Play build": "游玩此构建",
   "Play game": "开始游戏",
   "Play latest": "游玩最新版",
@@ -3329,7 +3320,6 @@ export default {
   "Stop game": "停止游戏",
   "Stop replying about {about}": "取消回复 {about}",
   "Stop sharing": "停止分享",
-  "Stop sharing who you are with {game}": "停止向 {game} 分享你的身份",
   "Stop this background work": "停止此后台任务",
   "Stop this game's build before removing it.": "请先停止此游戏的构建，再移除它。",
   "Stop this terminal before closing its session.": "请先停止此终端，再关闭其会话。",
@@ -4630,7 +4620,6 @@ export default {
   "how well the screen reads": "画面有多易读",
   "how well the screen reads {score}": "画面有多易读：{score}",
   "how well the screen reads {score} out of {max}": "画面有多易读：{score} 分，满分 {max} 分",
-  "identity\u0004Stop sharing": "停止分享",
   "in hand": "进行中",
   "in {game}": "在 {game} 中",
   "in {game} and {count} more": "在 {game} 及另外 {count} 款游戏中",
@@ -5217,8 +5206,6 @@ export default {
   "{game} cover preview": "{game} 的封面预览",
   "{game} has your receipt.": "{game} 已收到你的收据。",
   "{game} in play": "{game} 游玩画面",
-  "{game} no longer knows who you are. It asks again next time you play.":
-    "{game} 不再知道你是谁。下次游玩时它会再问你。",
   "{game} now builds in {engine} · {project}": "{game} 现在在 {engine} 中制作 · {project}",
   "{game} {number}": "{game} {number}",
   "{game} · started {time}": "{game} · {time} 开始",

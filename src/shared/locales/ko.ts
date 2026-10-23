@@ -857,7 +857,6 @@ export default {
   "Context · {percent}% used": "컨텍스트 · {percent}% 사용됨",
   "Context: {used} tokens": "컨텍스트: {used} 토큰",
   Continue: "계속",
-  "Continue as me": "내 계정으로 계속",
   "Continue on this Mac": "이 Mac에서 계속",
   "Continue to confirmation": "확인 단계로 계속",
   Contractor: "외부 에이전트",
@@ -983,8 +982,6 @@ export default {
   "Couldn't start the sign-in on this Mac. Paste a key instead.":
     "이 Mac에서 로그인을 시작할 수 없어요. 대신 키를 붙여넣어 주세요.",
   "Couldn't stop play": "플레이를 멈추지 못했어요",
-  "Couldn't stop sharing who you are. Try again in a moment.":
-    "내 정보 공유를 멈추지 못했어요. 잠시 후 다시 시도하세요.",
   "Couldn't take a motion strip": "연속 동작 이미지를 찍지 못했어요",
   "Couldn't take a picture of {asset}": "{asset} 사진을 찍지 못했어요",
   "Couldn't take a play-view shot": "플레이 화면을 찍지 못했어요",
@@ -1447,8 +1444,6 @@ export default {
   "Genex couldn't download the Luau checks. Check the connection and press Add Luau checks again.":
     "Genex가 Luau 검사를 다운로드하지 못했어요. 연결을 확인하고 ‘Luau 검사 추가’를 다시 누르세요.",
   "Genex couldn't get Roblox Studio.": "Genex가 Roblox Studio를 받지 못했어요.",
-  "Genex couldn't stop sharing who you are with this game. Try again in a moment.":
-    "Genex가 이 게임과의 내 정보 공유를 멈추지 못했어요. 잠시 후 다시 시도하세요.",
   "Genex couldn't tell whether {app} was free, so nothing was rewound. Rewind again in a moment.":
     "Genex가 {app}의 사용 가능 여부를 확인하지 못해서 아무것도 되감지 않았어요. 잠시 후 다시 되감아 주세요.",
   "Genex couldn't tell whether {app} was free, so the newer version didn't come back. Try again in a moment.":
@@ -1848,8 +1843,6 @@ export default {
   "It turns on when installed: agents in all your games can use it from your next message.":
     "설치하면 바로 켜져요. 다음 메시지부터 모든 게임의 에이전트가 쓸 수 있어요.",
   "It was paused before it could write up the build.": "빌드 요약을 쓰기 전에 일시 정지됐어요.",
-  "It will see your display name and avatar, so your progress and scores can be saved to your account. Games are code written by other people, not by Genex. You can stop sharing any time in Settings › Storage.":
-    "게임이 내 표시 이름과 아바타를 보게 되고, 진행 상황과 점수가 내 계정에 저장돼요. 게임은 Genex가 아니라 다른 사람이 작성한 코드예요. 공유는 ‘설정 › 저장 공간’에서 언제든 멈출 수 있어요.",
   "It's no longer there.": "더 이상 없어요.",
   "It's switched on in Studio's settings. Studio answers once a place is open: open one in Studio, or press New Roblox game.":
     "Studio 설정에서 켜졌어요. 플레이스가 열리면 Studio가 응답해요. Studio에서 하나를 열거나 ‘새 Roblox 게임’을 누르세요.",
@@ -1867,8 +1860,8 @@ export default {
     "패키지가 아직 설치되지 않았어요 — 한 번 누르면 “{install}” 명령이 실행돼요.",
   "Its packages aren’t installed yet.": "패키지가 아직 설치되지 않았어요.",
   "Its project didn’t go, so no one can remix it yet.": "프로젝트가 전송되지 않아서 아직 아무도 리믹스할 수 없어요.",
-  "Its project is too big to remix: Genex keeps up to 2 GB and 5,000 files.":
-    "프로젝트가 너무 커서 리믹스할 수 없어요. Genex는 2GB, 파일 5,000개까지 보관해요.",
+  "Its project is too big to remix: Genex keeps up to 5 GB and 5,000 files.":
+    "프로젝트가 너무 커서 리믹스할 수 없어요. Genex는 5GB, 파일 5,000개까지 보관해요.",
   "Its session failed before it delivered anything.": "아무것도 전달하기 전에 세션이 실패했어요.",
   "Its source is your own repository: run genex make-remixable in the game’s folder to allow remixing.":
     "소스가 내 저장소에 있어요. 리믹스를 허용하려면 게임 폴더에서 genex make-remixable을 실행하세요.",
@@ -1913,7 +1906,6 @@ export default {
     "유지됨. 전에 실패하던 검사 {count, plural, other {#개}}가 이제 통과하고, 전에 통과하던 건 깨지지 않았고, 나란히 비교하는 리뷰어도 반대하지 않았어요.",
   Kind: "종류",
   "Kinds of asset": "에셋 종류",
-  "Knows who you are": "나를 알고 있음",
   "Koi drifting through a neon night market, seen from above": "네온 야시장 위를 떠다니는 잉어, 위에서 내려다본 모습",
   "Laid the terrain": "지형을 만들었어요",
   Language: "언어",
@@ -1953,7 +1945,6 @@ export default {
     "이 채팅의 에이전트가 이 앱을 쓰게 할까요? 이 앱 화면을 읽고 클릭하고 입력할 수 있어요.",
   "Let this chat's agent use {app}? It can click, type and read what {app} shows.":
     "이 채팅의 에이전트가 {app} 앱을 쓰게 할까요? {app} 화면을 읽고 클릭하고 입력할 수 있어요.",
-  "Let {game} know who you are?": "{game}에 내가 누구인지 알릴까요?",
   "Letters a–z, digits and dashes.": "영문 a–z, 숫자, 대시만 쓸 수 있어요.",
   "Letting go of every input": "모든 입력을 떼는 중",
   "Letting the game settle": "게임이 안정되길 기다리는 중",
@@ -2667,7 +2658,6 @@ export default {
   "Plans first, asks to proceed": "먼저 계획하고, 진행할지 물어봐요",
   Platforms: "플랫폼",
   Play: "플레이",
-  "Play as guest": "게스트로 플레이",
   "Play build": "빌드 플레이",
   "Play game": "게임 플레이",
   "Play latest": "최신 빌드 플레이",
@@ -3437,7 +3427,6 @@ export default {
   "Stop game": "게임 중지",
   "Stop replying about {about}": "{about} 답장 취소",
   "Stop sharing": "공유 중지",
-  "Stop sharing who you are with {game}": "‘{game}’ 게임과의 내 정보 공유 중지",
   "Stop this background work": "이 백그라운드 작업 중지",
   "Stop this game's build before removing it.": "이 게임의 빌드를 중지한 다음 제거하세요.",
   "Stop this terminal before closing its session.": "세션을 닫기 전에 이 터미널을 중지하세요.",
@@ -4795,7 +4784,6 @@ export default {
   "how well the screen reads": "화면이 얼마나 잘 읽히는지",
   "how well the screen reads {score}": "화면이 얼마나 잘 읽히는지: {score}",
   "how well the screen reads {score} out of {max}": "화면이 얼마나 잘 읽히는지: {max}점 중 {score}점",
-  "identity\u0004Stop sharing": "공유 중지",
   "in hand": "진행 중",
   "in {game}": "{game}에서 플레이 중",
   "in {game} and {count} more": "{game} 외 {count}개 게임에서 플레이 중",
@@ -5393,8 +5381,6 @@ export default {
   "{game} cover preview": "{game} 커버 미리보기",
   "{game} has your receipt.": "{game}에 영수증이 전달됐어요.",
   "{game} in play": "플레이 중인 {game}",
-  "{game} no longer knows who you are. It asks again next time you play.":
-    "‘{game}’ 게임은 이제 내가 누구인지 몰라요. 다음에 플레이할 때 다시 물어봐요.",
   "{game} now builds in {engine} · {project}": "{game} 게임은 이제 {engine}에서 만들어져요 · {project}",
   "{game} {number}": "{game} {number}",
   "{game} · started {time}": "{game} · {time} 시작",

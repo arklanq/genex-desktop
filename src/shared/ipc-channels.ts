@@ -187,7 +187,6 @@ export const STUDIO_INVOKE_CHANNELS = {
   "studio:play.install-cancel": "playInstallCancel",
   "studio:play.installs": "playInstalls",
   "studio:play.uninstall": "playUninstall",
-  "studio:play.forget-identity": "playForgetIdentity",
   "studio:play.launch": "playLaunch",
   "studio:play.session": "playSession",
   "studio:play.sessions": "playSessions",
@@ -455,7 +454,6 @@ export interface StudioInvokePayloads {
   "studio:play.install-cancel": { slug: string };
   "studio:play.installs": undefined;
   "studio:play.uninstall": { slug: string };
-  "studio:play.forget-identity": { slug: string };
   "studio:play.launch": { slug: string };
   "studio:play.session": { slug: string; action: SessionAction };
   "studio:play.sessions": undefined;

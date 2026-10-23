@@ -122,6 +122,7 @@ describe("a game's project staged for remixing", () => {
       "Arena/Intermediate/Build/x.o": "cache",
       "Arena/Saved/Logs/Arena.log": "log",
       "Arena/Content/Maps/Main.umap": "map",
+      "Arena/Builds/Mac/Arena-Mac-Shipping.app/Contents/Info.plist": "the packaged app",
       "Arena/Plugins/Fx/Fx.uplugin": "{}",
       "Arena/Plugins/Fx/Source/Fx.cpp": "code",
       "Arena/Plugins/Fx/Binaries/Mac/libFx.dylib": "build",
@@ -131,6 +132,8 @@ describe("a game's project staged for remixing", () => {
     const { game, dest } = await gameWith(files);
     await stageRemixSource(game, dest, listing(Object.keys(files)));
     assert.deepEqual(await filesIn(dest), [
+      // The level goes to Git LFS: the copy names it there.
+      ".gitattributes",
       "Arena/Arena.uproject",
       "Arena/Content/Maps/Main.umap",
       "Arena/Plugins/Fx/Fx.uplugin",
@@ -141,6 +144,39 @@ describe("a game's project staged for remixing", () => {
       "unity/ProjectSettings/ProjectVersion.txt",
       "web/Library/readme.md",
     ]);
+  });
+
+  it("leaves an engine game's asset copies and proof screenshots out, but never a web game's or a Godot project's at the top", async () => {
+    const unreal = {
+      "unreal/Arena.uproject": "{}",
+      "unreal/Content/Crate.uasset": "package",
+      "assets/blender/crate.glb": "the model, already imported",
+      "assets/genex/hero.glb": "a generation, already imported",
+      "docs/proof/shot-01.png": "proof",
+      "docs/design.md": "notes",
+      "NOTES.md": "notes",
+    };
+    const one = await gameWith(unreal);
+    await stageRemixSource(one.game, one.dest, listing(Object.keys(unreal)));
+    assert.deepEqual(await filesIn(one.dest), [
+      ".gitattributes",
+      "NOTES.md",
+      "docs/design.md",
+      "unreal/Arena.uproject",
+      "unreal/Content/Crate.uasset",
+    ]);
+    const web = {
+      "index.html": "<html>",
+      "assets/hero.glb": "the game loads it",
+      "unity/ProjectSettings/ProjectVersion.txt": "6000.2",
+    };
+    const two = await gameWith(web);
+    await stageRemixSource(two.game, two.dest, listing(Object.keys(web)));
+    assert.ok((await filesIn(two.dest)).includes("assets/hero.glb"), "a web page at the top loads its assets");
+    const godot = { "project.godot": "[application]", "assets/hero.glb": "res://assets/hero.glb" };
+    const three = await gameWith(godot);
+    await stageRemixSource(three.game, three.dest, listing(Object.keys(godot)));
+    assert.ok((await filesIn(three.dest)).includes("assets/hero.glb"), "a Godot project at the top owns assets/");
   });
 
   it("copies only real files inside the game: links and paths out of it stay behind, and nothing outside is touched", async () => {
@@ -192,6 +228,39 @@ describe("a game's project staged for remixing", () => {
     await stageRemixSource(game, dest, listing(["studio.json", "old.js"]));
     await stageRemixSource(game, dest, listing(["studio.json"]));
     assert.deepEqual(await filesIn(dest), ["studio.json"]);
+  });
+
+  it("sends every model, picture, sound, video and Unreal package to Git LFS whatever its size, and code never", async () => {
+    const { game, dest } = await gameWith({
+      "unreal/Content/Maps/Main.umap": "level",
+      "unreal/Content/Crate.uasset": "package",
+      "assets/crate.glb": "model",
+      "assets/src/crate.blend": "blend",
+      "assets/hit.wav": "sound",
+      "src/main.js": "code",
+      "unreal/build/courtyard.py": "script",
+    });
+    await stageRemixSource(
+      game,
+      dest,
+      listing([
+        "unreal/Content/Maps/Main.umap",
+        "unreal/Content/Crate.uasset",
+        "assets/crate.glb",
+        "assets/src/crate.blend",
+        "assets/hit.wav",
+        "src/main.js",
+        "unreal/build/courtyard.py",
+      ]),
+    );
+    const routed = (await readFile(path.join(dest, ".gitattributes"), "utf8")).split("\n").filter(Boolean);
+    assert.deepEqual(routed.map((line) => line.split('" ')[0]?.slice(2)).sort(), [
+      "assets/crate.glb",
+      "assets/hit.wav",
+      "assets/src/crate.blend",
+      "unreal/Content/Crate.uasset",
+      "unreal/Content/Maps/Main.umap",
+    ]);
   });
 
   it("names a file big enough to trip the upload limit in .gitattributes, after the game's own lines", async () => {
