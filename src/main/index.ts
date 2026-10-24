@@ -34,7 +34,7 @@ import {
   utilityProcess,
 } from "electron";
 import { spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdtempSync, mkdirSync } from "node:fs";
+import { appendFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
@@ -97,7 +97,7 @@ import {
 } from "./auto-update.ts";
 import { RELEASE_CHECK_INTERVAL_MS, latestRelease } from "./release-check.ts";
 import { UpdateAction } from "../shared/app-update.ts";
-import { gatedHostTool } from "./core/genex-cli.ts";
+import { gatedHostTool, type GenexStand, launchStand } from "./core/genex-cli.ts";
 import { normalGamesElsewhere, normalGamesFolder } from "./core/never-touch-list.ts";
 import { diagnosticsText, gatherDiagnostics } from "./diagnostics.ts";
 import { type FeedbackSources, sendFeedback } from "./feedback.ts";
@@ -120,6 +120,7 @@ import { registerPluginsIpc } from "./ipc/plugins.ts";
 import { type PreviewBoundsRecord, registerPreviewIpc } from "./ipc/preview.ts";
 import { registerProjectsIpc } from "./ipc/projects.ts";
 import { type PlayIpcDeps, registerPlayIpc } from "./ipc/play.ts";
+import { registerStoreIpc, type StoreIpcDeps } from "./ipc/store.ts";
 import { registerGenexAccountIpc } from "./ipc/genex-account.ts";
 import {
   createGenexAccount,
@@ -131,6 +132,8 @@ import { devStandAccountPort } from "./dev/dev-stand-account.ts";
 import { fixtureAccountPort } from "./dev/fixture-genex-account.ts";
 import { openGenexPage } from "./genex-browser.ts";
 import { fixtureGamePage, fixtureGetCoin, fixtureNativeGames, fixturePlayRequest } from "./dev/fixture-play.ts";
+import { createFixtureStore } from "./dev/fixture-store.ts";
+import { fixtureLocalRuns } from "./dev/fixture-items.ts";
 import { FIXTURE_CONFIRM_ORIGIN } from "./dev/fixture-coin.ts";
 import { launchFixtureAccount } from "./dev/fixture-people.ts";
 import {
@@ -158,6 +161,7 @@ import { readAssetPreview } from "./asset-preview.ts";
 import { fixtureDownload, fixtureFileResponse } from "./dev/fixture-asset-library.ts";
 import {
   buildHostsFor,
+  type GalleryRequest,
   mintedTicket,
   networkRequest,
   type PlayGallery,
@@ -194,8 +198,12 @@ import { playViewsOf, wirePlayViewer } from "./play/viewer-view.ts";
 import { purchaseConfirmOrigin } from "./play/purchase-window.ts";
 import { type PlayComments, playComments } from "./play/comments.ts";
 import { type PlayCoin, playCoin } from "./play/coin.ts";
-import { playOrigins } from "./play/origins.ts";
+import { playStore } from "./play/store.ts";
+import { followStudioWindow, type StoreSheetControl, storeSheet } from "./play/store-sheet.ts";
+import { devStand, websitePageOpener } from "./play/origins.ts";
+import { devGamesTrust } from "./play/dev-games-trust.ts";
 import { PLAY_ORIGIN, type PlayPoint } from "../shared/play.ts";
+import { playCoinPageUrl } from "../shared/play-purchase.ts";
 import { registerRunsIpc } from "./ipc/runs.ts";
 import { registerSettingsIpc } from "./ipc/settings.ts";
 import { readLicenseTexts } from "./licenses.ts";
@@ -509,11 +517,17 @@ for (const [name, value] of testLanguageSwitches(
 ))
   app.commandLine.appendSwitch(name, value);
 /**
- * Where Play talks to genex.games in this launch: genex.games itself, or a local or test copy that a
- * development profile names (`play/origins.ts`); never in a packaged app, and never in a fixture
- * launch, which answers Play from its own data.
+ * Where Play talks to genex.games in this launch: genex.games itself, or a local or test copy (a
+ * stand) that a development profile names (`play/origins.ts`), with its game host, the Genex host
+ * tools' API and its own CA; never in a packaged app, and never in a fixture launch, which answers
+ * Play from its own data.
  */
-const playOrigin = playOrigins(process.env, dev !== null && !app.isPackaged && !fixtureNativePolicy);
+const stand = devStand(process.env, {
+  developerProfile: dev !== null,
+  packaged: app.isPackaged,
+  fixture: fixtureNativePolicy,
+});
+const playOrigin = stand.origins;
 // Human review is an explicit opt-in; automated fixture windows stay parked and unfocusable.
 const interactiveFixture = process.env.STUDIO_FIXTURE_INTERACTIVE === "1";
 const parkedFixtureWindow = isSmoke || (fixtureProviders && !interactiveFixture);
@@ -548,6 +562,8 @@ let playAccount: { people: PlayPeople; creators: CreatorStats; credits: GenexCre
   null;
 let gameLibrary: LibrarySharing | null = null;
 let playManage: PlayManage | null = null;
+/** The store on the Genex account and its purchase sheet in the studio window, made on first use (`storeFor`). */
+let playStoreDeps: PlayStoreParts | null = null;
 /** Play's native installs and the games being played, made on first use (`playInstallsFor`, `playSessionsFor`). */
 let nativeInstaller: NativeInstaller | null = null;
 let nativeLauncher: NativeSessions | null = null;
@@ -835,6 +851,10 @@ function appLookOptions(userData: string): Pick<StudioCoreOptions, "appLook" | "
   return { appLook: macAppLook({ run: appLookRun, scratchDir: scratch, access: access.status }), screenAccess: access };
 }
 
+/** The core's stand option, when this launch has one. */
+const optionalStand = (genexStand: GenexStand | undefined): Pick<StudioCoreOptions, "genexStand"> =>
+  genexStand ? { genexStand } : {};
+
 /** Computer control (cua-driver), made with the first core: one registry, stopped on quit. */
 let desktop: DesktopControl | undefined;
 
@@ -852,6 +872,23 @@ async function createCore(userData: string): Promise<StudioCore> {
     neverTouch: otherProfiles(userData),
     // The normal profile keeps its games outside its data: another launch's workers never reach them.
     neverTouchGames: normalGamesElsewhere(launch.gamesRoot, app.getPath("home")),
+    // A development profile on a stand: the Genex host tools' CLI and the Genex plugin (its publish)
+    // go to the stand as the account it signed in to.
+    ...optionalStand(launchStand(stand, () => genexAccountFor(studio).token())),
+    // A game's local item drafts after its publish: Put on sale as the app's account; a fixture
+    // launch uploads them to its own store in place of the CLI.
+    localItems: {
+      putOnSale: (skuId) => storeFor(studio).store.putOnSale(skuId),
+      ...(fixtureNativePolicy
+        ? {
+            runs: fixtureLocalRuns({
+              request: (route, init) => storeFor(studio).request(route, init),
+              token: () => genexAccountFor(studio).token(),
+              core: () => studio,
+            }),
+          }
+        : {}),
+    },
     ...launch,
     ...(ollamaHost ? { ollamaHost } : {}),
     // Electron's binary doubles as node for the harness child process.
@@ -1424,6 +1461,73 @@ function playCoinFor(studio: StudioCore): PlayCoin {
   });
 }
 
+/** The store's parts: its client, the purchase sheet, and the requests both make. */
+type PlayStoreParts = Omit<StoreIpcDeps, "local" | "coin"> & { sheet: StoreSheetControl; request: GalleryRequest };
+
+/** The account's coin for the plate in Play, and Get Nex, read as the purchase sheet's is (`playCoinFor`). */
+function plateCoinFor(studio: StudioCore): StoreIpcDeps["coin"] {
+  const coin = playCoinFor(studio);
+  return {
+    spendable: () => coin.spendableOrNone(),
+    // Get Nex: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
+    getCoin: () => {
+      if (fixtureNativePolicy) fixtureGetCoin();
+      else if (window) openGenexWebsitePage(studio, window, playCoinPageUrl(playOrigin.web));
+    },
+  };
+}
+
+/**
+ * The store on the Genex account (marketplace plan 10.1): its client, and the purchase sheet a game's
+ * page shows in the studio window, confirmed as the viewer's is. A fixture launch answers both from
+ * its own store over its other fixture answers (`dev/fixture-store.ts`), so no socket opens.
+ */
+function storeFor(studio: StudioCore): PlayStoreParts {
+  if (playStoreDeps) return playStoreDeps;
+  const account = genexAccountFor(studio);
+  const deps = {
+    request: fixtureNativePolicy
+      ? createFixtureStore({ now: Date.now, fallback: fixturePlayRequest })
+      : networkRequest(globalThis.fetch, playOrigin.api),
+    token: account.token,
+    now: Date.now,
+    localImages: fixtureNativePolicy,
+    refused: account.refused,
+  };
+  const store = playStore(deps);
+  const sheet = storeSheet({
+    purchase: store.purchase,
+    world: (slug) => playCatalogFor(studio).world(slug),
+    coin: playCoin(deps),
+    account: { signIn: () => signInToGenex(studio) },
+    // Get Nex: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
+    openPage: (url) => {
+      if (fixtureNativePolicy) fixtureGetCoin();
+      else if (window) openGenexWebsitePage(studio, window, url);
+    },
+    web: playOrigin.web,
+    clock: SYSTEM_CLOCK,
+    push: (shown) => {
+      const page = livePage();
+      if (page) pushToRenderer(page, "studio:store.sheet", shown);
+    },
+  });
+  playStoreDeps = { store, sheet, request: deps.request };
+  return playStoreDeps;
+}
+
+/**
+ * A genex.games page the app links to (Get Nex): a page of Play's website opens as a sign-in page
+ * does, which takes a development website's plain http; anything else as every other link does.
+ */
+function openGenexWebsitePage(studio: StudioCore, win: BrowserWindow, url: string): void {
+  websitePageOpener(
+    playOrigin.web,
+    (page) => void openGenexPage(fixtureNativePolicy, page, playOrigin.web).catch(() => openOutside(studio, win, page)),
+    (other) => void openOutside(studio, win, other),
+  )(url);
+}
+
 /** The purchase sheet's Sign in: the app's own Genex sign-in in the browser; how it went shows on the sheet's next read. */
 function signInToGenex(studio: StudioCore): void {
   void genexAccountFor(studio)
@@ -1433,6 +1537,8 @@ function signInToGenex(studio: StudioCore): void {
 
 /** Play's full-screen viewer in `win`: a published game, the studio's bar over its top edge. */
 function attachPlay(studio: StudioCore, win: BrowserWindow): void {
+  // The store's purchase sheet is drawn in this window: Pay waits again on focus, and it goes with the page.
+  followStudioWindow(win, storeFor(studio).sheet);
   playView = wirePlayViewer({
     win,
     // The viewer's Remix shows only for a game whose source holds a game, as a card's does.
@@ -1442,6 +1548,8 @@ function attachPlay(studio: StudioCore, win: BrowserWindow): void {
       if (!fixtureNativePolicy) void openOutside(studio, win, url);
     },
     web: playOrigin.web,
+    origins: playOrigin,
+    ...devGamesCertificates(),
     offline: fixtureNativePolicy ? { gamePage: fixtureGamePage } : null,
     micPreload: path.join(distRoot, "preload", "play-mic.cjs"),
     micStore: playMicStore(path.join(userDataRoot, "play-mic.json")),
@@ -1450,16 +1558,36 @@ function attachPlay(studio: StudioCore, win: BrowserWindow): void {
     barArguments: pageLanguageArguments,
     comments: playCommentsFor(studio),
     ...(playInstallsFor(studio) ? { nativeApp: nativeAppFor(studio) } : {}),
+    // The bar's Store door: only a game whose Store tab has items (the store off reads as none).
+    storeShown: async (slug) => (await storeFor(studio).store.items(slug)).items.length > 0,
     coin: playCoinFor(studio),
     account: { signIn: () => signInToGenex(studio) },
-    // Get coin: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
+    // Get Nex: genex.games in the browser; a fixture launch opens nothing and tops its balance up.
     openPage: (url) => {
       if (fixtureNativePolicy) fixtureGetCoin();
-      else void openOutside(studio, win, url);
+      else openGenexWebsitePage(studio, win, url);
     },
     // A fixture launch's stand-in game confirms on a website that resolves nowhere (`fixture-coin.ts`).
     confirmOrigin: fixtureNativePolicy ? FIXTURE_CONFIRM_ORIGIN : purchaseConfirmOrigin(playOrigin),
   });
+}
+
+/**
+ * A development stand's own CA for the viewer, trusted for the stand's game hosts only
+ * (`play/dev-games-trust.ts`); nothing in any other launch, or when the CA file cannot be read.
+ */
+function devGamesCertificates(): Pick<Parameters<typeof wirePlayViewer>[0], "certificates"> {
+  if (!stand.gamesCaFile) return {};
+  let pem: string;
+  try {
+    pem = readFileSync(stand.gamesCaFile, "utf8");
+  } catch (error) {
+    studioLog.write("main", `stand CA not read: ${errorMessage(error)}`);
+    return {};
+  }
+  const trust = devGamesTrust(playOrigin.games, pem, Date.now);
+  if (!trust) studioLog.write("main", "stand CA is not a certificate: nothing is trusted");
+  return trust ? { certificates: trust } : {};
 }
 
 /**
@@ -1980,6 +2108,7 @@ function registerIpc(studio: StudioCore, engines: EngineBoot): void {
   registerDataFolderIpc(handle, dataFolderIpc(studio));
   registerGenexAccountIpc(handle, { account: genexAccountFor(studio) });
   registerPlayIpc(handle, playIpcDeps(studio));
+  registerStoreIpc(handle, { ...storeFor(studio), coin: plateCoinFor(studio), local: studio.localItems });
   const { library } = playAccountFor(studio);
   registerAssetLibraryIpc(handle, { library, sharing: librarySharingFor(studio), pictureFile: pictureFileFor() });
   registerNotificationsIpc(handle, {

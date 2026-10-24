@@ -61,6 +61,10 @@ when relevant.
 
 - Safety: no destructive git on user folders without a game snapshot. Validate host RPC path
   parameters by realpath. Quote shell arguments with `shellQuote`.
+- Players' Macs have no developer tools: shipped code never runs a /usr/bin program that only
+  stands in for Xcode's (`lipo`, `otool`, `xcrun`); read the file in the app or use macOS's own
+  tool. `scripts/check-mac-tools.ts` (in `check:static`) refuses them, and
+  `DEVELOPER_DIR=/nonexistent` reproduces such a Mac in a test or a `studio:dev` launch.
 - Tests prove behavior. Copy or spacing edits do not need new tests.
 - Contracts live in `src/shared` (IPC channel map, UiEventMap, CustomEventMap, HarnessHostApi);
   add new events/channels there first; no payload as / as never.

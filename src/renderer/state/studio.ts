@@ -79,6 +79,7 @@ import {
   viewerReported,
 } from "./play.ts";
 import { createPeopleStore, type PeopleStore } from "./people.ts";
+import { createItemsStore, type ItemsStore, ItemsRead } from "./items.ts";
 import { createSharingStore, type SharingStore } from "./sharing.ts";
 import {
   bootstrapFailed,
@@ -149,6 +150,8 @@ export interface Studio {
   readonly play: PlayStore;
   /** Play's people: the Genex account, friends and profiles (`people.ts`). */
   readonly people: PeopleStore;
+  /** Create › Items: Browse, Selling and the presses on an item (`items.ts`). */
+  readonly items: ItemsStore;
   /** Save and Share on the open game's assets (`sharing.ts`). */
   readonly sharing: SharingStore;
   readonly agentScreens: AgentScreensStore;
@@ -235,6 +238,7 @@ interface Stores {
   readonly plugins: PluginsStore;
   readonly play: PlayStore;
   readonly people: PeopleStore;
+  readonly items: ItemsStore;
   readonly sharing: SharingStore;
   readonly agentScreens: AgentScreensStore;
   readonly commandRuns: CommandRunsStore;
@@ -270,6 +274,7 @@ function createStores(
     // A change from a card's menu shows on a profile's cards too.
     play: createPlayStore(api, storage, Date.now, (gameId, next) => people.gameChanged(gameId, next)),
     people,
+    items: createItemsStore(api, timers),
     sharing: createSharingStore(api, timers),
     agentScreens: createAgentScreensStore(),
     commandRuns: createCommandRunsStore(),
@@ -401,10 +406,18 @@ function bootstrapper(api: StudioApi, stores: Stores, storage: KeyValueStorage |
 
 /** The events that change a store directly, beyond the reads they ask for. */
 function applyUiEvent(
-  { agentScreens, threads, layout, library, update, play, agentsStart, providerUsage }: Stores,
+  { agentScreens, threads, layout, library, update, play, agentsStart, providerUsage, items }: Stores,
   event: UiEvent,
 ): void {
   switch (event.type) {
+    case UiEvent.ItemDrafted:
+      // A new or changed item of the account's: Selling, once shown, reads it again.
+      if (items.getState().selling.read !== ItemsRead.Idle) void items.readSelling();
+      break;
+    case UiEvent.ItemsLocal:
+      // Main's record of a game's local drafts changed: a card showing one of them reads it again.
+      if (Object.hasOwn(items.getState().local, event.payload.project)) void items.readLocal(event.payload.project);
+      break;
     case UiEvent.ProviderUsage:
       providerUsage.setState((state) => usageReported(state, event.payload.reports), true);
       break;

@@ -852,8 +852,8 @@ export default {
     "La recherche des compétences de Codex s’est fermée. Actualise pour réessayer.",
   "Codex skill discovery timed out. Refresh to retry.":
     "La recherche des compétences de Codex a expiré. Actualise pour réessayer.",
-  "Coin lives in your Genex account. Sign in once, then pay here.":
-    "Les pièces sont sur ton compte Genex. Connecte-toi une fois, puis paie ici.",
+  "Nex lives in your Genex account. Sign in once, then pay here.":
+    "Tes Nex sont sur ton compte Genex. Connecte-toi une fois, puis paie ici.",
   Color: "Couleur",
   Colors: "Couleurs",
   Columns: "Colonnes",
@@ -1098,6 +1098,8 @@ export default {
     "Installation impossible : ce jeu ne fonctionne pas sur ce Mac.",
   "Couldn’t install: this game is larger than it says.": "Installation impossible : ce jeu est plus lourd qu’annoncé.",
   "Couldn’t install: this game isn’t signed.": "Installation impossible : ce jeu n’est pas signé.",
+  "Couldn’t install: this game needs Rosetta to run on this Mac.":
+    "Installation impossible : ce jeu a besoin de Rosetta pour fonctionner sur ce Mac.",
   "Couldn’t install: this game’s files aren’t safe to open.":
     "Installation impossible : les fichiers de ce jeu ne sont pas sûrs à ouvrir.",
   "Couldn’t load other versions.": "Impossible de charger les autres versions.",
@@ -1681,7 +1683,9 @@ export default {
     "Installe Unreal Engine {version} pour faire des jeux dans Unreal.",
   "Get Xcode": "Télécharger Xcode",
   "Get a key": "Obtenir une clé",
-  "Get coin": "Obtenir des pièces",
+  "Get Nex": "Obtenir des Nex",
+  Nex: "Nex",
+  "{amount} Nex, get Nex": "{amount} Nex, obtenir des Nex",
   "Get credits": "Obtenir des crédits",
   "Get the Epic Games Launcher": "Télécharger Epic Games Launcher",
   "Getting Roblox Studio": "Installation de Roblox Studio",
@@ -1953,6 +1957,7 @@ export default {
     "Ça ratait à chaque fois, alors tout s’est arrêté pour économiser tes crédits.",
   "It leaves Play and genex.games and goes back to drafts. The direct link still works, and plays and likes stay if it’s published again.":
     "Il quitte « Jouer » et genex.games et retourne dans les brouillons. Le lien direct marche toujours, et les parties et les j’aime restent s’il est republié.",
+  "It leaves the game’s Store. Players who own it keep it.": "Il quitte la boutique du jeu. Ceux qui l’ont le gardent.",
   "It may need the setup scripts its packages came with, which didn’t run.":
     "Il a peut-être besoin des scripts d’installation fournis avec ses paquets, qui ne se sont pas lancés.",
   "It merged this part's work without a reviewer's verdict. The reviewers score parts that build in steps; this one was built in one session.":
@@ -1969,6 +1974,7 @@ export default {
     "Il s’exécute avec tes accès : Genex n’isole pas son code.",
   "It runs, but no reviewer compared it with the game you had.":
     "Ça tourne, mais aucun vérificateur ne l’a comparé au jeu que tu avais.",
+  "It shows in the game after its next release.": "Il apparaît dans le jeu après sa prochaine sortie.",
   "It shows up here as soon as it runs.": "Il s’affichera ici dès qu’il tournera.",
   "It starts off: turn it on in Plugins; each of its tools asks you before it runs.":
     "Il démarre désactivé : active-le dans Plugins ; chacun de ses outils te demandera avant de s’exécuter.",
@@ -2722,8 +2728,8 @@ export default {
   "Opens System Settings → Privacy & Security → {pane}":
     "Ouvre Réglages Système → Confidentialité et sécurité → {pane}",
   "Opens beside the chat": "S’ouvre à côté du chat",
-  "Opens genex.games. Pay comes back once the coin lands.":
-    "Ouvre genex.games. Tu pourras payer dès que les pièces seront arrivées.",
+  "Opens genex.games. Pay comes back once the Nex lands.":
+    "Ouvre genex.games. Tu pourras payer dès que les Nex seront arrivés.",
   "Opens in Explorer": "S’ouvre dans l’Explorateur",
   "Opens in Finder": "S’ouvre dans le Finder",
   "Opens in its default app": "S’ouvre dans son app par défaut",
@@ -3059,6 +3065,7 @@ export default {
   "Remove the waiting messages first: this harness cannot take them back.":
     "Retire d’abord les messages en attente : ce Harness ne peut pas les reprendre.",
   "Remove this row": "Retirer cette ligne",
+  "Remove {item} from {game}?": "Retirer {item} de {game} ?",
   "Remove {name}": "Retirer {name}",
   Removed: "Supprimés",
   "Removed {actor}": "Supprimé : {actor}",
@@ -4315,12 +4322,12 @@ export default {
   Try: "Essaie",
   "Try again": "Réessayer",
   "Try again in a few minutes.": "Réessaie dans quelques minutes.",
-  "Try again in the game once the coin lands.": "Réessaie dans le jeu dès que les pièces seront arrivées.",
-  "Try again in the game. No coin was charged.": "Réessaie dans le jeu. Aucune pièce n’a été débitée.",
-  "Try again in the game. No coin was reserved or charged.":
-    "Réessaie dans le jeu. Aucune pièce n’a été réservée ni débitée.",
-  "Try again in the game. The coin went back to your balance.":
-    "Réessaie dans le jeu. Les pièces sont revenues sur ton solde.",
+  "Try again in the game once the Nex lands.": "Réessaie dans le jeu dès que les Nex seront arrivés.",
+  "Try again in the game. No Nex was charged.": "Réessaie dans le jeu. Aucun Nex n’a été débité.",
+  "Try again in the game. No Nex was reserved or charged.":
+    "Réessaie dans le jeu. Aucun Nex n’a été réservé ni débité.",
+  "Try again in the game. The Nex went back to your balance.":
+    "Réessaie dans le jeu. Les Nex sont revenus sur ton solde.",
   "Try again, or choose another model.": "Réessaie ou choisis un autre modèle.",
   "Try the build again": "Relancer le build",
   "Try your changes before you update.": "Teste tes changements avant de mettre à jour.",
@@ -4759,7 +4766,7 @@ export default {
   "Your browser should show": "Ton navigateur devrait afficher",
   "Your build": "Ton build",
   "Your coding provider": "Ton fournisseur de modèles",
-  "Your coin arrived. Review the purchase, then pay.": "Tes pièces sont arrivées. Vérifie l’achat, puis paie.",
+  "Your Nex arrived. Review the purchase, then pay.": "Tes Nex sont arrivés. Vérifie l’achat, puis paie.",
   "Your files": "Tes fichiers",
   "Your game appears here": "Ton jeu apparaîtra ici",
   "Your game as it was when the run started.": "Ton jeu tel qu’il était au lancement du build.",
@@ -5404,7 +5411,7 @@ export default {
   "{added} of {total} added": "{added} sur {total} ajoutés",
   "{added} of {total} parts added": "{added} sur {total} parties ajoutées",
   "{added} of {total} parts added · {working} working": "{added} sur {total} parties ajoutées · {working} en cours",
-  "{amount} coin": "{amount} pièces",
+  "{amount} Nex": "{amount} Nex",
   "{amount} credits, open Credits": "{amount} crédits, ouvrir Crédits",
   "{amount} more needed": "Il manque {amount}",
   "{app} settings": "Réglages de {app}",
@@ -5429,6 +5436,7 @@ export default {
   "{chart}: {readings}": "{chart} : {readings}",
   "{check}: {name} · {status}": "{check} : {name} · {status}",
   "{chosen} of {total}": "{chosen} sur {total}",
+  "{coins} of your Nex is on hold until {date}.": "{coins} de tes Nex sont bloqués jusqu’au {date}.",
   "{command} (exit {code})": "{command} (sortie : {code})",
   "{command} failed": "Échec de {command}",
   "{commit} (cataloged, not audited)": "{commit} (au catalogue, non audité)",
@@ -5988,6 +5996,7 @@ export default {
   "It isn’t on this computer any more. Install it again.": "Il n’est plus sur cet ordinateur. Réinstalle-le.",
   "It couldn’t start on this computer.": "Il n’a pas pu démarrer sur cet ordinateur.",
   "Remove from this computer": "Retirer de cet ordinateur",
+  "Remove from {game}": "Retirer de {game}",
   "{title} is removed from this computer. Its saves stay.":
     "{title} est retiré de cet ordinateur. Ses sauvegardes restent.",
   "Ready to play on this computer.": "Prêt à jouer sur cet ordinateur.",
@@ -6036,4 +6045,130 @@ export default {
   "Your game is on Roblox": "Ton jeu est sur Roblox",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "L’agent de ton jeu le publie dans Roblox Studio pendant que tu continues à travailler.",
+  "Anything else we should know? (optional)": "Autre chose à nous dire ? (facultatif)",
+  "Balance {amount}": "Solde {amount}",
+  "Balance {now} → {after}": "Solde {now} → {after}",
+  "Doesn't work": "Ne fonctionne pas",
+  "Drag to turn": "Fais glisser pour tourner",
+  "Genex hasn’t confirmed it yet. It shows under My items once it does. You won’t be charged twice.":
+    "Genex ne l’a pas encore confirmé. Il apparaîtra dans Mes objets dès que ce sera fait. Tu ne seras pas débité deux fois.",
+  Get: "Obtenir",
+  "Get in {game}": "Obtenir dans {game}",
+  Inappropriate: "Inapproprié",
+  "It may be back later. No Nex was charged.": "Il reviendra peut-être plus tard. Aucun Nex n’a été débité.",
+  "It's yours. Find it under Store › My items in every game it works in.":
+    "Il est à toi. Retrouve-le dans Boutique › Mes objets dans chaque jeu où il fonctionne.",
+  Item: "Objet",
+  Items: "Objets",
+  "Items you own show up here.": "Les objets que tu possèdes apparaissent ici.",
+  "My items": "Mes objets",
+  "No Nex was charged.": "Aucun Nex n’a été débité.",
+  "No Nex was reserved or charged.": "Aucun Nex n’a été réservé ni débité.",
+  "Not in this game": "Pas dans ce jeu",
+  Owned: "Possédé",
+  "Report item": "Signaler l’objet",
+  "Report item…": "Signaler l’objet…",
+  Scam: "Arnaque",
+  "Sign in to see the items you own.": "Connecte-toi pour voir les objets que tu possèdes.",
+  Store: "Boutique",
+  "Store and my items": "Boutique et mes objets",
+  "The Nex went back to your balance.": "Les Nex sont revenus sur ton solde.",
+  "This item isn’t sold here anymore": "Cet objet n’est plus vendu ici",
+  "Too many reports for now. Try again later.": "Trop de signalements pour l’instant. Réessaie plus tard.",
+  "Try again once the Nex lands.": "Réessaie dès que les Nex seront arrivés.",
+  "Why are you reporting it?": "Pourquoi le signales-tu ?",
+  "Works here": "Fonctionne ici",
+  "You have {have} · {more} more needed": "Tu as {have} · il manque {more}",
+  "Your items couldn’t load.": "Impossible de charger tes objets.",
+  "item report\u0004Copy": "Copie",
+  "{count, number} left": "Reste : {count, number}",
+  "{count, plural, one {Works in # game} other {Works in # games}}":
+    "{count, plural, one {Fonctionne dans # jeu} other {Fonctionne dans # jeux}}",
+  "+{amount}": "+{amount}",
+  Actions: "Actions",
+  "Actions for {name}": "Actions pour {name}",
+  "Add to {game}": "Ajouter à {game}",
+  "Ask for an item or a change…": "Demande un objet ou un changement…",
+  "Ask the agent to change it": "Demander à l’agent de le modifier",
+  Browse: "Parcourir",
+  "Browse and selling": "Parcourir et ventes",
+  "By {name}": "Par {name}",
+  "Choose a game": "Choisir un jeu",
+  "Nex you earn is spent in games, like any Nex.":
+    "Les Nex que tu gagnes se dépensent dans les jeux, comme tous les Nex.",
+  "Draft, put on sale": "Brouillon, mettre en vente",
+  Earned: "Gagné",
+  "Genex can’t sell it under that name. Ask the agent for another.":
+    "Genex ne peut pas le vendre sous ce nom. Demande-en un autre à l’agent.",
+  "Genex can’t sell it with that description. Ask the agent to change it.":
+    "Genex ne peut pas le vendre avec cette description. Demande à l’agent de la modifier.",
+  "Genex couldn’t do that. Try again in a moment.": "Genex n’a pas pu le faire. Réessaie dans un instant.",
+  "Genex couldn’t use its 3D model. Ask the agent to fix it.":
+    "Genex n’a pas pu utiliser son modèle 3D. Demande à l’agent de le corriger.",
+  "Genex couldn’t use its files. Ask the agent to fix them.":
+    "Genex n’a pas pu utiliser ses fichiers. Demande à l’agent de les corriger.",
+  "Genex couldn’t use its picture. Ask the agent to upload the picture.":
+    "Genex n’a pas pu utiliser son image. Demande à l’agent d’envoyer l’image.",
+  "Genex took this item off sale.": "Genex a retiré cet objet de la vente.",
+  "It isn’t on sale anymore.": "Il n’est plus en vente.",
+  "It needs a picture first. Ask the agent to upload the picture.":
+    "Il lui faut d’abord une image. Demande à l’agent d’envoyer l’image.",
+  "Items couldn’t load.": "Impossible de charger les objets.",
+  "Items other creators made. Free to add to your game, and you get 15% of every sale in it.":
+    "Des objets créés par d’autres créateurs. Gratuits à ajouter à ton jeu, et tu touches 15 % de chaque vente dedans.",
+  "Items other creators made. Free to add to your game, and you get {share} of every sale in it.":
+    "Des objets créés par d’autres créateurs. Gratuits à ajouter à ton jeu, et tu touches {share} de chaque vente dedans.",
+  "Items you make show up here. Ask your game’s agent for one.":
+    "Les objets que tu crées apparaissent ici. Demandes-en un à l’agent de ton jeu.",
+  "Its files are too large. Ask the agent to make them smaller.":
+    "Ses fichiers sont trop lourds. Demande à l’agent de les réduire.",
+  "Its maker doesn’t let other games use it anymore.": "Son créateur ne laisse plus d’autres jeux l’utiliser.",
+  "It’s already this game’s own item.": "C’est déjà un objet propre à ce jeu.",
+  "Listing draft: {name}": "Brouillon de vente : {name}",
+  "Draft · goes on sale when you publish": "Brouillon · mis en vente quand tu publies",
+  "Sell when published": "Vendre à la publication",
+  "Will go on sale when you publish": "Sera mis en vente quand tu publieras",
+  "It changed since you approved it.": "Il a changé depuis que tu l’as approuvé.",
+  "This item changed after this card. See it in Items › Selling before you put it on sale.":
+    "Cet objet a changé après cette carte. Regarde-le dans Objets › Ventes avant de le mettre en vente.",
+  "It changed since you approved it, so it stayed a draft.":
+    "Il a changé depuis que tu l’as approuvé, il reste donc un brouillon.",
+  "Removed from this game": "Retiré de ce jeu",
+  "Genex couldn’t change this draft. Try again.": "Genex n’a pas pu modifier ce brouillon. Réessaie.",
+  "New item": "Nouvel objet",
+  "No items match.": "Aucun objet ne correspond.",
+  "No one has shared an item yet.": "Personne n’a encore partagé d’objet.",
+  "Off sale": "Hors vente",
+  "On sale": "En vente",
+  "Only an item players keep can be used in other games.":
+    "Seul un objet que les joueurs gardent peut servir dans d’autres jeux.",
+  "Only the item’s maker can change it.": "Seul le créateur de l’objet peut le modifier.",
+  "Other games can use it": "D’autres jeux peuvent l’utiliser",
+  "Players pay": "Les joueurs paient",
+  "Publish a game to Genex first, then add items to it.":
+    "Publie d’abord un jeu sur Genex, puis ajoute-lui des objets.",
+  "Put on sale": "Mettre en vente",
+  "Ready to use": "Disponible",
+  "Report under review": "Signalement en cours d’examen",
+  "Search items": "Rechercher des objets",
+  Selling: "Ventes",
+  "Sign in to Genex first.": "Connecte-toi d’abord à Genex.",
+  "Sign in to Genex to see items.": "Connecte-toi à Genex pour voir les objets.",
+  Sold: "Vendus",
+  Status: "Statut",
+  "Take off sale": "Retirer de la vente",
+  "That price isn’t one the store takes. Ask the agent to pick another.":
+    "La boutique n’accepte pas ce prix. Demande à l’agent d’en choisir un autre.",
+  "The item store is off right now.": "La boutique d’objets est fermée pour le moment.",
+  "This game sells as many items as it can.": "Ce jeu vend déjà autant d’objets que possible.",
+  "You get per sale": "Tu touches par vente",
+  "You get per sale ({share})": "Tu touches par vente ({share})",
+  "Your agent puts it in the game.": "Ton agent l’ajoute au jeu.",
+  "You’ve put a lot on sale today. Try again tomorrow.":
+    "Tu as déjà mis beaucoup en vente aujourd’hui. Réessaie demain.",
+  "or ask for changes below": "ou demande des changements ci-dessous",
+  "{count, plural, one {in # game} other {in # games}}": "{count, plural, one {dans # jeu} other {dans # jeux}}",
+  "{days, plural, one {On hold for # day} other {On hold for # days}}":
+    "{days, plural, one {Bloquées # jour} other {Bloquées # jours}}",
+  "{game} · {games}": "{game} · {games}",
 } satisfies LocaleCatalog;

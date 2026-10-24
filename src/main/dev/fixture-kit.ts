@@ -92,6 +92,11 @@ export const FixtureName = {
   DataFolder: "data-folder",
   /** The start window for a data folder whose drive is unplugged: its folder, Try again and Quit. */
   DataMissing: "data-missing",
+  /**
+   * Create › Items over the fixture store (with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`): the fixture game is
+   * the account's Snowball on Genex, its chat holding a Listing draft card for Frost Axe.
+   */
+  ItemsStore: "items-store",
 } as const;
 export type FixtureName = (typeof FixtureName)[keyof typeof FixtureName];
 

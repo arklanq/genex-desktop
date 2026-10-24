@@ -19,9 +19,9 @@ and never write a relay server of your own: Genex's relays already serve web, Go
   testers on the draft link meet each other and never real players. Anyone with the link can join,
   as a guest or signed in, before the game is published to the gallery.
 - Check prerequisites before building online features: the pinned SDKs and an authorized hosted
-  test route. Request both SDKs in one approval with
-  `genex__package {"package":"@genex-ai/multiplayer"}` (it includes embed-sdk). After approval,
-  build the game; publish a draft with
+  test route. Add both SDKs in one call with
+  `genex__package {"package":"@genex-ai/multiplayer"}` (it includes embed-sdk; nobody is asked).
+  Then build the game; publish a draft with
   `genex__publish {"operation":"draft"}`; wait with `genex__publish-status`; then test on the draft
   link as TWO DIFFERENT players. Hand the user the link and tell them exactly how: open it in a
   normal window and an incognito window (the incognito one plays as a guest), or send it to a

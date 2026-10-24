@@ -4,7 +4,7 @@
  * chat's own send only when the request asks.
  */
 import { type RefObject, useEffect, useRef } from "react";
-import { COMPOSE_IN_CHAT_EVENT, type ComposeInChat } from "../compose-in-chat.ts";
+import { COMPOSE_IN_CHAT_EVENT, type ComposeInChat, composedInChat, takeWaitingCompose } from "../compose-in-chat.ts";
 import type { PromptBarHandle } from "../ui/PromptBar.tsx";
 import type { SendAnswered } from "./use-submit.ts";
 import type { ThreadDrafts } from "./use-thread-drafts.ts";
@@ -34,12 +34,13 @@ export function useComposeInChat(
   open.current = { threadId, project, drafts };
   const send = useRef(submit);
   send.current = submit;
+  const take = useRef<(request: ComposeInChat) => void>(() => undefined);
   useEffect(() => {
-    const compose = (event: Event): void => {
-      const request = (event as CustomEvent<ComposeInChat>).detail;
+    const takeRequest = (request: ComposeInChat): void => {
       const chat = open.current;
       const thread = threadFor(request, chat);
       if (!thread) return;
+      composedInChat(request);
       if (request.send) {
         // Composed first, as a launch hands over its first message: a send the chat can't make
         // yet (no model, a sign-in first) leaves the words in the composer instead of losing them.
@@ -62,7 +63,15 @@ export function useComposeInChat(
       // Once the words are in, the cursor goes after them; compose only places it when the draft is set.
       requestAnimationFrame(() => composer.current?.compose(request.text));
     };
+    take.current = takeRequest;
+    const compose = (event: Event): void => takeRequest((event as CustomEvent<ComposeInChat>).detail);
     window.addEventListener(COMPOSE_IN_CHAT_EVENT, compose);
     return () => window.removeEventListener(COMPOSE_IN_CHAT_EVENT, compose);
   }, [composer]);
+  // Words left for this game before its chat opened (`composeInChatWhenOpen`) are taken as it opens.
+  useEffect(() => {
+    if (!threadId) return;
+    const request = takeWaitingCompose(project);
+    if (request) take.current(request);
+  }, [threadId, project]);
 }

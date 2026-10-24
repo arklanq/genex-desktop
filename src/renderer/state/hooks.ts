@@ -16,6 +16,7 @@ import type { LayoutState } from "./layout.ts";
 import type { LibraryState } from "./library.ts";
 import type { ModelPickerState } from "./model-picker.ts";
 import type { PeopleState } from "./people.ts";
+import type { ItemsState } from "./items.ts";
 import type { PlayState } from "./play.ts";
 import type { PluginsState } from "./plugins.ts";
 import type { ProviderUsageState } from "./provider-usage.ts";
@@ -39,6 +40,7 @@ export const useEngines = <T>(select: Selector<EnginesState, T>): T => useStore(
 export const usePlugins = <T>(select: Selector<PluginsState, T>): T => useStore(studio().plugins, select);
 export const usePlay = <T>(select: Selector<PlayState, T>): T => useStore(studio().play, select);
 export const usePeople = <T>(select: Selector<PeopleState, T>): T => useStore(studio().people, select);
+export const useItems = <T>(select: Selector<ItemsState, T>): T => useStore(studio().items, select);
 export const useSharing = <T>(select: Selector<SharingState, T>): T => useStore(studio().sharing, select);
 export const useAgentScreens = <T>(select: Selector<AgentScreensState, T>): T =>
   useStore(studio().agentScreens, select);

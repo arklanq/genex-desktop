@@ -788,8 +788,8 @@ export default {
     "Codexのスキル検出が終了しました。更新して、もう一度試してください。",
   "Codex skill discovery timed out. Refresh to retry.":
     "Codexのスキル検出がタイムアウトしました。更新して、もう一度試してください。",
-  "Coin lives in your Genex account. Sign in once, then pay here.":
-    "コインはGenexアカウントに保管されます。一度サインインすれば、ここで支払えます。",
+  "Nex lives in your Genex account. Sign in once, then pay here.":
+    "NexはGenexアカウントに保管されます。一度サインインすれば、ここで支払えます。",
   Color: "色",
   Colors: "配色",
   Columns: "列数",
@@ -1036,6 +1036,8 @@ export default {
   "Couldn’t install: this game is larger than it says.":
     "インストールできませんでした。このゲームは表示されたサイズより大きいです。",
   "Couldn’t install: this game isn’t signed.": "インストールできませんでした。このゲームは署名されていません。",
+  "Couldn’t install: this game needs Rosetta to run on this Mac.":
+    "インストールできませんでした。このゲームをこのMacで動かすにはRosettaが必要です。",
   "Couldn’t install: this game’s files aren’t safe to open.":
     "インストールできませんでした。このゲームのファイルは安全に開けません。",
   "Couldn’t load other versions.": "ほかのバージョンを読み込めませんでした。",
@@ -1618,7 +1620,9 @@ export default {
     "Unrealでゲームをつくるには、Unreal Engine {version}を入手してください。",
   "Get Xcode": "Xcodeを入手",
   "Get a key": "キーを取得",
-  "Get coin": "コインを入手",
+  "Get Nex": "Nexを入手",
+  Nex: "Nex",
+  "{amount} Nex, get Nex": "{amount} Nex、Nexを入手",
   "Get credits": "クレジットを入手",
   "Get the Epic Games Launcher": "Epic Games Launcherを入手",
   "Getting Roblox Studio": "Roblox Studioを入手中",
@@ -1889,6 +1893,8 @@ export default {
     "何度もうまくいかなかったので、クレジットを節約するために止めました。",
   "It leaves Play and genex.games and goes back to drafts. The direct link still works, and plays and likes stay if it’s published again.":
     "「プレイ」とgenex.gamesから消えて、下書きに戻ります。直接リンクはそのまま使えて、もう一度公開すればプレイ数といいねも残ります。",
+  "It leaves the game’s Store. Players who own it keep it.":
+    "ゲームのストアから外れます。持っているプレイヤーはそのまま使えます。",
   "It may need the setup scripts its packages came with, which didn’t run.":
     "パッケージ付属のセットアップスクリプトが必要かもしれません（まだ実行されていません）。",
   "It merged this part's work without a reviewer's verdict. The reviewers score parts that build in steps; this one was built in one session.":
@@ -1905,6 +1911,7 @@ export default {
     "あなたの権限で動作します。Genexはこのコードをサンドボックス化しません。",
   "It runs, but no reviewer compared it with the game you had.":
     "動作はしますが、レビュアーは前のゲームと比較していません。",
+  "It shows in the game after its next release.": "次のリリース後にゲームに表示されます。",
   "It shows up here as soon as it runs.": "動くようになったら、すぐここに表示されます。",
   "It starts off: turn it on in Plugins; each of its tools asks you before it runs.":
     "最初はオフです。「プラグイン」でオンにしてください。各ツールは実行前に確認します。",
@@ -2658,8 +2665,7 @@ export default {
     "ブラウザでOpenRouterが開きます。そこでGenexを許可すると、ここに戻ってきます。",
   "Opens System Settings → Privacy & Security → {pane}": "システム設定 → プライバシーとセキュリティ → {pane}を開きます",
   "Opens beside the chat": "チャットの横に開きます",
-  "Opens genex.games. Pay comes back once the coin lands.":
-    "genex.gamesが開きます。コインが届くと支払えるようになります。",
+  "Opens genex.games. Pay comes back once the Nex lands.": "genex.gamesが開きます。Nexが届くと支払えるようになります。",
   "Opens in Explorer": "エクスプローラーで開きます",
   "Opens in Finder": "Finderで開きます",
   "Opens in its default app": "既定のアプリで開きます",
@@ -2997,6 +3003,7 @@ export default {
   "Remove the waiting messages first: this harness cannot take them back.":
     "先に待機中のメッセージを削除してください。このHarnessはそれを取り消せません。",
   "Remove this row": "この行を削除",
+  "Remove {item} from {game}?": "{item}を{game}から外しますか？",
   "Remove {name}": "{name}を削除",
   Removed: "削除済み",
   "Removed {actor}": "{actor}を削除しました",
@@ -4246,12 +4253,12 @@ export default {
   Try: "候補",
   "Try again": "もう一度試す",
   "Try again in a few minutes.": "数分後にもう一度試してください。",
-  "Try again in the game once the coin lands.": "コインが届いたら、ゲームでもう一度試してください。",
-  "Try again in the game. No coin was charged.": "ゲームでもう一度試してください。コインは請求されていません。",
-  "Try again in the game. No coin was reserved or charged.":
-    "ゲームでもう一度試してください。コインは確保も請求もされていません。",
-  "Try again in the game. The coin went back to your balance.":
-    "ゲームでもう一度試してください。コインは残高に戻りました。",
+  "Try again in the game once the Nex lands.": "Nexが届いたら、ゲームでもう一度試してください。",
+  "Try again in the game. No Nex was charged.": "ゲームでもう一度試してください。Nexは請求されていません。",
+  "Try again in the game. No Nex was reserved or charged.":
+    "ゲームでもう一度試してください。Nexは確保も請求もされていません。",
+  "Try again in the game. The Nex went back to your balance.":
+    "ゲームでもう一度試してください。Nexは残高に戻りました。",
   "Try again, or choose another model.": "もう一度試すか、別のモデルを選んでください。",
   "Try the build again": "ビルドをもう一度試す",
   "Try your changes before you update.": "アップデート前に変更を試せます。",
@@ -4691,7 +4698,7 @@ export default {
   "Your browser should show": "ブラウザに表示されるコード",
   "Your build": "あなたのビルド",
   "Your coding provider": "お使いのモデルプロバイダー",
-  "Your coin arrived. Review the purchase, then pay.": "コインが届きました。購入内容を確認して支払ってください。",
+  "Your Nex arrived. Review the purchase, then pay.": "Nexが届きました。購入内容を確認して支払ってください。",
   "Your files": "あなたのファイル",
   "Your game appears here": "ここにゲームが表示されます",
   "Your game as it was when the run started.": "ビルドを始めたときのゲームの状態です。",
@@ -5323,7 +5330,7 @@ export default {
   "{added} of {total} added": "{total}件中{added}件を追加",
   "{added} of {total} parts added": "{total}個中{added}個のパートを追加",
   "{added} of {total} parts added · {working} working": "{total}個中{added}個のパートを追加 · {working}個作業中",
-  "{amount} coin": "{amount}コイン",
+  "{amount} Nex": "{amount} Nex",
   "{amount} credits, open Credits": "{amount}クレジット、クレジットを開く",
   "{amount} more needed": "あと{amount}必要",
   "{app} settings": "{app}の設定",
@@ -5348,6 +5355,7 @@ export default {
   "{chart}: {readings}": "{chart}：{readings}",
   "{check}: {name} · {status}": "{check}：{name} · {status}",
   "{chosen} of {total}": "{chosen}/{total}",
+  "{coins} of your Nex is on hold until {date}.": "Nexのうち{coins}は{date}まで保留中です。",
   "{command} (exit {code})": "{command}（終了コード{code}）",
   "{command} failed": "{command}が失敗しました",
   "{commit} (cataloged, not audited)": "{commit}（カタログ掲載、未監査）",
@@ -5877,6 +5885,7 @@ export default {
     "このコンピューターにはもうありません。もう一度インストールしてください。",
   "It couldn’t start on this computer.": "このコンピューターで起動できませんでした。",
   "Remove from this computer": "このコンピューターから削除",
+  "Remove from {game}": "{game}から外す",
   "{title} is removed from this computer. Its saves stay.":
     "{title}をこのコンピューターから削除しました。セーブデータは残ります。",
   "Ready to play on this computer.": "このコンピューターでプレイできます。",
@@ -5926,4 +5935,125 @@ export default {
   "Your game is on Roblox": "ゲームがRobloxに公開されました",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "作業を続けている間に、ゲームのエージェントがRoblox Studioで公開します。",
+  "Anything else we should know? (optional)": "ほかに伝えたいことはありますか？（任意）",
+  "Balance {amount}": "残高 {amount}",
+  "Balance {now} → {after}": "残高 {now} → {after}",
+  "Doesn't work": "動かない",
+  "Drag to turn": "ドラッグで回転",
+  "Genex hasn’t confirmed it yet. It shows under My items once it does. You won’t be charged twice.":
+    "Genexでまだ確認できていません。確認されるとマイアイテムに表示されます。二重に請求されることはありません。",
+  Get: "入手",
+  "Get in {game}": "{game}で入手",
+  Inappropriate: "不適切",
+  "It may be back later. No Nex was charged.": "また販売されるかもしれません。Nexは請求されていません。",
+  "It's yours. Find it under Store › My items in every game it works in.":
+    "あなたのものになりました。使えるすべてのゲームの「ストア › マイアイテム」にあります。",
+  Item: "アイテム",
+  Items: "アイテム",
+  "Items you own show up here.": "持っているアイテムがここに表示されます。",
+  "My items": "マイアイテム",
+  "No Nex was charged.": "Nexは請求されていません。",
+  "No Nex was reserved or charged.": "Nexは確保も請求もされていません。",
+  "Not in this game": "このゲームでは使えません",
+  Owned: "所持済み",
+  "Report item": "アイテムを報告",
+  "Report item…": "アイテムを報告…",
+  Scam: "詐欺",
+  "Sign in to see the items you own.": "サインインすると、持っているアイテムを見られます。",
+  Store: "ストア",
+  "Store and my items": "ストアとマイアイテム",
+  "The Nex went back to your balance.": "Nexは残高に戻りました。",
+  "This item isn’t sold here anymore": "このアイテムはここでは販売されていません",
+  "Too many reports for now. Try again later.": "報告が多すぎます。しばらくしてからもう一度お試しください。",
+  "Try again once the Nex lands.": "Nexが届いたら、もう一度お試しください。",
+  "Why are you reporting it?": "報告する理由は？",
+  "Works here": "このゲームで使えます",
+  "You have {have} · {more} more needed": "所持 {have} · あと{more}必要",
+  "Your items couldn’t load.": "アイテムを読み込めませんでした。",
+  "item report\u0004Copy": "コピー品",
+  "{count, number} left": "残り{count, number}",
+  "{count, plural, one {Works in # game} other {Works in # games}}": "{count, plural, other {#本のゲームで使えます}}",
+  "+{amount}": "+{amount}",
+  Actions: "操作",
+  "Actions for {name}": "{name}の操作",
+  "Add to {game}": "{game}に追加",
+  "Ask for an item or a change…": "アイテムや変更を頼む…",
+  "Ask the agent to change it": "エージェントに変更を頼む",
+  Browse: "さがす",
+  "Browse and selling": "さがす・販売",
+  "By {name}": "作者: {name}",
+  "Choose a game": "ゲームを選ぶ",
+  "Nex you earn is spent in games, like any Nex.": "稼いだNexは、ほかのNexと同じようにゲームで使えます。",
+  "Draft, put on sale": "下書き、販売する",
+  Earned: "収益",
+  "Genex can’t sell it under that name. Ask the agent for another.":
+    "この名前ではGenexで販売できません。エージェントに別の名前を頼んでください。",
+  "Genex can’t sell it with that description. Ask the agent to change it.":
+    "この説明ではGenexで販売できません。エージェントに変更を頼んでください。",
+  "Genex couldn’t do that. Try again in a moment.": "Genexで処理できませんでした。少ししてからもう一度試してください。",
+  "Genex couldn’t use its 3D model. Ask the agent to fix it.":
+    "Genexで3Dモデルを使えませんでした。エージェントに修正を頼んでください。",
+  "Genex couldn’t use its files. Ask the agent to fix them.":
+    "Genexでファイルを使えませんでした。エージェントに修正を頼んでください。",
+  "Genex couldn’t use its picture. Ask the agent to upload the picture.":
+    "Genexで画像を使えませんでした。エージェントに画像をアップロードしてもらいましょう。",
+  "Genex took this item off sale.": "Genexがこのアイテムの販売を停止しました。",
+  "It isn’t on sale anymore.": "もう販売されていません。",
+  "It needs a picture first. Ask the agent to upload the picture.":
+    "まず画像が必要です。エージェントに画像をアップロードしてもらいましょう。",
+  "Items couldn’t load.": "アイテムを読み込めませんでした。",
+  "Items other creators made. Free to add to your game, and you get 15% of every sale in it.":
+    "ほかのクリエイターが作ったアイテム。無料でゲームに追加でき、そのゲームでの売上ごとに15%を受け取れます。",
+  "Items other creators made. Free to add to your game, and you get {share} of every sale in it.":
+    "ほかのクリエイターが作ったアイテム。無料でゲームに追加でき、そのゲームでの売上ごとに{share}を受け取れます。",
+  "Items you make show up here. Ask your game’s agent for one.":
+    "作ったアイテムはここに表示されます。ゲームのエージェントに頼んでみましょう。",
+  "Its files are too large. Ask the agent to make them smaller.":
+    "ファイルが大きすぎます。エージェントに小さくしてもらいましょう。",
+  "Its maker doesn’t let other games use it anymore.": "作者がほかのゲームでの使用をやめました。",
+  "It’s already this game’s own item.": "すでにこのゲームのアイテムです。",
+  "Listing draft: {name}": "出品の下書き: {name}",
+  "Draft · goes on sale when you publish": "下書き · 公開すると販売開始",
+  "Sell when published": "公開時に販売する",
+  "Will go on sale when you publish": "公開すると販売が始まります",
+  "It changed since you approved it.": "承認した後に変更されました。",
+  "This item changed after this card. See it in Items › Selling before you put it on sale.":
+    "このアイテムはこのカードの後に変更されました。販売する前に アイテム › 販売 で確認してください。",
+  "It changed since you approved it, so it stayed a draft.": "承認した後に変更されたため、下書きのままです。",
+  "Removed from this game": "このゲームから削除しました",
+  "Genex couldn’t change this draft. Try again.": "Genexでこの下書きを変更できませんでした。もう一度試してください。",
+  "New item": "新しいアイテム",
+  "No items match.": "一致するアイテムはありません。",
+  "No one has shared an item yet.": "まだ誰もアイテムを共有していません。",
+  "Off sale": "販売停止中",
+  "On sale": "販売中",
+  "Only an item players keep can be used in other games.":
+    "ほかのゲームで使えるのは、プレイヤーがずっと持てるアイテムだけです。",
+  "Only the item’s maker can change it.": "アイテムを変更できるのは作者だけです。",
+  "Other games can use it": "ほかのゲームでも使える",
+  "Players pay": "プレイヤーの支払い",
+  "Publish a game to Genex first, then add items to it.":
+    "まずゲームをGenexで公開してから、アイテムを追加してください。",
+  "Put on sale": "販売する",
+  "Ready to use": "使えるコイン",
+  "Report under review": "通報を確認中",
+  "Search items": "アイテムを検索",
+  Selling: "販売",
+  "Sign in to Genex first.": "まずGenexにサインインしてください。",
+  "Sign in to Genex to see items.": "アイテムを見るにはGenexにサインインしてください。",
+  Sold: "販売数",
+  Status: "状態",
+  "Take off sale": "販売をやめる",
+  "That price isn’t one the store takes. Ask the agent to pick another.":
+    "この価格はストアで使えません。エージェントに別の価格を選んでもらいましょう。",
+  "The item store is off right now.": "アイテムストアは現在停止中です。",
+  "This game sells as many items as it can.": "このゲームはすでに上限までアイテムを販売しています。",
+  "You get per sale": "1回の売上での受け取り",
+  "You get per sale ({share})": "1回の売上での受け取り（{share}）",
+  "Your agent puts it in the game.": "エージェントがゲームに組み込みます。",
+  "You’ve put a lot on sale today. Try again tomorrow.": "今日はたくさん出品しました。明日また試してください。",
+  "or ask for changes below": "または下で変更を頼む",
+  "{count, plural, one {in # game} other {in # games}}": "{count, plural, other {#ゲームで使用}}",
+  "{days, plural, one {On hold for # day} other {On hold for # days}}": "{days, plural, other {#日間保留中}}",
+  "{game} · {games}": "{game} · {games}",
 } satisfies LocaleCatalog;

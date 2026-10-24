@@ -49,6 +49,10 @@ const STUDIO_UI_ONLY = [
   "studio:assets.",
   "studio:play.manage",
   "studio:play.cover",
+  // The store buys with the account's coin and answers its purchase sheet; Create › Items puts the
+  // account's items on sale, shares them and adds other creators' items to its games.
+  "studio:store.",
+  "studio:items.",
   // Moving Genex's data restarts Genex and moves every file it keeps.
   "studio:data-folder.",
 ];

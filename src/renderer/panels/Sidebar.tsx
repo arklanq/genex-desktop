@@ -71,6 +71,9 @@ interface Props {
   onSettings: () => void;
   pluginsOpen: boolean;
   onPlugins: () => void;
+  /** Create › Items is up (marketplace plan 10.3): its row is the selected one. */
+  itemsOpen: boolean;
+  onItems: () => void;
   /** Play is up: the rooms fold away and the list is the games played last. */
   playOpen: boolean;
   /** Play or Create, from the switch under the wordmark. */
@@ -215,7 +218,7 @@ export function Sidebar(props: Props): JSX.Element {
       </div>
       {/* Shown once, until the first sign-in: the account plate stays under it. */}
       {playOpen && <PlayPromo />}
-      <ProfilePlate onPlayMode={props.onPlayMode} />
+      <ProfilePlate playOpen={playOpen} onPlayMode={props.onPlayMode} />
     </nav>
   );
 }
@@ -403,6 +406,8 @@ function SidebarTop({
   onSettings,
   pluginsOpen,
   onPlugins,
+  itemsOpen,
+  onItems,
   stagedCount,
   onNewGame,
   onSelectThread,
@@ -484,6 +489,10 @@ function SidebarTop({
           </Hint>
           <NavRow icon="plugins" aria-label={t("Plugins")} current={pluginsOpen} onClick={onPlugins}>
             {t("Plugins")}
+          </NavRow>
+          {/* Create › Items: Browse other creators' items, and Selling your own (P9: Play has none). */}
+          <NavRow icon="layers" aria-label={t("Items")} data-sidebar-room="items" current={itemsOpen} onClick={onItems}>
+            {t("Items")}
           </NavRow>
           {studio && (
             <Hint label="Harness" shortcut="⌘2">

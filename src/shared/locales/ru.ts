@@ -810,8 +810,8 @@ export default {
   "Codex skill discovery closed. Refresh to retry.": "Поиск навыков Codex прервался. Обнови, чтобы попробовать снова.",
   "Codex skill discovery timed out. Refresh to retry.":
     "Поиск навыков Codex не уложился во время. Обнови, чтобы попробовать снова.",
-  "Coin lives in your Genex account. Sign in once, then pay here.":
-    "Монеты хранятся в твоём аккаунте Genex. Войди один раз — и оплачивай здесь.",
+  "Nex lives in your Genex account. Sign in once, then pay here.":
+    "Твои Nex хранятся в аккаунте Genex. Войди один раз — и оплачивай здесь.",
   Color: "Цвет",
   Colors: "Цвета",
   Columns: "Столбцы",
@@ -1053,6 +1053,8 @@ export default {
   "Couldn’t install: this game doesn’t run on this Mac.": "Не удалось установить: эта игра не работает на этом Mac.",
   "Couldn’t install: this game is larger than it says.": "Не удалось установить: игра больше, чем заявлено.",
   "Couldn’t install: this game isn’t signed.": "Не удалось установить: у этой игры нет подписи.",
+  "Couldn’t install: this game needs Rosetta to run on this Mac.":
+    "Не удалось установить: этой игре нужна Rosetta, чтобы работать на этом Mac.",
   "Couldn’t install: this game’s files aren’t safe to open.":
     "Не удалось установить: файлы этой игры небезопасно открывать.",
   "Couldn’t load other versions.": "Не удалось загрузить другие версии.",
@@ -1631,7 +1633,9 @@ export default {
     "Установи Unreal Engine {version}, чтобы делать игры в Unreal.",
   "Get Xcode": "Скачать Xcode",
   "Get a key": "Получить ключ",
-  "Get coin": "Получить монеты",
+  "Get Nex": "Получить Nex",
+  Nex: "Nex",
+  "{amount} Nex, get Nex": "{amount} Nex, получить Nex",
   "Get credits": "Получить кредиты",
   "Get the Epic Games Launcher": "Скачать Epic Games Launcher",
   "Getting Roblox Studio": "Roblox Studio устанавливается",
@@ -1899,6 +1903,8 @@ export default {
     "Это раз за разом не получалось, поэтому работа остановлена, чтобы сберечь твои кредиты.",
   "It leaves Play and genex.games and goes back to drafts. The direct link still works, and plays and likes stay if it’s published again.":
     "Игра пропадёт из «Играть» и с genex.games и вернётся в черновики. Прямая ссылка продолжит работать, а запуски и лайки сохранятся, если опубликуешь её снова.",
+  "It leaves the game’s Store. Players who own it keep it.":
+    "Он пропадёт из магазина игры. У игроков, которые его купили, он останется.",
   "It may need the setup scripts its packages came with, which didn’t run.":
     "Возможно, ей нужны скрипты установки из её пакетов — они не запускались.",
   "It merged this part's work without a reviewer's verdict. The reviewers score parts that build in steps; this one was built in one session.":
@@ -1915,6 +1921,7 @@ export default {
     "Он работает с твоими правами: Genex не изолирует его код.",
   "It runs, but no reviewer compared it with the game you had.":
     "Эта версия работает, но проверяющие не сравнивали её с прежней игрой.",
+  "It shows in the game after its next release.": "Он появится в игре после её следующего релиза.",
   "It shows up here as soon as it runs.": "Она появится здесь, как только запустится.",
   "It starts off: turn it on in Plugins; each of its tools asks you before it runs.":
     "Сначала он выключен: включи его в «Плагинах»; каждый его инструмент спросит тебя перед запуском.",
@@ -2653,8 +2660,8 @@ export default {
   "Opens System Settings → Privacy & Security → {pane}":
     "Открывает «Системные настройки → Конфиденциальность и безопасность → {pane}»",
   "Opens beside the chat": "Откроется рядом с чатом",
-  "Opens genex.games. Pay comes back once the coin lands.":
-    "Откроется genex.games. Оплатить можно будет, когда поступят монеты.",
+  "Opens genex.games. Pay comes back once the Nex lands.":
+    "Откроется genex.games. Оплатить можно будет, когда поступят Nex.",
   "Opens in Explorer": "Откроется в Проводнике",
   "Opens in Finder": "Откроется в Finder",
   "Opens in its default app": "Откроется в приложении по умолчанию",
@@ -2987,6 +2994,7 @@ export default {
   "Remove the waiting messages first: this harness cannot take them back.":
     "Сначала убери сообщения из очереди: эта версия Harness не умеет забирать их обратно.",
   "Remove this row": "Удалить строку",
+  "Remove {item} from {game}?": "Убрать {item} из «{game}»?",
   "Remove {name}": "Удалить {name}",
   Removed: "Удалённые",
   "Removed {actor}": "Удалён {actor}",
@@ -4222,11 +4230,11 @@ export default {
   Try: "Попробуй",
   "Try again": "Попробовать снова",
   "Try again in a few minutes.": "Попробуй снова через несколько минут.",
-  "Try again in the game once the coin lands.": "Когда монеты поступят, попробуй снова в игре.",
-  "Try again in the game. No coin was charged.": "Попробуй снова в игре. Монеты не списаны.",
-  "Try again in the game. No coin was reserved or charged.":
-    "Попробуй снова в игре. Монеты не зарезервированы и не списаны.",
-  "Try again in the game. The coin went back to your balance.": "Попробуй снова в игре. Монеты вернулись на баланс.",
+  "Try again in the game once the Nex lands.": "Когда Nex поступят, попробуй снова в игре.",
+  "Try again in the game. No Nex was charged.": "Попробуй снова в игре. Nex не списаны.",
+  "Try again in the game. No Nex was reserved or charged.":
+    "Попробуй снова в игре. Nex не зарезервированы и не списаны.",
+  "Try again in the game. The Nex went back to your balance.": "Попробуй снова в игре. Nex вернулись на баланс.",
   "Try again, or choose another model.": "Попробуй снова или выбери другую модель.",
   "Try the build again": "Повторить сборку",
   "Try your changes before you update.": "Проверь изменения перед обновлением.",
@@ -4662,7 +4670,7 @@ export default {
   "Your browser should show": "Браузер должен показать",
   "Your build": "Твоя сборка",
   "Your coding provider": "Твой провайдер моделей",
-  "Your coin arrived. Review the purchase, then pay.": "Монеты поступили. Проверь покупку и оплати.",
+  "Your Nex arrived. Review the purchase, then pay.": "Nex поступили. Проверь покупку и оплати.",
   "Your files": "Твои файлы",
   "Your game appears here": "Здесь появится твоя игра",
   "Your game as it was when the run started.": "Твоя игра такой, какой она была в начале сборки.",
@@ -5299,7 +5307,7 @@ export default {
   "{added} of {total} added": "добавлено {added} из {total}",
   "{added} of {total} parts added": "Добавлено частей: {added} из {total}",
   "{added} of {total} parts added · {working} working": "Добавлено частей: {added} из {total} · в работе: {working}",
-  "{amount} coin": "{amount} мон.",
+  "{amount} Nex": "{amount} Nex",
   "{amount} credits, open Credits": "Кредиты: {amount}, открыть «Кредиты»",
   "{amount} more needed": "Не хватает: {amount}",
   "{app} settings": "Настройки {app}",
@@ -5324,6 +5332,7 @@ export default {
   "{chart}: {readings}": "{chart}: {readings}",
   "{check}: {name} · {status}": "{check}: {name} · {status}",
   "{chosen} of {total}": "{chosen} из {total}",
+  "{coins} of your Nex is on hold until {date}.": "{coins} Nex удерживаются до {date}.",
   "{command} (exit {code})": "{command} (код выхода {code})",
   "{command} failed": "{command}: ошибка",
   "{commit} (cataloged, not audited)": "{commit} (есть в каталоге, не проверен)",
@@ -5924,6 +5933,7 @@ export default {
   "It isn’t on this computer any more. Install it again.": "Игры больше нет на этом компьютере. Установи её снова.",
   "It couldn’t start on this computer.": "Не удалось запустить игру на этом компьютере.",
   "Remove from this computer": "Удалить с этого компьютера",
+  "Remove from {game}": "Убрать из «{game}»",
   "{title} is removed from this computer. Its saves stay.":
     "Игра «{title}» удалена с этого компьютера. Сохранения остались.",
   "Ready to play on this computer.": "Можно играть на этом компьютере.",
@@ -5972,4 +5982,129 @@ export default {
   "Your game is on Roblox": "Твоя игра на Roblox",
   "Your game's agent publishes it in Roblox Studio while you keep working.":
     "Агент твоей игры публикует её в Roblox Studio, а ты можешь работать дальше.",
+  "Anything else we should know? (optional)": "Что-нибудь ещё, что нам стоит знать? (необязательно)",
+  "Balance {amount}": "Баланс {amount}",
+  "Balance {now} → {after}": "Баланс {now} → {after}",
+  "Doesn't work": "Не работает",
+  "Drag to turn": "Потяни, чтобы повернуть",
+  "Genex hasn’t confirmed it yet. It shows under My items once it does. You won’t be charged twice.":
+    "Genex ещё не подтвердил оплату. Предмет появится в «Мои предметы», как только это случится. Дважды не спишем.",
+  Get: "Получить",
+  "Get in {game}": "Получить в {game}",
+  Inappropriate: "Неприемлемо",
+  "It may be back later. No Nex was charged.": "Возможно, он ещё вернётся. Nex не списаны.",
+  "It's yours. Find it under Store › My items in every game it works in.":
+    "Теперь он твой. Ищи его в «Магазин › Мои предметы» в каждой игре, где он работает.",
+  Item: "Предмет",
+  Items: "Предметы",
+  "Items you own show up here.": "Здесь появятся предметы, которые у тебя есть.",
+  "My items": "Мои предметы",
+  "No Nex was charged.": "Nex не списаны.",
+  "No Nex was reserved or charged.": "Nex не зарезервированы и не списаны.",
+  "Not in this game": "Не в этой игре",
+  Owned: "У тебя есть",
+  "Report item": "Пожаловаться на предмет",
+  "Report item…": "Пожаловаться на предмет…",
+  Scam: "Мошенничество",
+  "Sign in to see the items you own.": "Войди, чтобы увидеть свои предметы.",
+  Store: "Магазин",
+  "Store and my items": "Магазин и мои предметы",
+  "The Nex went back to your balance.": "Nex вернулись на баланс.",
+  "This item isn’t sold here anymore": "Этот предмет здесь больше не продаётся",
+  "Too many reports for now. Try again later.": "Слишком много жалоб. Попробуй позже.",
+  "Try again once the Nex lands.": "Попробуй снова, когда поступят Nex.",
+  "Why are you reporting it?": "Почему ты жалуешься?",
+  "Works here": "Работает здесь",
+  "You have {have} · {more} more needed": "У тебя {have} · не хватает {more}",
+  "Your items couldn’t load.": "Не удалось загрузить твои предметы.",
+  "item report\u0004Copy": "Копия",
+  "{count, number} left": "Осталось: {count, number}",
+  "{count, plural, one {Works in # game} other {Works in # games}}":
+    "{count, plural, one {Работает в # игре} few {Работает в # играх} many {Работает в # играх} other {Работает в # игры}}",
+  "+{amount}": "+{amount}",
+  Actions: "Действия",
+  "Actions for {name}": "Действия: {name}",
+  "Add to {game}": "Добавить в {game}",
+  "Ask for an item or a change…": "Попроси предмет или изменение…",
+  "Ask the agent to change it": "Попросить агента изменить",
+  Browse: "Обзор",
+  "Browse and selling": "Обзор и продажи",
+  "By {name}": "Автор: {name}",
+  "Choose a game": "Выбрать игру",
+  "Nex you earn is spent in games, like any Nex.": "Заработанные Nex тратятся в играх, как и любые другие.",
+  "Draft, put on sale": "Черновик, выставить на продажу",
+  Earned: "Заработано",
+  "Genex can’t sell it under that name. Ask the agent for another.":
+    "Genex не может продавать его под этим названием. Попроси агента придумать другое.",
+  "Genex can’t sell it with that description. Ask the agent to change it.":
+    "Genex не может продавать его с таким описанием. Попроси агента изменить его.",
+  "Genex couldn’t do that. Try again in a moment.": "Genex не смог это сделать. Попробуй ещё раз чуть позже.",
+  "Genex couldn’t use its 3D model. Ask the agent to fix it.":
+    "Genex не смог использовать его 3D-модель. Попроси агента исправить её.",
+  "Genex couldn’t use its files. Ask the agent to fix them.":
+    "Genex не смог использовать его файлы. Попроси агента исправить их.",
+  "Genex couldn’t use its picture. Ask the agent to upload the picture.":
+    "Genex не смог использовать его картинку. Попроси агента загрузить картинку.",
+  "Genex took this item off sale.": "Genex снял этот предмет с продажи.",
+  "It isn’t on sale anymore.": "Он больше не продаётся.",
+  "It needs a picture first. Ask the agent to upload the picture.":
+    "Сначала нужна картинка. Попроси агента загрузить картинку.",
+  "Items couldn’t load.": "Не удалось загрузить предметы.",
+  "Items other creators made. Free to add to your game, and you get 15% of every sale in it.":
+    "Предметы других авторов. Их можно бесплатно добавить в свою игру, и ты получаешь 15% с каждой продажи в ней.",
+  "Items other creators made. Free to add to your game, and you get {share} of every sale in it.":
+    "Предметы других авторов. Их можно бесплатно добавить в свою игру, и ты получаешь {share} с каждой продажи в ней.",
+  "Items you make show up here. Ask your game’s agent for one.":
+    "Здесь появятся предметы, которые ты создашь. Попроси агента своей игры сделать первый.",
+  "Its files are too large. Ask the agent to make them smaller.":
+    "Его файлы слишком большие. Попроси агента уменьшить их.",
+  "Its maker doesn’t let other games use it anymore.": "Автор больше не разрешает другим играм его использовать.",
+  "It’s already this game’s own item.": "Это уже собственный предмет этой игры.",
+  "Listing draft: {name}": "Черновик товара: {name}",
+  "Draft · goes on sale when you publish": "Черновик · поступит в продажу, когда опубликуешь",
+  "Sell when published": "Продавать после публикации",
+  "Will go on sale when you publish": "Поступит в продажу после публикации",
+  "It changed since you approved it.": "Он изменился после твоего одобрения.",
+  "This item changed after this card. See it in Items › Selling before you put it on sale.":
+    "Этот предмет изменился после этой карточки. Посмотри его в разделе Предметы › Продажи, прежде чем выставлять на продажу.",
+  "It changed since you approved it, so it stayed a draft.":
+    "Он изменился после твоего одобрения, поэтому остался черновиком.",
+  "Removed from this game": "Удалён из этой игры",
+  "Genex couldn’t change this draft. Try again.": "Genex не смог изменить этот черновик. Попробуй ещё раз.",
+  "New item": "Новый предмет",
+  "No items match.": "Ничего не найдено.",
+  "No one has shared an item yet.": "Пока никто не поделился предметами.",
+  "Off sale": "Снят с продажи",
+  "On sale": "В продаже",
+  "Only an item players keep can be used in other games.":
+    "В других играх можно использовать только предмет, который остаётся у игроков навсегда.",
+  "Only the item’s maker can change it.": "Изменить предмет может только его автор.",
+  "Other games can use it": "Другие игры могут использовать",
+  "Players pay": "Игроки платят",
+  "Publish a game to Genex first, then add items to it.":
+    "Сначала опубликуй игру в Genex, потом добавляй в неё предметы.",
+  "Put on sale": "Выставить на продажу",
+  "Ready to use": "Можно тратить",
+  "Report under review": "Жалоба на рассмотрении",
+  "Search items": "Поиск предметов",
+  Selling: "Продажи",
+  "Sign in to Genex first.": "Сначала войди в Genex.",
+  "Sign in to Genex to see items.": "Войди в Genex, чтобы увидеть предметы.",
+  Sold: "Продано",
+  Status: "Статус",
+  "Take off sale": "Снять с продажи",
+  "That price isn’t one the store takes. Ask the agent to pick another.":
+    "Магазин не принимает такую цену. Попроси агента выбрать другую.",
+  "The item store is off right now.": "Магазин предметов сейчас выключен.",
+  "This game sells as many items as it can.": "В этой игре уже продаётся максимум предметов.",
+  "You get per sale": "Ты получаешь с продажи",
+  "You get per sale ({share})": "Ты получаешь с продажи ({share})",
+  "Your agent puts it in the game.": "Агент добавит его в игру.",
+  "You’ve put a lot on sale today. Try again tomorrow.": "Ты сегодня выставил много предметов. Попробуй завтра.",
+  "or ask for changes below": "или попроси изменения ниже",
+  "{count, plural, one {in # game} other {in # games}}":
+    "{count, plural, one {в # игре} few {в # играх} many {в # играх} other {в # игры}}",
+  "{days, plural, one {On hold for # day} other {On hold for # days}}":
+    "{days, plural, one {Удерживается # день} few {Удерживается # дня} many {Удерживается # дней} other {Удерживается # дня}}",
+  "{game} · {games}": "{game} · {games}",
 } satisfies LocaleCatalog;

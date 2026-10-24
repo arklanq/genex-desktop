@@ -63,6 +63,31 @@ Live profiles isolate Studio data, not all machine accounts, Keychain, quotas, l
 or compute. They do not copy credentials. Follow the [credential restriction](agent/verification.md#credentials)
 for account-connected checks. Preserve active user work; inspect ownership/status before a restart.
 
+A live profile can run against a local or test genex.games (a stand) instead of genex.games itself
+(`src/main/play/origins.ts`, `devStand`):
+
+```sh
+GENEX_DEV_PLAY_API_ORIGIN=http://localhost:3000 GENEX_DEV_PLAY_WEB_ORIGIN=http://localhost:5173 \
+GENEX_DEV_PLAY_GAMES_ORIGIN=https://localhost:8443 GENEX_DEV_PLAY_GAMES_CA=/abs/path/certs/ca.pem \
+  npm run studio:dev -- start --profile stand-review --providers live
+```
+
+Origins are bare (https, or http on this Mac); the CA is an absolute path to a PEM file. With the stand's
+API the account signs in on the stand's device sign-in, for the launch only; Play, the store,
+`genex__cli`/`genex__cli-paid` (the CLI's `--api-url` and token) and the Genex plugin's backend (Publish,
+its asset tools and its account page) use the stand and that account, never genex.games or the Genex
+plugin's saved account. With a games origin too, the Play viewer plays
+`https://<slug>.localhost:8443/`, trusts that CA for those game hosts only, and catches their purchases
+on the stand's website; the Genex plugin's Publish trusts the CA too (its backend and CLI runs, beside
+the system's), so it can push to a local stand's source host and test its draft on the stand's
+game host. `genex://` links stay on genex.games: a development launch never registers as
+the system's link handler. To tie a local game to a stand
+project, write the stand's `{ "id", "slug" }` to `.studio-dev/profiles/<name>/core/engine-homes/genex/publish/<game>/.genex/project.json`.
+The pinned CLI decides which `genex` commands exist (shop JSON drafts need 1.36.14, local item drafts
+and `shop sync` 1.36.15). A packaged app, a
+fixture launch, smoke and the normal profile ignore every one of these variables, and a malformed value
+leaves that side on genex.games.
+
 The controller builds immutable output under `.studio-dev/builds/<id>` and returns actual
 readiness and profile/build/source/runtime identity. Rebuilding does not update a running app.
 Each start removes the builds no profile's `launch.json` or `attempt.json` names, once they are an
@@ -388,7 +413,10 @@ connector rows in words, Worked in Unreal headings, failures, play views and a B
 and roblox-game (the game linked to a stand-in place, `FixtureGame.rbxlx`, at its top with the
 Roblox Studio plugin on: the toolbar's Roblox Studio button, the chat's link line with Undo and the
 steps card `[data-engine-steps]` (rows `[data-step=studio|sign-in|helper|mcp|place]`), whose rows come from the real plugin on
-this machine; Set up, Open Studio and Get Roblox Studio are native, so a fixture refuses them).
+this machine; Set up, Open Studio and Get Roblox Studio are native, so a fixture refuses them)
+and items-store (with `STUDIO_FIXTURE_GENEX_ACCOUNT=1`: the fixture game is the account's Snowball on
+Genex, so Create › Items' Add to and New item reach its chat, which ends with Frost Axe's Listing draft
+card; [the item store](play.md#the-item-store)).
 Use `--reuse` explicitly for a stopped existing profile with the same fixture/provider mode.
 `--providers live` is explicit, retained, and uses existing ambient account semantics; no auth
 or account copying is performed. Fixtures park background improvement but keep the real core,

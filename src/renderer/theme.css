@@ -11,6 +11,8 @@
 @import "./styles/play-assets.css";
 @import "./styles/people.css";
 @import "./styles/native-games.css";
+@import "./styles/store.css";
+@import "./styles/items.css";
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 @source "./";

@@ -60,8 +60,11 @@ const SEMVER = /^\d+\.\d+\.\d+$/;
  * whose CLI Studio already spawns for asset work, may ask for it.
  */
 const HOST_CLI_PLUGIN = "genex";
-/** Host tools that spend credits or change the game: each needs the user's consent every time. */
-const CONSENTED_HOST_TOOLS: ReadonlySet<string> = new Set([PluginHostTool.GenexCliPaid, PluginHostTool.GenexPackage]);
+/**
+ * Host tools that spend Nex or credits or change what a game sells: each needs the user's consent
+ * every time. Genex's own pinned packages spend nothing, so `genex-package` asks nobody.
+ */
+const CONSENTED_HOST_TOOLS: ReadonlySet<string> = new Set([PluginHostTool.GenexCliPaid]);
 const HOST_TOOLS: ReadonlySet<unknown> = new Set(Object.values(PluginHostTool));
 const TOOL_AUDIENCES: ReadonlySet<unknown> = new Set(Object.values(PluginToolAudience));
 const KIB = 1024;
@@ -187,7 +190,7 @@ const MESSAGE = {
   HostToolReserved:
     "tools[].host runs a program Studio ships and is reserved for the bundled Genex plugin on apiVersion 3",
   InvalidHostTool: `Invalid tools[].host (${[...HOST_TOOLS].join(", ")})`,
-  HostToolNeedsConfirmation: "A host tool that spends credits or installs packages needs a confirmation",
+  HostToolNeedsConfirmation: "A host tool that spends Nex or credits or changes what a game sells needs a confirmation",
   AudienceNeedsApi3: "tools[].audience requires apiVersion 3",
   InvalidToolAudience: `Invalid tools[].audience (${[...TOOL_AUDIENCES].join(", ")})`,
   AssetNeedsApi3: "tools[].asset requires apiVersion 3",

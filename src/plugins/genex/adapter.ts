@@ -476,6 +476,10 @@ export class GenexTools {
   readonly #sendsApps: boolean;
   /** Whether this CLI pushes a game's source from another folder (`--source`); tests say so of their stand-in. */
   readonly #sendsSource: boolean;
+  /** A development stand's own CA file the CLI runs trust (`createGenexPlugin`); absent on genex.games. */
+  readonly #ca: string | undefined;
+  /** A development stand's game host (`createGenexPlugin`); absent on genex.games. */
+  readonly #standGames: string | undefined;
   /** The games whose project Allow remixing is sending now. */
   #remixSends = new Set<string>();
   /** When Studio last took each game's cover on its own (`coverAuto`). */
@@ -513,6 +517,10 @@ export class GenexTools {
       sendsApps?: boolean;
       /** Whether the CLI sends a game's project (`--source`); else read from the pinned CLI's version. */
       sendsSource?: boolean;
+      /** A development stand's own CA file, which every CLI run trusts beside the system's. */
+      ca?: string;
+      /** A development stand's game host, where a publish there tests its draft (`stagingLink`). */
+      standGames?: string;
     } = {},
   ) {
     this.root = root;
@@ -532,6 +540,8 @@ export class GenexTools {
     this.#preload = options.preload ?? fileURLToPath(new URL("../../genex-host/preload.mjs", import.meta.url));
     this.#sendsApps = options.sendsApps ?? pinnedCliSendsApps();
     this.#sendsSource = options.sendsSource ?? pinnedCliSendsSource();
+    this.#ca = options.ca;
+    this.#standGames = options.standGames;
   }
   async init() {
     this.#initialized ??= (async () => {
@@ -1210,7 +1220,7 @@ export class GenexTools {
     const { job } = run;
     const meta = await readJsonOr<HostedMeta>(metaFile(run.dir));
     job.expectedStagingRevision = meta?.stagingCommit;
-    job.stagingUrl = stagingLink(out, this.api);
+    job.stagingUrl = stagingLink(out, this.api, this.#standGames);
     job.phase = GenexPublishPhase.VerifyingDeployment;
     delete job.checkError;
     await this.#persistJob(run.project, job);
@@ -1279,7 +1289,7 @@ export class GenexTools {
     delete job.error;
     if (verify) {
       job.expectedStagingRevision = fresh?.stagingCommit;
-      const link = stagingLink(outs.join("\n"), this.api);
+      const link = stagingLink(outs.join("\n"), this.api, this.#standGames);
       if (link) job.stagingUrl = link;
       job.phase = GenexPublishPhase.VerifyingDeployment;
       job.state = GenexPublishJobState.Running;
@@ -2005,7 +2015,8 @@ export class GenexTools {
     const signedOut = !token || this.#disconnecting || authEpoch !== this.#authEpoch;
     if (signedOut) throw new Error(PUBLISH_MESSAGE.ConnectFirst);
     if (signal?.aborted) throw new Error(MESSAGE.StoppedBeforeSubmission);
-    return runGenexCli({ cli, preload: this.#preload, api: this.api, token, cwd, args, signal, ...options });
+    const ca = this.#ca ? { ca: this.#ca } : {};
+    return runGenexCli({ cli, preload: this.#preload, api: this.api, token, cwd, args, signal, ...ca, ...options });
   }
   /** Read Genex's durable admission evidence; never change its credit ledger. */
   async #reconcileJob(cwd: string, job: GenexJob, read: RemoteRead = RemoteRead.None, signal?: AbortSignal) {

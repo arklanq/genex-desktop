@@ -1,8 +1,16 @@
 /** Host Git operations read file bytes without running programs selected by a repository. */
 import { execFile } from "node:child_process";
+import { access, constants } from "node:fs/promises";
+import path from "node:path";
 import { promisify } from "node:util";
+import { SECOND_MS } from "../shared/duration.ts";
 
 const exec = promisify(execFile);
+/** A Mac's /usr/bin/git: a stand-in that runs the git of Apple's developer tools, or asks to install them. */
+const MAC_GIT_STAND_IN = "/usr/bin/git";
+/** The tool that names the folder macOS takes its developer tools from; macOS's own, never a stand-in. */
+const XCODE_SELECT = "/usr/bin/xcode-select";
+const XCODE_SELECT_TIMEOUT_MS = 5 * SECOND_MS;
 const CONFIG_MAX_BYTES = 1024 * 1024;
 const EXECUTABLE_KEYS = "^(filter\\..*\\.(clean|smudge|process|required)|diff\\..*\\.(textconv|command))$";
 const PRIVATE_ENV_PATHS = [":(glob,exclude)**/.env", ":(glob,exclude)**/.env.*"];
@@ -83,4 +91,56 @@ export async function hostGitConfig(dir: string, env = hostGitEnv()): Promise<st
     `${key}=${key.endsWith(".required") ? "false" : ""}`,
   ]);
   return [...HOST_GIT_CONFIG, ...disabled];
+}
+
+/** What {@link hostGitRuns} reads of a computer; tests hand in their own. */
+export interface HostGitProbe {
+  platform: NodeJS.Platform;
+  /** The PATH the app runs `git` from. */
+  path: string;
+  /** Whether `file` exists and may run. */
+  runnable(file: string): Promise<boolean>;
+  /** The folder macOS takes its developer tools from (`xcode-select -p`), or null. */
+  developerDir(): Promise<string | null>;
+}
+
+/** This computer as {@link hostGitRuns} reads it, under `env` (the app's own by default). */
+export function thisComputersGit(env: NodeJS.ProcessEnv = process.env): HostGitProbe {
+  return {
+    platform: process.platform,
+    path: env.PATH ?? "",
+    runnable: (file) =>
+      access(file, constants.X_OK).then(
+        () => true,
+        () => false,
+      ),
+    developerDir: () =>
+      exec(XCODE_SELECT, ["-p"], { env, timeout: XCODE_SELECT_TIMEOUT_MS }).then(
+        ({ stdout }) => stdout.trim() || null,
+        () => null,
+      ),
+  };
+}
+
+/** The first `git` a Mac's PATH names that may run, searching absolute entries only. */
+async function gitOnMacPath(probe: HostGitProbe): Promise<string | null> {
+  for (const dir of probe.path.split(path.posix.delimiter).filter((entry) => path.posix.isAbsolute(entry))) {
+    const git = path.posix.join(dir, "git");
+    if (await probe.runnable(git)) return git;
+  }
+  return null;
+}
+
+/**
+ * Whether this computer runs Git, asked before running it for someone who may not be a developer.
+ * Off a Mac, yes: Windows and Linux report a missing Git as an error. On a Mac, only where the
+ * PATH's `git` is a real one: /usr/bin/git there stands in for the git of Apple's developer tools
+ * and, without them, asks the person to install them.
+ */
+export async function hostGitRuns(probe: HostGitProbe = thisComputersGit()): Promise<boolean> {
+  if (probe.platform !== "darwin") return true;
+  const git = await gitOnMacPath(probe);
+  if (git !== MAC_GIT_STAND_IN) return git !== null;
+  const developer = await probe.developerDir();
+  return developer !== null && (await probe.runnable(path.posix.join(developer, "usr", "bin", "git")));
 }

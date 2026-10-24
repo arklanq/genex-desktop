@@ -1,7 +1,7 @@
 {
   "apiVersion": 3,
   "id": "genex",
-  "version": "1.10.32",
+  "version": "1.10.37",
   "name": "Genex plugin",
   "publisher": "Genex",
   "description": "3D models, characters, sound and art for your games, made in chat with Genex credits. Coding stays on your own provider.",
@@ -67,7 +67,7 @@
     },
     {
       "name": "cli",
-      "description": "Run a free Genex CLI command with the user's saved Genex account: doctor, budget, llm models, llm status, llm cancel or shop list. Studio runs its own pinned CLI in a folder of its own, never in the game, and returns the command's output. Commands that spend coin or credits or change what the game sells go through genex__cli-paid, generation through genex__asset and publishing through genex__publish; other commands are not available.",
+      "description": "Run a free Genex CLI command with the user's saved Genex account: doctor, budget, llm models, llm status, llm cancel, shop list, shop add, items list (the other creators' items this game added) or items search (Browse, with the words in args and a tag list option). shop add makes a new store item's draft, which spends nothing and asks nobody: its name in args, and price (0 is Free), type, description, tag (a list), shared (true or false), and image, model and package, each a path inside this game that Studio copies in; the answer is the draft, which the person puts on sale from its card in the chat (shop publish is not available). It also works before the game is on Genex, as a local draft its publish uploads. Studio runs its own pinned CLI in a folder of its own, never in the game, and returns the command's output. Commands that spend Nex or credits or change what the game sells go through genex__cli-paid, generation through genex__asset and publishing through genex__publish; other commands are not available.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -91,7 +91,7 @@
     },
     {
       "name": "cli-paid",
-      "description": "Run a Genex CLI command that spends coin or credits or changes what this game sells: llm bench (with a whole-number max-coins option), shop add, shop set, shop remove or shop test. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. Parameters are as for genex__cli; the game needs a published Genex draft first.",
+      "description": "Run a Genex CLI command that spends Nex or credits or changes what this game sells: llm bench (with a whole-number max-coins option), shop set, shop remove, shop test, items add or items remove. A new item's draft is genex__cli shop add, never this tool. shop set takes the item's id in args and genex__cli shop add's options plus rename; the answer is the item's draft, which the person puts on sale from its card in the chat. items add with an item id in args adds another creator's item to this game and Studio writes its genex-items/<id>/ folder (item.json and the author's files) into the game for you to integrate; read the genex-items skill first. The user approves each call, so it can wait several minutes for the answer; never repeat a declined or expired request unless the user asks again. Parameters are as for genex__cli. shop set and shop remove also work on local drafts before the game is on Genex; the other commands need a published Genex draft first.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -111,12 +111,12 @@
         },
         "required": ["command"]
       },
-      "confirmation": "Run a Genex CLI command that spends coin or credits or changes what this game sells, with your saved Genex account.",
+      "confirmation": "Run a Genex CLI command that spends Nex or credits or changes what this game sells, with your saved Genex account.",
       "host": "genex-cli-paid"
     },
     {
       "name": "package",
-      "description": "Add Genex's multiplayer package (@genex-ai/multiplayer) or player-identity package (@genex-ai/embed-sdk) to this game, at the version Studio pins. A game with a package.json installs it with its own package manager; a multiplayer request installs both multiplayer and player identity in one approved command. A game made from Studio's template (no package.json) gets Studio's copies mapped into its index.html import map instead, with nothing downloaded, and Studio connects the game. Any other game without package.json cannot add them.",
+      "description": "Add Genex's multiplayer package (@genex-ai/multiplayer) or player-identity package (@genex-ai/embed-sdk) to this game, at the version Studio pins. A game with a package.json installs it with its own package manager; a multiplayer request installs both multiplayer and player identity in one command, with the npm registry open for that command only. It asks nobody. A game made from Studio's template (no package.json) gets Studio's copies mapped into its index.html import map instead, with nothing downloaded, and Studio connects the game. Any other game without package.json cannot add them.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -127,7 +127,6 @@
         },
         "required": ["package"]
       },
-      "confirmation": "Add the listed pinned Genex packages. Multiplayer includes its player-identity dependency. A template game gets Studio's built-in copies in its import map; any other game installs them with its own package manager, with the npm registry open for that command only.",
       "host": "genex-package"
     },
     {
@@ -217,8 +216,14 @@
     {
       "name": "genex-monetization",
       "engines": ["web"],
-      "summary": "Build an in-game shop that sells items for Genex coin: the catalog, purchase flow, delivery and the hard rules (no paid randomness, no gambling). Items are listed with genex__cli and changed with genex__cli-paid.",
+      "summary": "Selling for Nex, Genex's currency: purchase flow, delivery and the hard rules (no paid randomness, no gambling). Fixed Nex prices are store items listed with shop add, as genex-items says; dynamic payments only for amounts decided while playing.",
       "file": "skills/genex-monetization/SKILL.md"
+    },
+    {
+      "name": "genex-items",
+      "engines": ["web"],
+      "summary": "Read first when anything is priced in Nex, Genex's currency, or is to be sold for real money: list each such thing with genex__cli shop add first, without asking and before the SDK or publish, so its card shows. Coins or gold are the game's own. Also: getEntitlements(), items add.",
+      "file": "skills/genex-items/SKILL.md"
     },
     {
       "name": "genex-tool-publish",

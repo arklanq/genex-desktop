@@ -83,7 +83,7 @@ import type { PluginWorkspace } from "../../shared/project-workspace.ts";
 import { canonicalSourceRepo } from "./marketplace.ts";
 import { containedReal } from "../paths.ts";
 import { SessionCredentials } from "../session-credentials.ts";
-import { PluginCallCutOff, type PluginInvocation, PluginProcess } from "./process.ts";
+import { PluginCallCutOff, type PluginHostEnv, type PluginInvocation, PluginProcess } from "./process.ts";
 import { MAX_ARTIFACT_BYTES, packageCopyFilter, unpackEnvelope } from "./pack.ts";
 import { MINUTE_MS, SECOND_MS } from "../../shared/duration.ts";
 import { currentLocale, t } from "../../shared/i18n.ts";
@@ -105,6 +105,18 @@ interface Installed {
   allowed?: string[];
   /** The person turned it off themselves: only they turn it on again (a sign-in leaves it off). */
   turnedOff?: boolean;
+}
+/** A plugin whose backend talks to another API, as another account (`PluginRegistry.hostAccount`). */
+export interface PluginHostAccount {
+  id: string;
+  /** The API's origin, named to the backend. */
+  api: string;
+  /** That API's own CA file (an absolute PEM path) the backend and its runs trust, when it has one. */
+  ca?: string;
+  /** That API's game host (a bare origin), where its games and drafts play, when it is not genex.games'. */
+  games?: string;
+  /** That account's token, or undefined while it is signed out. */
+  token(): Promise<string | undefined>;
 }
 /**
  * Who a package is, as far as its saved account and data are concerned. The id is only a name: two
@@ -185,6 +197,13 @@ const DEFAULT_ACCOUNT_ACTIONS: NonNullable<PluginManifest["account"]> = {
 type AccountActions = NonNullable<PluginManifest["account"]>;
 const accountActionsOf = (manifest: PluginManifest): AccountActions => manifest.account ?? DEFAULT_ACCOUNT_ACTIONS;
 
+/** What a plugin on another account's backend is told: that API, and its CA and game host when it has them. */
+const hostEnvOf = (account: PluginHostAccount): PluginHostEnv => ({
+  api: account.api,
+  ...(account.ca ? { ca: account.ca } : {}),
+  ...(account.games ? { games: account.games } : {}),
+});
+
 /**
  * What a plugin's lifecycle and calls say. The words that are functions are the person's, in their
  * language: refusals of what they did in Plugins (install, update, reload, watch, remove) and the
@@ -192,6 +211,8 @@ const accountActionsOf = (manifest: PluginManifest): AccountActions => manifest.
  * is the model's to read, a service's is the plugin backend's, and an unknown id is a caller's bug.
  */
 const MESSAGE = {
+  /** A backend on another account (a development stand) tried to save a sign-in of its own. */
+  HostAccount: "This plugin uses the development stand's account: sign in to the stand from Play's account instead",
   IdentityMismatch: "Plugin identity mismatch",
   OutsideStorage: "Plugin directory is outside Studio storage",
   PackageMissing: () => t("This plugin's package is missing; remove the plugin and install it again"),
@@ -845,6 +866,13 @@ export class PluginRegistry {
    * it can't be removed. The host sets it.
    */
   appAccount: { id: string; actions: readonly string[] } | undefined;
+  /**
+   * A plugin whose backend talks to another API than its own default, as another account: a
+   * development profile's stand (`main/play/origins.ts`). Its backend is told the API
+   * (`PLUGIN_API_ENV`) and holds that account's token as its session lease; its own saved account
+   * is neither read nor written while it is set. The host sets it once, before any backend starts.
+   */
+  hostAccount: PluginHostAccount | undefined;
   readonly bootstrap: string;
   /** The host services, told which call each request is made on behalf of (absent for the host's own). */
   readonly service: (
@@ -1941,8 +1969,18 @@ export class PluginRegistry {
     if (method === PluginService.CredentialsClear && !isActionAmong(invocation, [actions.disconnect]))
       throw new Error(MESSAGE.DisconnectRequired);
   }
+  /**
+   * The account services of a plugin on another account (`hostAccount`): its token is the lease and
+   * what an unlock reads; nothing is saved, and signing out is that account's own (Play's).
+   */
+  async #hostAccountService(account: PluginHostAccount, method: string): Promise<unknown> {
+    if (method === PluginService.CredentialsWrite) throw new Error(MESSAGE.HostAccount);
+    if (method === PluginService.CredentialsClear) return undefined;
+    return (await account.token().catch(() => undefined)) ?? null;
+  }
   /** The account services, answered from the session lease rather than the plugin services. */
   async #credentialService(id: string, p: Installed, method: string, args: any): Promise<unknown> {
+    if (this.hostAccount?.id === id) return this.#hostAccountService(this.hostAccount, method);
     if (method === PluginService.CredentialsSession) return this.#account(id).get();
     if (method === PluginService.CredentialsRead) {
       await this.#account(id).unlock();
@@ -2019,6 +2057,7 @@ export class PluginRegistry {
           },
           ...(this.toolPath ? { toolPath: this.toolPath } : {}),
           ...this.#seedOption(p),
+          ...(this.hostAccount?.id === id ? { host: hostEnvOf(this.hostAccount) } : {}),
         },
       );
       this.#processes.set(id, process);

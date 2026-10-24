@@ -29,6 +29,11 @@ import { HeldState } from "../chat/use-launch-handover.ts";
 import { chatPlaceholder } from "../composer-placeholder.ts";
 import { loopAvailableFor } from "../loop-setting.ts";
 import { notifyProblem } from "../state/toasts.ts";
+import { useItems } from "../state/hooks.ts";
+import { askedForItem } from "../state/items.ts";
+import { isLocalDraft } from "../../shared/item-draft.ts";
+import { useLocalItemsSettle } from "../chat/use-local-items.ts";
+import { studio } from "../state/studio.ts";
 import { ChatSkeleton } from "../chat/ChatSkeleton.tsx";
 import { LoadFailed } from "../ui/LoadFailed.tsx";
 import { PromptBar, type PromptBarHandle } from "../ui/PromptBar.tsx";
@@ -102,6 +107,20 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
   const { plan } = work;
   const busy = drafts.busy;
   const { about } = reply;
+  // New item opened this chat, or a Listing draft card is the last thing in it: the box asks for an item.
+  const project = chat.meta.project ?? null;
+  const askedForAnItem = useItems((s) => project !== null && s.askingIn === project);
+  const underListing = transcript.readingEntries.at(-1)?.kind === EntryKind.ListingDraft;
+  // A local draft waits for the game's publish: while this chat shows its card, or the game holds
+  // one, Studio settles them when the chat opens, the window comes back and the publish finishes.
+  const showsLocalDraft = transcript.readingEntries.some(
+    (entry) => entry.kind === EntryKind.ListingDraft && isLocalDraft(entry.draft),
+  );
+  useLocalItemsSettle(project, showsLocalDraft);
+  const send: typeof submit = (...args) => {
+    if (askedForAnItem) studio().items.setState((state) => askedForItem(state, null), true);
+    return submit(...args);
+  };
   // A summary written mid-turn or mid-build would miss what is happening.
   const compactWaits = busy || working || chat.answering || run?.state === RunState.Running;
   return (
@@ -160,6 +179,7 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
           studio: chat.isStudioThread,
           // A game still waiting for its idea asks for one, as home does.
           draft: chat.isDraft || chat.folder?.provisional === true,
+          item: askedForAnItem || underListing,
         })}
         value={drafts.draft}
         onChange={drafts.setDraft}
@@ -168,7 +188,7 @@ function ChatComposer(parts: ChatParts & { composerRef: RefObject<PromptBarHandl
         busy={busy}
         // A game chat with no model keeps its prompt: Connect AI model takes the model's place.
         disabled={composer.noModel && chat.isStudioThread}
-        onSend={submit}
+        onSend={send}
         stoppable={work.stoppable && Boolean(parts.props.activeThread)}
         onStop={work.stop.requestStop}
         blockSend={gate.needsSignIn}

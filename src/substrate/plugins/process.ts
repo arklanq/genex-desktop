@@ -76,10 +76,41 @@ export class PluginCallNotSent extends Error {
 export const PLUGIN_SEED_ENV = "STUDIO_PLUGIN_SEED";
 
 /**
+ * Names to a backend the API the host has it talk to in place of its own default: a development
+ * profile's stand (`registry.hostAccount`). Only the host sets it; a parent's never passes through.
+ */
+export const PLUGIN_API_ENV = "STUDIO_PLUGIN_API";
+
+/**
+ * Names to a backend the stand's own CA file (an absolute PEM path), which the stand's hosts are
+ * signed with: a local stand's API, source host and game host. Only the host sets it, beside
+ * {@link PLUGIN_API_ENV}; a parent's never passes through.
+ */
+export const PLUGIN_CA_ENV = "STUDIO_PLUGIN_CA";
+
+/**
+ * Names to a backend the stand's game host (a bare origin, e.g. `https://localhost:8443`): a game
+ * plays at `<slug>.<host>`, so a publish there tests its draft on it. Only the host sets it, beside
+ * {@link PLUGIN_API_ENV}; a parent's never passes through.
+ */
+export const PLUGIN_GAMES_ENV = "STUDIO_PLUGIN_GAMES";
+
+/** What the host has a backend use in place of its own defaults: a development profile's stand. */
+export interface PluginHostEnv {
+  /** The stand's API origin ({@link PLUGIN_API_ENV}). */
+  api: string;
+  /** The stand's own CA file ({@link PLUGIN_CA_ENV}); the backend's own requests trust it too. */
+  ca?: string;
+  /** The stand's game host ({@link PLUGIN_GAMES_ENV}). */
+  games?: string;
+}
+
+/**
  * A plugin backend's whole environment, built from scratch: PATH, HOME, TMPDIR, the credential
  * opt-out and, on Windows, what any program needs to start there plus ProgramData and both Program
  * Files folders, the made-up Mac a development test of an engine plugin names, and a bundled plugin's
- * seed folder (`seed`). Nothing else of Studio's.
+ * seed folder (`seed`) and the stand the host has it use (`host`: its API, its game host, and its CA,
+ * which the backend's own requests trust through Node's `NODE_EXTRA_CA_CERTS`). Nothing else of Studio's.
  * `toolPath` is the user's login PATH when known: an app started from the Finder has a bare one,
  * on which a backend finds none of the user's tools (Genex's publish needs git-lfs from Homebrew).
  */
@@ -88,6 +119,7 @@ export function pluginBackendEnv(
   platform: NodeJS.Platform = process.platform,
   toolPath?: string,
   seed?: string,
+  host?: PluginHostEnv,
 ): Record<string, string> {
   const env: Record<string, string | undefined> = {
     ...windowsBaseEnv(parent, platform),
@@ -99,6 +131,11 @@ export function pluginBackendEnv(
     STUDIO_ENGINE_TEST_ROOT: parent.STUDIO_ENGINE_TEST_ROOT,
     // A bundled plugin's own seed, where its dependencies stay (never the parent's: only the host names it).
     [PLUGIN_SEED_ENV]: seed,
+    // The stand the host has this backend use (a development profile's); never the parent's.
+    [PLUGIN_API_ENV]: host?.api,
+    [PLUGIN_CA_ENV]: host?.ca,
+    [PLUGIN_GAMES_ENV]: host?.games,
+    NODE_EXTRA_CA_CERTS: host?.ca,
     // Where Windows keeps shared app data and programs (64-bit and 32-bit), which a plugin may need
     // to find an installed app (Epic's launcher and its records of engines are there); none is secret.
     ...(platform === "win32"
@@ -185,6 +222,8 @@ export class PluginProcess {
   readonly toolPath: (() => Promise<string>) | undefined;
   /** A bundled plugin's seed folder, named to the backend (`PLUGIN_SEED_ENV`). */
   readonly seed: string | undefined;
+  /** The stand the host has the backend use (`PLUGIN_API_ENV`, `PLUGIN_CA_ENV`); absent: its own default. */
+  readonly host: PluginHostEnv | undefined;
   /** The computer the backend runs on, which decides how it is asked to stop. */
   readonly platform: NodeJS.Platform;
   constructor(
@@ -201,6 +240,7 @@ export class PluginProcess {
       onStderr?: (line: string) => void;
       toolPath?: () => Promise<string>;
       seed?: string;
+      host?: PluginHostEnv;
       platform?: NodeJS.Platform;
     },
   ) {
@@ -211,6 +251,7 @@ export class PluginProcess {
     this.onStderr = options?.onStderr;
     this.toolPath = options?.toolPath;
     this.seed = options?.seed;
+    this.host = options?.host;
     this.platform = options?.platform ?? process.platform;
   }
   /** A backend's answer to one call: its result or its error. */
@@ -264,7 +305,7 @@ export class PluginProcess {
       execPath: process.execPath,
       execArgv: [],
       serialization: "advanced",
-      env: pluginBackendEnv(process.env, process.platform, toolPath, this.seed),
+      env: pluginBackendEnv(process.env, process.platform, toolPath, this.seed, this.host),
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
     this.#child = child;

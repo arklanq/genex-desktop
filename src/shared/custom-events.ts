@@ -33,6 +33,7 @@ import type { WorkerFinishedPayload, WorkerStartedPayload } from "./workers.ts";
 import type { ObserverCapturePayload } from "./observers.ts";
 import type { FinishCheckPayload, StillToFix } from "./finish-check.ts";
 import type { InstallFailure, PlayInstallPayload } from "./play-native.ts";
+import type { ListingDraft, LocalListingDraft } from "./item-draft.ts";
 
 /**
  * Every custom event name in the studio's own code. A few are only read: names older versions
@@ -72,6 +73,8 @@ export const CustomEvent = {
   AgentWentAhead: "agent_went_ahead",
   /** A blind judge played the game for the chat's own session (shared/chat-judge.ts); written by the host only. */
   ChatJudgeResult: "chat_judge_result",
+  /** The game's agent made or changed a store item, on genex.games or as a local draft: its Listing draft card (shared/item-draft.ts); written by the host only. */
+  ItemDrafted: "item_drafted",
   // the unattended run and its lead
   AutopilotBase: "autopilot_base",
   AutopilotBaseStarted: "autopilot_base_started",
@@ -727,6 +730,7 @@ export interface CustomEventMap {
   app_look_access: Partial<AppLookAccessPayload>;
   agent_went_ahead: Partial<AgentWentAheadPayload>;
   chat_judge_result: Partial<ChatJudgeResultPayload>;
+  item_drafted: Partial<ListingDraft> | Partial<LocalListingDraft>;
   worker_started: WorkerStartedPayload;
   worker_finished: WorkerFinishedPayload;
   observer_capture: Partial<ObserverCapturePayload>;

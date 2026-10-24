@@ -1324,6 +1324,10 @@ every time (Ask first, below), and a call to one through the connection names th
 use instead. A `screen_capture` JPEG over 1 MB is shrunk with `sips` or PowerShell's System.Drawing,
 and refused in plain words when it can't be.
 
+A call already cancelled is refused before starting StudioMCP or sending its tool request; the
+cancel is checked again after startup. Non-object JSON values on the MCP output are ignored,
+so a malformed line cannot crash the connection or prevent a later valid answer.
+
 The binding file comes from the helper link (`helper-link.ts`), which the backend starts once Studio
 is set up. It is a hand-written RFC 6455 server (`helper-socket.ts`, no dependency) on 127.0.0.1
 only, on the first free port of `HELPER_PORTS` (47301–47304, which the helper tries in the same
@@ -1423,8 +1427,10 @@ through a link), written in the plugin's storage for each check and removed afte
 its own `sourcemap.json` (a Rojo project) uses that. Findings come back as plain lines at a file
 and line (`TypeError` and `SyntaxError`, selene's `Error` and StyLua's parse errors are errors;
 lints are warnings; StyLua's layout differences are format). A program that hangs, prints past the
-cap, can't start or exits with another code is named and never counts as a clean check. A file
-every program found clean is remembered with its sha256 and the programs that checked it
+cap, can't start or exits with another code is named and never counts as a clean check. Exit 1
+counts as findings only when Genex can read at least one finding; empty or unrecognized output
+is a failed check and caches no clean scripts. Records from before this distinction are rechecked
+once. A file every program found clean is remembered with its sha256 and the programs that checked it
 (`luau/clean/<game>.json`) and checked again only once it changes. The programs are found where
 the person keeps them (PATH, then `~/.rokit/bin`, `~/.aftman/bin`, `~/.foreman/bin`), then in the
 plugin's storage (`luau-tools.ts`); the definitions only in the storage. **Add Luau checks**
@@ -1508,7 +1514,9 @@ the name the agent gave. `insert-asset` takes an id of plain digits, reads the p
 `search_asset` for that id; one it doesn't find by its product info in Edit, free only when public
 or the signed-in person's own), refuses a paid asset with nothing inserted, and answers every
 script the asset brought, flagging `require` with an id, `loadstring`, `getfenv`, `HttpService` and
-`MarketplaceService`.
+`MarketplaceService`. Insertion requires a readable destination inventory first. If the script
+inventory fails after insertion, the result says the asset was inserted but its scripts remain
+unreviewed, asks the agent not to insert it again, and never claims it brought no scripts.
 
 **Models.** `check-model` (no card, no lock) runs the asset gate (`asset-gate.ts`) over a `.glb` or
 `.gltf` in the game folder: at most 20,000 triangles, closed (every edge, once vertices at the same
@@ -3373,14 +3381,34 @@ Genex:
   `genex__cli` and `genex-cli-paid` backs `genex__cli-paid`: Studio's pinned CLI runs in
   ProcessSandbox in a fresh `<userData>/genex-cli/<id>` folder (also its `HOME`), never a game
   folder, so the CLI's skill sync and contract healing touch only that folder, which is removed
-  afterwards. `main/core/genex-cli-policy.ts` allows doctor, budget, `llm models|status|cancel`
-  and `shop list` free, and `llm bench` and `shop add|set|remove|test` paid; everything else,
-  `budget --assets` (its allowance would live only in the removed run folder) and every flag Studio
-  sets itself is refused with a typed reason naming the tool to use instead. Studio adds `--env`,
-  `--api-url https://api.genex.games`, `--no-auth` and `--json`, and `--user-approved` only for an
-  approved bench. The consent card shows Studio's summary of the validated call (the command, what
+  afterwards. `main/core/genex-cli-policy.ts` allows doctor, budget, `llm models|status|cancel`,
+  `shop list`, `shop add` (a draft spends and sells nothing, so no card asks) and `items list|search`
+  free, and `llm bench`, `shop set|remove|test` and `items add|remove` paid; everything else, `shop publish|unpublish` (only the person puts an item
+  on sale, D40), `shop sync` (Studio's own upload of local drafts after a publish, `syncLocalItems`), `budget --assets` (its allowance would live only in the removed run folder) and
+  every flag Studio sets itself is refused with a typed reason naming the tool to use instead. A
+  store item's `shop add|set` takes `price` (0 is Free), `type`, `description` (≤ 1000, `""` clears
+  it on `set`), `tag` (one or a list, ≤ 10 × 32), `shared` (`--shared`/`--no-shared`) and `image`,
+  `model` and `package`: paths inside the bound game (`main/core/genex-game-paths.ts`), refused as
+  text when absolute, `~`, `..` or the game itself, then by real path when they lead out of the game
+  (a link), are missing or are the wrong kind, all before any card and again before the run, which
+  gets a copy in the run folder (a package without links, `.git`, `node_modules`, `.genex` or
+  `genex-items`, at most 2,000 files and 200 MiB). `items add <id>` (an item id, never a path) runs
+  in the run folder too; Studio then moves its `genex-items/<id>/` into the bound game, refusing a
+  link or a file at `genex-items`, the item's folder or `.genex/replaced-items` (where an earlier
+  copy goes, stamped), so the CLI never writes a game. `shop list|add|set|remove` also see the game's
+  local item drafts (`.genex/items/`, made before the game is on Genex): Studio copies each clean draft
+  into the run folder and carries a change back (`local-item-files.ts`: a `<localId>.json` and a flat
+  `<localId>/` of regular files, at most 8 files and 300 MiB, never through a link either way); in a
+  game with no hosted project they run on those drafts alone ([store](play.md#the-item-store);
+  `genex-cli-local-items.test.ts` holds the hostile tables). The bound folder is the game's or its Studio
+  worktree (`genex-bound-game.ts`, shared with `genex__package`); `genex-cli-game-paths.test.ts`
+  holds the hostile table. Studio adds `--env`,
+  `--api-url https://api.genex.games` (a development profile's stand API instead, with the stand
+  account's token: `GenexStand`, [play](play.md); the Genex plugin's backend follows the same stand,
+  `PluginRegistry.hostAccount`), `--no-auth` and `--json`, and `--user-approved`
+  only for an approved bench. The consent card shows Studio's summary of the validated call (the command, what
   it spends first, the agent's text last and clipped), and a call Studio would refuse asks nobody. The token reaches the
-  preload on stdin; the network is `api.genex.games` only; the games root and every game are
+  preload on stdin; the network is that API's host only; the games root and every game are
   write-denied; a run stops after 90 s; output is redacted and capped at 64 KiB. A project
   command sees only `{id, slug}` from the publish workspace. `genex-package` backs
   `genex__package`: it adds `@genex-ai/multiplayer` or `@genex-ai/embed-sdk` at the exact pin in
@@ -3391,17 +3419,26 @@ Genex:
   loads `/vendor/genex/connect.js` after the map (`withGenexSdkImport`); its page must be a
   regular file, never a link. Multiplayer is refused there. A Godot game (`godot/project.godot`)
   or a Unity game (`[unity/]ProjectSettings/ProjectVersion.txt`) is refused with a pointer to
-  `godot__multiplayer` or `unity__multiplayer`: its multiplayer goes into its project. The paid tool and the package tool need consent; fixture profiles refuse
+  `godot__multiplayer` or `unity__multiplayer`: its multiplayer goes into its project. The paid tool needs consent; the package tool asks nobody (Genex's own pinned packages spend nothing), and fixture profiles refuse
   both host steps (`studio:plugins.host-cli`, `studio:plugins.host-package`).
 - `genex__asset` accepts only each lane's own options (`LANE_OPTIONS`, `plugins/genex/request.ts`),
   and a refusal names them (`Unsupported Genex option for <op>`). Each lane's provider is fixed and
   its description says which (the `model` lanes are Tripo; `character` and `creature` are Meshy;
   `character.import` is Uthana), with Local Blender first for hard-surface models when it is on; a
   chat's coordinator promises no provider a lane lacks (`coordinator-prompts.ts`).
-- Genex's guide, seven platform cards and five lane cards (model, character, texture, audio,
+- Genex's guide, nine platform cards and five lane cards (model, character, texture, audio,
   image) are vendored behind Studio-written prefaces in
   `src/plugins/genex/skills` (`vendor.json` pins each source and hash; `npm run genex:skills`
-  refreshes them; `genex-skills-vendor.test.ts` catches drift) and served as file skills.
+  refreshes them; `genex-skills-vendor.test.ts` catches drift) and served as file skills. Genex's
+  currency is Nex (the cards call it coin), and the prefaces make store items the default for it:
+  a thing priced in Nex, or sold for real money with no currency named, is a store item the agent
+  lists with `shop add` without asking, so its card shows; coins, gold or gems are the game's own
+  currency unless the person says they are for real money, when it asks once. Dynamic payments
+  stay for amounts decided while playing. A card a
+  CLI release not yet on npm changed is vendored ahead of the pin (`--ahead-from <apps/cli> --ahead
+  <cards> --ahead-source <label>`): its files record that `version` and a `pending` note, plain
+  refreshes keep them, and the test fails once the pin reaches that version until a refresh takes
+  them from the published CLI. Today every card comes from the pinned CLI 1.36.15, none ahead of it.
 - The bundled CLI follows npm: every 6 hours `.github/workflows/genex-cli-follow.yml` compares
   npm's `latest` `@genex-ai/cli-demo` with the pin. When npm is ahead, `scripts/follow-genex-cli.ts`
   opens one bump PR against `dev` with the exact pin, refreshed skills, the plugin's next patch

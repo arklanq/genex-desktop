@@ -17,9 +17,8 @@ Chat shows game-folder files with Open in Assets; Builds, a Loop's workspace ass
 The Add menu holds attachments, plugin and MCP switches, Connect and Manage.
 Enabled, connected, signed in and permitted differ.
 
-The Plugins page (Plugins/Skills, search, details) lists installed plugins, your servers, the
-Community plugins and the plugin guide, with
-[icons](../plugins.md#icons). Install from GitHub pins a link's latest release
+The Plugins page (Plugins/Skills, search, details) lists installed plugins, your servers,
+Community plugins and the plugin guide ([icons](../plugins.md#icons)). Install from GitHub pins a link's latest release
 (else newest commit). Games build, preview and export without plugins. The host draws Genex's
 app-wide page (balance, routed tools, candidate pictures) and Local Blender's runtime card. Connect,
 unapproved, turns Genex on and reuses a saved account or opens browser sign-in; setup survives restart and reinstall.
@@ -27,8 +26,9 @@ Spend: usage panel; prices: Credits tab. Enabled Genex suggests assets in planni
 Generations wait for unaccepted terms (Review: sidebar, chat).
 
 Genex bundles its MCP (game/animation search, owned games, generation status) on the same account;
-host tools run the pinned CLI outside the game: `genex__cli` free; `genex__cli-paid` and
-`genex__package` (multiplayer, player identity; template games map Studio's copies) after consent. Publish (host-drawn)
+host tools run the pinned CLI outside the game: `genex__cli` and `genex__package` (multiplayer,
+player identity; template games map Studio's copies) free; `genex__cli-paid` after consent; a
+`shop add --json` draft becomes chat's [Listing draft card](../play.md#the-item-store). Publish (host-drawn)
 connects SDK-less games, tests the draft, goes public and sends the `genex-cover` frame and
 `genex-clip` clip ([rules](../plugins.md#first-party-privileges)), plus its project if remixable
 ([Remix](../play.md)); Studio takes the cover after

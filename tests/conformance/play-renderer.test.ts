@@ -25,10 +25,15 @@ import {
   FeedStatus,
   formatCount,
   escapeLeaves,
+  storeOverGame,
+  ViewerEscape,
+  viewerEscape,
   justLiked,
   nativeViewsUp,
   noteOn,
   PlateState,
+  plateEnd,
+  PlateEnd,
   plateState,
   NoteLook,
   PLAY_PROMO_DONE,
@@ -95,6 +100,7 @@ import {
   PlayNote,
   PlayRemixRefusal,
   PlayShelf,
+  type PlayBarState,
   type PlayShelves,
   PlayViewerPhase,
   RemixStep,
@@ -445,6 +451,25 @@ describe("Play's Genex card", () => {
   });
 });
 
+/** A header with nothing on it yet, as main first draws one. */
+const IDLE_BAR: PlayBarState = {
+  title: "A",
+  liked: false,
+  likes: 0,
+  remixable: false,
+  multiplayer: false,
+  note: null,
+  guestCard: false,
+  facts: null,
+  mic: null,
+  comments: null,
+  signedIn: true,
+  remixing: false,
+  nativeApp: null,
+  purchase: null,
+  store: null,
+};
+
 describe("Play's viewer cover", () => {
   const shown: ViewerShown = { slug: "a", title: "A", coverUrl: null, phase: PlayViewerPhase.Loading, openId: 2 };
   const fresh: ViewerShown = { ...shown, openId: null };
@@ -480,6 +505,7 @@ describe("Play's viewer cover", () => {
       remixing: false,
       nativeApp: null,
       purchase: null,
+      store: null,
     };
     const drawn = viewerAfter(fresh, { slug: "a", openId: 2, phase: PlayViewerPhase.Loading, bar });
     assert.deepEqual(drawn?.bar, bar);
@@ -515,6 +541,40 @@ describe("Play's viewer cover", () => {
     assert.equal(escapeLeaves({ ...shown, phase: PlayViewerPhase.Failed }), true);
     assert.equal(escapeLeaves({ ...shown, phase: PlayViewerPhase.Playing }), false, "a tap of Esc is the game's");
   });
+
+  it("draws the game's Store in its place only while main says it is open", () => {
+    const bar = (store: PlayBarState["store"]): PlayBarState => ({ ...IDLE_BAR, store });
+    assert.equal(storeOverGame(null), false);
+    assert.equal(storeOverGame(shown), false, "no header drawn yet");
+    assert.equal(storeOverGame({ ...shown, bar: bar(null) }), false, "a game that sells nothing");
+    assert.equal(storeOverGame({ ...shown, bar: bar({ open: false }) }), false);
+    assert.equal(storeOverGame({ ...shown, bar: bar({ open: true }) }), true);
+  });
+
+  it("takes a fresh Esc in the app's page to the open Store first, then to the cover, then back to the game", () => {
+    const playing = { ...shown, phase: PlayViewerPhase.Playing };
+    const store = { ...playing, bar: { ...IDLE_BAR, store: { open: true } } };
+    const fresh = { repeat: false, handled: false };
+    const rows: Array<
+      [string, Parameters<typeof viewerEscape>[0], { repeat: boolean; handled: boolean }, ViewerEscape | null]
+    > = [
+      ["no game", null, fresh, null],
+      ["the cover", shown, fresh, ViewerEscape.Leave],
+      ["a failure", { ...shown, phase: PlayViewerPhase.Failed }, fresh, ViewerEscape.Leave],
+      ["a game being played", playing, fresh, ViewerEscape.Resume],
+      ["the open Store", store, fresh, ViewerEscape.CloseStore],
+      [
+        "the open Store over a game still loading",
+        { ...store, phase: PlayViewerPhase.Loading },
+        fresh,
+        ViewerEscape.CloseStore,
+      ],
+      ["a held key", store, { repeat: true, handled: false }, null],
+      ["an item sheet over the Store, which took it", store, { repeat: false, handled: true }, null],
+    ];
+    for (const [name, viewer, key, expected] of rows) assert.equal(viewerEscape(viewer, key), expected, name);
+  });
+
   it("keeps a cover opened again (Try again) through the closing of the game it replaces", () => {
     // Main closes the failed opening, then opens the game afresh.
     const kept = viewerAfter(fresh, { slug: "a", openId: 1, phase: PlayViewerPhase.Closed });
@@ -590,6 +650,7 @@ describe("Play's loader and header", () => {
       remixing: false,
       nativeApp: null,
       purchase: null,
+      store: null,
     };
     assert.equal(noteOn(undefined, PlayControl.Share), null);
     assert.equal(noteOn(bar, PlayControl.Share), null);
@@ -624,6 +685,7 @@ describe("Play's loader and header", () => {
       remixing: false,
       nativeApp: null,
       purchase: null,
+      store: null,
     };
     const liked = { ...bar, liked: true, likes: 4 };
     assert.equal(justLiked(bar, liked), true);
@@ -1259,6 +1321,24 @@ describe("the sidebar's account plate", () => {
     assert.equal(shown({ account: GenexAccountStatus.SignedIn, me: who }), PlateState.SignedIn);
     assert.equal(shown({ account: GenexAccountStatus.SignedIn, me: who }, false), PlateState.Offline);
     assert.equal(shown({ account: GenexAccountStatus.SignedIn }), PlateState.Hidden, "signed in, not read yet");
+  });
+});
+
+describe("What the account plate shows beside the name", () => {
+  it("shows coin in Play and credits in Create, and the Offline mark offline wherever it is", () => {
+    assert.equal(plateEnd({ offline: false, play: true, coins: 1240 }), PlateEnd.Coins);
+    assert.equal(
+      plateEnd({ offline: false, play: true, coins: 0 }),
+      PlateEnd.Coins,
+      "none to spend is still a balance",
+    );
+    assert.equal(plateEnd({ offline: false, play: false, coins: 1240 }), PlateEnd.Credits);
+    assert.equal(plateEnd({ offline: true, play: true, coins: 1240 }), PlateEnd.Offline);
+    assert.equal(plateEnd({ offline: true, play: false, coins: null }), PlateEnd.Offline);
+  });
+
+  it("keeps the credits in Play while the coin is unknown, or coin is off on genex.games", () => {
+    assert.equal(plateEnd({ offline: false, play: true, coins: null }), PlateEnd.Credits);
   });
 });
 

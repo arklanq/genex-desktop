@@ -19,9 +19,9 @@ and never write a relay server of your own: Genex's relays already serve web, Go
   testers on the draft link meet each other and never real players. Anyone with the link can join,
   as a guest or signed in, before the game is published to the gallery.
 - Check prerequisites before building online features: the pinned SDKs and an authorized hosted
-  test route. Request both SDKs in one approval with
-  `genex__package {"package":"@genex-ai/multiplayer"}` (it includes embed-sdk). After approval,
-  build the game; publish a draft with
+  test route. Add both SDKs in one call with
+  `genex__package {"package":"@genex-ai/multiplayer"}` (it includes embed-sdk; nobody is asked).
+  Then build the game; publish a draft with
   `genex__publish {"operation":"draft"}`; wait with `genex__publish-status`; then test on the draft
   link as TWO DIFFERENT players. Hand the user the link and tell them exactly how: open it in a
   normal window and an incognito window (the incognito one plays as a guest), or send it to a
@@ -87,7 +87,7 @@ For example: `genex__skill {"name":"genex-threejs-multiplayer","file":"skills/ge
 available in Studio: build chat, voice and the character from the SDK calls the card shows.
 Commands map onto Studio tools as the `genex` skill describes (`genex__skill {"name":"genex"}`).
 
-<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md v1.36.13 sha256 64fc5498203e6d99244781f39237ddc22b83d5fb70932c23cec2d07eb553b7a7 -->
+<!-- upstream @genex-ai/cli-demo/templates/skills/genex-threejs-multiplayer/SKILL.md v1.36.15 sha256 64fc5498203e6d99244781f39237ddc22b83d5fb70932c23cec2d07eb553b7a7 -->
 ---
 name: genex-threejs-multiplayer
 description: Realtime multiplayer for Genex Three.js games with `@genex-ai/multiplayer` — a relay whose SDK auto-smooths remote players AND shared objects (you do NOT write interpolation). Use whenever 2+ players share a world: movement sync, a shared ball/NPC via objects + ownership, host-authoritative scores/waves, shots/emotes, presence. MANDATORY for any multiplayer game — load before writing networking code.

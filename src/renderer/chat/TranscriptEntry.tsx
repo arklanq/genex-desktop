@@ -19,6 +19,7 @@ import { AssetResults } from "./AssetResults.tsx";
 import { ChatDisclosure } from "./ChatDisclosure.tsx";
 import { CommandRun } from "./CommandRun.tsx";
 import { GenexCoverCard } from "./GenexCoverCard.tsx";
+import { ListingDraftCard } from "./ListingDraftCard.tsx";
 import { ChatQuestion } from "./ChatQuestion.tsx";
 import { EngineLinkLine } from "./EngineLinkLine.tsx";
 import { RewindLine } from "./RewindLine.tsx";
@@ -106,8 +107,6 @@ export const TranscriptEntry = memo(function TranscriptEntry({
       );
     case EntryKind.Assets:
       return <AssetResults deliveries={deliveries} onOpenAssets={context.onShowAssets} />;
-    case EntryKind.GenexCover:
-      return <GenexCoverCard entry={entry} project={context.project} />;
     case EntryKind.User:
       return <UserEntry key={entry.id} entry={entry} context={context} />;
     case EntryKind.Mentions:
@@ -167,12 +166,24 @@ export const TranscriptEntry = memo(function TranscriptEntry({
       return <ActionEntry entry={entry} context={context} resume={resume} />;
     case EntryKind.Compaction:
       return <CompactionEntry messages={entry.messages} summary={entry.summary} />;
+    default:
+      return <CardEntry entry={entry} context={context} />;
+  }
+});
+
+/** A card the host put in the conversation: the Genex cover, a plugin to turn on, a store item's Listing draft. */
+function CardEntry({ entry, context }: { entry: ConversationEntry; context: TranscriptContext }): JSX.Element | null {
+  switch (entry.kind) {
+    case EntryKind.GenexCover:
+      return <GenexCoverCard entry={entry} project={context.project} />;
     case EntryKind.PluginSuggestion:
-      return <PluginSuggestionCard entry={entry} onNotice={onNotice} onTurnedOn={context.onPluginTurnedOn} />;
+      return <PluginSuggestionCard entry={entry} onNotice={context.onNotice} onTurnedOn={context.onPluginTurnedOn} />;
+    case EntryKind.ListingDraft:
+      return <ListingDraftCard draft={entry.draft} />;
     default:
       return null;
   }
-});
+}
 
 /** A finished compaction, in the work rows' type: it opens to the summary that replaced the messages. */
 function CompactionEntry({ messages, summary }: { messages: number | null; summary: string | null }): JSX.Element {

@@ -344,18 +344,15 @@ interface DelegationSession {
    * A lead in its game's folder: the worktree it leads, as its seat checked it (`seat.leads`), or the
    * game folder itself for a lead in place. Its plugins act there (the binding's directory), as a
    * director's in its worktree, so what they deliver reaches the game when the run lands; and, the
-   * lead not being the chat's turn, another turn's end leaves its consent cards and connector calls
-   * going. Null otherwise.
+   * lead not being the chat's turn, neither another turn's end nor its own withdraws its plugin
+   * cards: only the person, the timeout or a Stop settles them. Its connector calls end with its own
+   * session (`ended`). Null otherwise.
    */
   leads: string | null;
   /** A Loop's lead in the game folder itself (`seat.leadsInPlace`): its plugins act where it sits. */
   leadsInPlace: boolean;
   abort: AbortController;
-  /**
-   * Aborted once the delegation returns. A lead's plugin and connector calls end with it besides
-   * `abort`: no turn of the chat's ending withdraws their consent cards or calls, so the end of its
-   * own session must, or a card approved later would run a tool for a session that is gone.
-   */
+  /** Aborted once the delegation returns: a lead's connector calls end with it besides `abort`. */
   ended: AbortController;
   mirror: DelegationMirror;
   /** Steer: the chat turn this session answers, when it is the chat's own or a lead's (`chat-steer.ts`). */
@@ -2847,12 +2844,14 @@ export class DelegationService {
       return this.#x.setGameCover(p.project, args, p.threadId, signal);
     if (session.runControls && isGrantedRunControl(name, session.runControls))
       return this.#x.conversation.runControl(session.threadId, session.runControls, name, args, session.abort);
-    // A lead's plugins act on the build it leads, never the live game folder it sits in, and its
-    // calls outlive the chat's turns, ending with its own session instead.
+    // A lead's plugins act on the build it leads, never the live game folder it sits in. Its plugin
+    // calls outlive the chat's turns and its own: a Loop's lead ends its turn to wait for its workers,
+    // and a card it asked with (a package, a store item) stays the person's to answer. Stop ends them.
     const directory = session.leads ?? target.cwd;
     const binding = { project: p.project, directory, ...(p.threadId ? { threadId: p.threadId } : {}) };
     const lead = session.leads !== null;
-    const callSignal = lead ? AbortSignal.any([signal, session.ended.signal]) : signal;
+    // A connector call waits on a service, not on the person: it ends with the lead's own session.
+    const connectorSignal = lead ? AbortSignal.any([signal, session.ended.signal]) : signal;
     // A worker's calls pass the locks it holds for its life (an in-place writer's); the lead's hold their own.
     // A chat turn's call stops waiting for one once the person writes: its signal taken now, as the call starts.
     const locking = { ...holderField(session), ...personWroteField(session) };
@@ -2862,7 +2861,7 @@ export class DelegationService {
     // anything is asked or run.
     if (this.#core.mcp.owns(name)) {
       if (!handed(session, tools, name)) throw new Error(MESSAGE.unknownTool(name));
-      return this.#x.pluginTools.invokeConnectorTool(name, args, binding, callSignal, {
+      return this.#x.pluginTools.invokeConnectorTool(name, args, binding, connectorSignal, {
         outlivesTurn: lead,
         ...this.#runConsentFor(name, p, session),
         ...callRunField(session),
@@ -2874,7 +2873,7 @@ export class DelegationService {
       if (!handler) throw new Error(MESSAGE.unknownTool(name));
       return handler(name, args);
     }
-    const result = await this.#x.pluginTools.invokePluginTool(name, args, binding, callSignal, {
+    const result = await this.#x.pluginTools.invokePluginTool(name, args, binding, signal, {
       engine: target.engineId,
       selfCapture: grants.selfCapture,
       director: grants.director,

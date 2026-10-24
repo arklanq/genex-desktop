@@ -69,7 +69,7 @@ describe("A purchase's own words", () => {
     for (const id of hostile) assert.equal(isIntentId(id), false, String(id));
   });
 
-  it("waits long enough before Pay may count, and sends Get coin to genex.games' own site", () => {
+  it("waits long enough before Pay may count, and sends Get Nex to genex.games' own site", () => {
     assert.ok(PURCHASE_ARM_MS >= 0.8 * SECOND_MS, "a click or key meant for the game never lands on Pay");
     assert.equal(playCoinPageUrl("https://genex.games"), "https://genex.games/inventory");
     assert.equal(playCoinPageUrl("http://localhost:3000/"), "http://localhost:3000/inventory");
